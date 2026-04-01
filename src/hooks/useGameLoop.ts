@@ -276,11 +276,12 @@ export function useAutoPublisher() {
   useEffect(() => {
     if (autoPubLevel === 0) return;
 
-    const interval = autoPubLevel === 1 ? 5000 : autoPubLevel === 2 ? 3000 : 1000;
+    const intervals = [5000, 3000, 1000, 750, 500, 250, 100];
+    const interval = intervals[Math.min(autoPubLevel - 1, intervals.length - 1)];
     const timer = setInterval(() => {
       const firstPub = components.find(c => c.type === 'publisher');
       if (firstPub) {
-        fireEvent(firstPub.id);
+        fireEvent(firstPub.id, true);
       }
     }, interval);
 

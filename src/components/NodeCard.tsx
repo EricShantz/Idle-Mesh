@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { type GameComponent, useGameStore } from '../store/gameStore';
 import {
@@ -55,6 +55,31 @@ export function NodeCard({ component }: Props) {
   const dragStartPos = useRef({ x: 0, y: 0 });
   const nodeStartPos = useRef({ x: 0, y: 0 });
   const hasMoved = useRef(false);
+
+  // Publisher cooldown overlay
+  const publisherCooldowns = useGameStore(s => s.publisherCooldowns);
+  const [cooldownPct, setCooldownPct] = useState(0);
+  const cooldownRaf = useRef<number>(0);
+
+  useEffect(() => {
+    if (!isPublisher) return;
+    const lastFire = publisherCooldowns[component.id] ?? 0;
+    if (lastFire === 0) return;
+
+    const publishSpeedLevel = component.upgrades['publishSpeed'] ?? 0;
+    const duration = 1000 * Math.pow(0.95, publishSpeedLevel);
+
+    const tick = () => {
+      const elapsed = Date.now() - lastFire;
+      const remaining = Math.max(0, 1 - elapsed / duration);
+      setCooldownPct(remaining);
+      if (remaining > 0) {
+        cooldownRaf.current = requestAnimationFrame(tick);
+      }
+    };
+    cooldownRaf.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(cooldownRaf.current);
+  }, [isPublisher, publisherCooldowns[component.id], component.upgrades]);
 
   // Count affordable upgrades
   const upgrades = getUpgradesForType(component.type);
@@ -175,6 +200,16 @@ export function NodeCard({ component }: Props) {
           transition: 'border-color 0.15s, box-shadow 0.15s',
         }}
       >
+        {/* Cooldown overlay for publisher */}
+        {isPublisher && cooldownPct > 0 && (
+          <div
+            className="absolute inset-0 rounded-lg pointer-events-none"
+            style={{
+              background: 'rgba(0, 0, 0, 0.35)',
+              clipPath: `inset(${(1 - cooldownPct) * 100}% 0 0 0)`,
+            }}
+          />
+        )}
         <button
           onClick={handleUpgradeClick}
           onPointerDown={(e) => e.stopPropagation()}

@@ -102,68 +102,52 @@ export const subscriberUpgrades: UpgradeDef[] = [
   },
 ];
 
-export type GlobalUpgradeDef = {
-  key: string;
-  label: string;
-  description: string;
-  cost: number;
-  maxLevel?: number;
-};
-
-export const globalUpgrades: GlobalUpgradeDef[] = [
+export const globalUpgrades: UpgradeDef[] = [
   {
     key: 'propagationSpeed',
     label: 'Faster Event Propagation',
-    description: 'All event dots travel 15% faster',
-    cost: 25,
+    description: 'All event dots travel 5% faster',
+    baseCost: 50,
+    costMultiplier: 2,
   },
   {
     key: 'costReduction',
     label: '10% Cheaper Upgrades',
     description: 'All future upgrade costs reduced by 10%',
-    cost: 50,
+    baseCost: 50,
+    costMultiplier: 2,
     maxLevel: 3,
   },
   {
     key: 'dlq',
     label: 'Dead Letter Queue',
     description: 'Dropped events can be replayed for 50% value',
-    cost: 80,
+    baseCost: 80,
+    costMultiplier: 1,
     maxLevel: 1,
   },
   {
-    key: 'autoPub1',
-    label: 'Auto-Publisher Lv.1',
-    description: 'First publisher fires automatically every 5s',
-    cost: 150,
-    maxLevel: 1,
-  },
-  {
-    key: 'autoPub2',
-    label: 'Auto-Publisher Lv.2',
-    description: 'Auto-fire every 3s',
-    cost: 400,
-    maxLevel: 1,
-  },
-  {
-    key: 'autoPub3',
-    label: 'Auto-Publisher Lv.3',
-    description: 'Auto-fire every 1s',
-    cost: 1000,
-    maxLevel: 1,
+    key: 'autoPub',
+    label: 'Auto-Publisher',
+    description: 'Automatically publishes events',
+    baseCost: 150,
+    costMultiplier: 4,
+    maxLevel: 7,
   },
   {
     key: 'batchFire',
     label: 'Event Batching',
     description: 'Publishers fire 2 events per click',
-    cost: 200,
+    baseCost: 200,
+    costMultiplier: 1,
     maxLevel: 1,
   },
   {
     key: 'globalValueMultiplier',
     label: 'Global Value x1.5',
     description: 'All earned money x1.5',
-    cost: 500,
+    baseCost: 500,
+    costMultiplier: 1,
     maxLevel: 1,
   },
 ];

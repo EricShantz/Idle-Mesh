@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { canConnect } from '../utils/connectionRules';
+import { globalUpgrades, getUpgradeCost } from './upgradeConfig';
 
 export type ComponentType = 'publisher' | 'webhook' | 'broker' | 'queue' | 'subscriber';
 
@@ -63,6 +64,8 @@ export type GameState = {
   selectedNodeId: string | null;
   publisherCooldowns: Record<string, number>; // publisherId -> last fire timestamp
 
+  globalUpgradeLevels: Record<string, number>;
+
   draggingConnection: {
     type: 'reassign' | 'create';
     connectionId?: string;
@@ -72,7 +75,7 @@ export type GameState = {
   } | null;
 
   // Actions
-  fireEvent: (publisherId: string) => void;
+  fireEvent: (publisherId: string, skipCooldown?: boolean) => void;
   consumeEvent: (dotId: string, value: number, subscriberId: string) => void;
   removeCoinPop: (id: string) => void;
   dropEvent: (dotId: string) => void;
@@ -153,6 +156,23 @@ function loadSavedState(): Partial<GameState> | null {
   return null;
 }
 
+function migrateGlobalUpgradeLevels(upgrades: GameState['upgrades'] | undefined): Record<string, number> {
+  if (!upgrades) return {};
+  const levels: Record<string, number> = {};
+  // Derive levels from old computed values
+  if (upgrades.propagationSpeed > 1) {
+    levels.propagationSpeed = Math.round(Math.log(upgrades.propagationSpeed) / Math.log(1.05));
+  }
+  if (upgrades.costReduction > 0) {
+    levels.costReduction = Math.round(upgrades.costReduction / 0.1);
+  }
+  if (upgrades.dlqUnlocked) levels.dlq = 1;
+  if (upgrades.autoPubLevel > 0) levels.autoPub = upgrades.autoPubLevel;
+  if (upgrades.batchFire) levels.batchFire = 1;
+  if (upgrades.globalValueMultiplier > 1) levels.globalValueMultiplier = 1;
+  return levels;
+}
+
 export const useGameStore = create<GameState>()(
   immer((set, get) => {
     const saved = loadSavedState();
@@ -177,23 +197,27 @@ export const useGameStore = create<GameState>()(
         globalValueMultiplier: 1.0,
       },
 
+      globalUpgradeLevels: saved?.globalUpgradeLevels ?? migrateGlobalUpgradeLevels(saved?.upgrades),
+
       recentEarnings: [],
       coinPops: [],
       selectedNodeId: null,
       publisherCooldowns: {},
       draggingConnection: null,
 
-      fireEvent: (publisherId: string) => {
+      fireEvent: (publisherId: string, skipCooldown?: boolean) => {
         const state = get();
         const pub = state.components.find(c => c.id === publisherId);
         if (!pub) return;
 
-        // Check cooldown
-        const lastFireTime = state.publisherCooldowns[publisherId] ?? 0;
-        const publishSpeedLevel = pub.upgrades['publishSpeed'] ?? 0;
-        const baseCooldown = 1000; // 1 second base cooldown
-        const cooldownDuration = baseCooldown * Math.pow(0.95, publishSpeedLevel); // Each level reduces by 5%
-        if (Date.now() - lastFireTime < cooldownDuration) return;
+        // Check cooldown (skipped for auto-publisher)
+        if (!skipCooldown) {
+          const lastFireTime = state.publisherCooldowns[publisherId] ?? 0;
+          const publishSpeedLevel = pub.upgrades['publishSpeed'] ?? 0;
+          const baseCooldown = 1000; // 1 second base cooldown
+          const cooldownDuration = baseCooldown * Math.pow(0.95, publishSpeedLevel); // Each level reduces by 5%
+          if (Date.now() - lastFireTime < cooldownDuration) return;
+        }
 
         const paths = state.getAllPathsForPublisher(publisherId);
         const validPaths = paths.filter(p => p.length >= 2);
@@ -203,7 +227,9 @@ export const useGameStore = create<GameState>()(
         const speed = 0.0007 * state.upgrades.propagationSpeed;
 
         set(draft => {
-          draft.publisherCooldowns[publisherId] = Date.now();
+          if (!skipCooldown) {
+            draft.publisherCooldowns[publisherId] = Date.now();
+          }
           for (const path of validPaths) {
             const dotId = `dot-${++dotIdCounter}`;
             draft.eventDots.push({
@@ -405,9 +431,12 @@ export const useGameStore = create<GameState>()(
 
       purchaseGlobalUpgrade: (upgradeKey: string) => {
         set(draft => {
+          const level = draft.globalUpgradeLevels[upgradeKey] ?? 0;
+          draft.globalUpgradeLevels[upgradeKey] = level + 1;
+
           switch (upgradeKey) {
             case 'propagationSpeed':
-              draft.upgrades.propagationSpeed *= 1.15;
+              draft.upgrades.propagationSpeed *= 1.05;
               break;
             case 'costReduction':
               draft.upgrades.costReduction = Math.min(0.3, draft.upgrades.costReduction + 0.1);
@@ -415,14 +444,8 @@ export const useGameStore = create<GameState>()(
             case 'dlq':
               draft.upgrades.dlqUnlocked = true;
               break;
-            case 'autoPub1':
-              draft.upgrades.autoPubLevel = Math.max(draft.upgrades.autoPubLevel, 1);
-              break;
-            case 'autoPub2':
-              draft.upgrades.autoPubLevel = Math.max(draft.upgrades.autoPubLevel, 2);
-              break;
-            case 'autoPub3':
-              draft.upgrades.autoPubLevel = Math.max(draft.upgrades.autoPubLevel, 3);
+            case 'autoPub':
+              draft.upgrades.autoPubLevel = level + 1;
               break;
             case 'batchFire':
               draft.upgrades.batchFire = true;

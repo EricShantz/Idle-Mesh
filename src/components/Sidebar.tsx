@@ -1,5 +1,5 @@
 import { useGameStore } from '../store/gameStore';
-import { globalUpgrades } from '../store/upgradeConfig';
+import { globalUpgrades, getUpgradeCost } from '../store/upgradeConfig';
 import { formatMoney } from '../utils/formatMoney';
 
 const QUEUE_COST = 60;
@@ -12,6 +12,7 @@ export function Sidebar() {
   const recentEarnings = useGameStore(s => s.recentEarnings);
   const components = useGameStore(s => s.components);
   const upgrades = useGameStore(s => s.upgrades);
+  const globalUpgradeLevels = useGameStore(s => s.globalUpgradeLevels);
   const spend = useGameStore(s => s.spend);
   const purchaseGlobalUpgrade = useGameStore(s => s.purchaseGlobalUpgrade);
   const addComponent = useGameStore(s => s.addComponent);
@@ -23,27 +24,6 @@ export function Sidebar() {
     ? recent.reduce((sum, e) => sum + e.amount, 0) / 5
     : 0;
   const eventsPerSec = recent.length > 0 ? recent.length / 5 : 0;
-
-  const isGlobalMaxed = (key: string): boolean => {
-    switch (key) {
-      case 'dlq': return upgrades.dlqUnlocked;
-      case 'autoPub1': return upgrades.autoPubLevel >= 1;
-      case 'autoPub2': return upgrades.autoPubLevel >= 2;
-      case 'autoPub3': return upgrades.autoPubLevel >= 3;
-      case 'batchFire': return upgrades.batchFire;
-      case 'globalValueMultiplier': return upgrades.globalValueMultiplier > 1; // one-time purchase ($500)
-      case 'costReduction': return upgrades.costReduction >= 0.3;
-      default: return false;
-    }
-  };
-
-  const isGlobalLocked = (key: string): boolean => {
-    switch (key) {
-      case 'autoPub2': return upgrades.autoPubLevel < 1;
-      case 'autoPub3': return upgrades.autoPubLevel < 2;
-      default: return false;
-    }
-  };
 
   const handleGlobalUpgrade = (key: string, cost: number) => {
     if (spend(cost)) {
@@ -104,16 +84,15 @@ export function Sidebar() {
         <div className="text-gray-500 text-xs uppercase tracking-wider mb-2">Global Upgrades</div>
         <div className="flex flex-col gap-1.5">
           {globalUpgrades.map(u => {
-            const maxed = isGlobalMaxed(u.key);
-            const locked = isGlobalLocked(u.key);
-            const canAfford = balance >= u.cost;
-
-            if (locked) return null;
+            const level = globalUpgradeLevels[u.key] ?? 0;
+            const maxed = u.maxLevel != null && level >= u.maxLevel;
+            const cost = getUpgradeCost(u, level, upgrades.costReduction);
+            const canAfford = balance >= cost;
 
             return (
               <button
                 key={u.key}
-                onClick={() => handleGlobalUpgrade(u.key, u.cost)}
+                onClick={() => handleGlobalUpgrade(u.key, cost)}
                 disabled={maxed || !canAfford}
                 className="text-left px-2 py-1.5 rounded text-xs border transition-colors cursor-pointer disabled:cursor-not-allowed"
                 style={{
@@ -122,10 +101,17 @@ export function Sidebar() {
                   color: maxed ? '#6b7280' : canAfford ? '#cffafe' : '#6b7280',
                 }}
               >
-                <div className="font-bold">{u.label}</div>
-                <div className="opacity-60">{u.description}</div>
+                <div className="flex justify-between items-center">
+                  <span className="font-bold">{u.label}</span>
+                  {(u.maxLevel == null || u.maxLevel > 1) && (
+                    <span className="text-[10px] opacity-50">Lv {level}</span>
+                  )}
+                </div>
+                <div className="opacity-60">{u.key === 'autoPub' && level > 0
+                  ? `Currently: every ${[5, 3, 1, 0.75, 0.5, 0.25, 0.1][Math.min(level - 1, 6)]}s`
+                  : u.description}</div>
                 <div className="mt-0.5 font-mono">
-                  {maxed ? 'PURCHASED' : formatMoney(u.cost)}
+                  {maxed ? 'MAX' : formatMoney(cost)}
                 </div>
               </button>
             );

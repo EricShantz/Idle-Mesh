@@ -97,7 +97,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 ```
 
 - Publisher at `(150, 300)`, Webhook at `(450, 300)`, Subscriber at `(750, 300)`
-- Publisher click is on a **1-second cooldown** (upgradeable). Clicking during cooldown does nothing.
+- Publisher click is on a **1-second cooldown** (upgradeable). Clicking during cooldown does nothing. A dark translucent overlay drains downward during cooldown (CSS `clipPath` animation driven by RAF in `NodeCard.tsx`).
 - Events travel at base speed `0.0007` (progress units/ms), taking ~1.3 seconds to traverse the full path
 - **Webhook slowdown**: events travel at 40% speed while passing through the webhook. The slowdown region is dynamically calculated to align with the webhook's visual edges. Up to 3 "Faster Routing" upgrades reduce this by 20% each.
 - When the dot collides with the subscriber node (via `dotTouchesNode()` bounding-box hit test), it **pauses and shrinks** over 2.5 seconds, then money increments.
@@ -191,7 +191,7 @@ type EventDot = {
 - Webhook/broker blockage uses proximity check (30px radius) + `isComponentOccupied()` (checks for pausing/queued dots)
 
 **Key behaviors:**
-- `traveling` → slows through webhook segment (progress-based slowdown region via `getWebhookThresholds()`), drops near webhook/broker if component is occupied (proximity check)
+- `traveling` → slows through webhook when dot visually overlaps the webhook node (bounding-box check via `dotTouchesNode()`), drops near webhook/broker if component is occupied (proximity check)
 - `traveling` → on collision with queue node, always transitions to `queued` if buffer has space, otherwise drops
 - `traveling` → on collision with subscriber node, transitions to `pausing` if subscriber is free, otherwise drops
 - `queued` → auto-released one per queue per frame when subscriber is free AND no traveling dots ahead in path (past queue's progress)
@@ -246,16 +246,19 @@ Access by clicking the **⚙ icon** on any node. Modal is anchored to the node.
 Balance (large), Total earned, Consumed, Dropped, Events/sec, $/sec, Mesh size
 
 ### Global Upgrades
-| Upgrade | Effect | Cost |
-|---|---|---|
-| Faster Event Propagation | All dots 15% faster | $25 (repeatable) |
-| 10% Cheaper Upgrades | Cost reduction, stackable 3× | $50 |
-| Dead Letter Queue | (UI only) | $80 |
-| Auto-Publisher Lv.1 | First publisher fires every 5s | $150 |
-| Auto-Publisher Lv.2 | Every 3s | $400 |
-| Auto-Publisher Lv.3 | Every 1s | $1,000 |
-| Event Batching | (UI only) | $200 |
-| Global Value ×1.5 | All earnings multiplied | $500 |
+
+Global upgrades use the same `UpgradeDef` system as node upgrades — each is a single card with escalating cost per level, tracked via `globalUpgradeLevels: Record<string, number>` in the store. Sidebar shows current level, next cost (via `getUpgradeCost`), and "MAX" when fully purchased.
+
+| Upgrade | Effect | Base Cost | Multiplier | Max Level |
+|---|---|---|---|---|
+| Faster Event Propagation | All dots 5% faster per level | $50 | ×2 | unlimited |
+| 10% Cheaper Upgrades | Cost reduction, stackable | $50 | ×2 | 3 |
+| Dead Letter Queue | (UI only) | $80 | — | 1 |
+| Auto-Publisher | Lv1: 5s, Lv2: 3s, Lv3: 1s, Lv4: 0.75s, Lv5: 0.5s, Lv6: 0.25s, Lv7: 0.1s | $150 | ×4 | 7 |
+| Event Batching | (UI only) | $200 | — | 1 |
+| Global Value ×1.5 | All earnings multiplied | $500 | — | 1 |
+
+**Auto-Publisher**: bypasses the manual click cooldown (`fireEvent(id, true)` with `skipCooldown`). Auto-fires do NOT reset the manual cooldown timer, so players can click manually between auto-fires.
 
 ### Shop (visible after broker upgrade)
 | Component | Cost | Notes |
@@ -272,7 +275,7 @@ Balance (large), Total earned, Consumed, Dropped, Events/sec, $/sec, Mesh size
 - **Fan-out**: `getAllPathsForPublisher()` DFS forks at branch points, `fireEvent` creates one dot per path. Broker connected to multiple queues sends events to all paths.
 - **Multiple independent queues**: each queue has unique ID, own buffer, own connections. Purchased unconnected from shop, user wires manually.
 - **Drag-to-move**: any component can be repositioned by dragging; connection lines follow in real-time
-- Click-to-fire with cooldown (upgradeable)
+- Click-to-fire with cooldown (upgradeable), cooldown overlay animation on publisher (dark translucent bar drains downward)
 - Event dot animation: travel, webhook slowdown, subscriber pause/shrink, drop with gravity
 - **Collision-based detection**: `dotTouchesNode()` bounding-box hit test for queue capture and subscriber pause/drop; proximity check (30px) for webhook/broker blockage. Replaced old progress-threshold system.
 - **Mutable array game loop**: dots processed sequentially in `for` loop so each sees results of prior dots in same frame — prevents race conditions
@@ -286,7 +289,7 @@ Balance (large), Total earned, Consumed, Dropped, Events/sec, $/sec, Mesh size
 - Broker upgrades: Add Queue Slot (UI only), Topic Filter Boost (UI only)
 - Queue upgrades: Add Subscriber Slot (UI only), Increase Buffer Size (functional), Persistent Delivery (UI only)
 - Subscriber upgrades: Faster Consumption (functional), Consumption Value (**functional** — base $0.50 + $0.50/level added at consumption time)
-- Global upgrades: Propagation Speed, Cost Reduction, Auto-Publisher (all functional)
+- Global upgrades: Propagation Speed (+5%/level), Cost Reduction, Auto-Publisher 7 tiers (all functional, level-based cost scaling)
 - Broker/Queue/Subscriber shop in sidebar (Queue purchasable, placed unconnected for manual wiring)
 - Auto-save / load from localStorage (snapshot comparison optimization, 500ms debounce, transient fields excluded: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`, `draggingConnection`)
 - Z-index layering (events emerge from publisher, fade on top of subscriber); dragged nodes elevate to z-index 50
@@ -333,9 +336,9 @@ src/
 
 ## Development Notes for Claude Code
 
-- **Starting balance for testing**: change `balance: saved?.balance ?? 500000` in `gameStore.ts` line ~144. Clear localStorage to reset to the new default.
+- **Starting balance for testing**: change `balance: saved?.balance ?? 5000000` in `gameStore.ts`. Clear localStorage **then hard-refresh the page** (Ctrl+Shift+R) to reset — the auto-save subscriber will re-persist in-memory state if the tab stays open.
 - **Component IDs**: initial components use fixed IDs (`pub-1`, `webhook-1`, `sub-1`, `conn-1`, `conn-2`). Dynamically added components use counter-based IDs starting at 10 (`comp-10+`, `conn-10+`).
-- **Collision & thresholds**: `useGameLoop.ts` uses two systems: (1) `getWebhookThresholds(path)` computes webhook slowdown start/end based on equal-progress-per-segment, (2) `dotTouchesNode()` does bounding-box collision for queue capture and subscriber pause/drop. Webhook/broker blockage uses a 30px proximity check with `isComponentOccupied()`.
+- **Collision & thresholds**: `useGameLoop.ts` uses `dotTouchesNode()` bounding-box collision for all node interactions: webhook slowdown (applied only while dot visually overlaps the webhook node), queue capture, and subscriber pause/drop. Webhook/broker blockage uses a 30px proximity check with `isComponentOccupied()`.
 - **Drag-to-move**: implemented in `NodeCard.tsx` using pointer capture + ref-based drag state. State update happens on every `pointermove` (via `moveComponent` in `gameStore.ts`) so connection lines and event canvas follow in real-time. Gear button and output port have `onPointerDown` stopPropagation to prevent drag-start.
 - **Draggable connections**: `draggingConnection` transient state in `gameStore.ts` tracks active drag (type, fromId, connectionId, mouseX, mouseY). `MeshCanvas.tsx` handles pointer move/up for drop detection (bounding-box: 70px × 38px). `ConnectionLine.tsx` hides itself during reassign drag and initiates detach on click. Output port in `NodeCard.tsx` initiates create drags. `cancelDragConnection` deletes the connection when a reassign drag is dropped on nothing. Validation via `connectionRules.ts`.
 - **Connection line geometry**: orthogonal (Boomi-style) lines routed horizontal → vertical → horizontal with rounded 12px corners. Lines start from the output port's right edge and end at the target node's left edge. Port position = `from.x + halfW + 16` where halfW is 60 (120px nodes) or 70 (140px queue nodes). Rendering via `buildOrthogonalSvgPath()` in `orthogonalPath.ts`. All nodes use `minHeight: 56` and fixed `width` for consistent port alignment.
