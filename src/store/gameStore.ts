@@ -89,6 +89,7 @@ export type GameState = {
   isPathOccupied: (publisherId: string) => boolean;
   getPathForPublisher: (publisherId: string) => { x: number; y: number }[];
   getAllPathsForPublisher: (publisherId: string) => { x: number; y: number }[][];
+  _getAllPathsWithNodes: (publisherId: string) => { waypoints: { x: number; y: number }[]; nodeIds: string[] }[];
   getEventValue: (publisherId: string) => number;
   addComponent: (type: ComponentType, x: number, y: number, label: string) => string;
   addConnection: (fromId: string, toId: string) => void;
@@ -102,8 +103,25 @@ export type GameState = {
 };
 
 let dotIdCounter = 0;
-let componentIdCounter = 10; // start above initial component count
-let connectionIdCounter = 10;
+let componentIdCounter = 10; // start above initial component count, bumped after load
+let connectionIdCounter = 10; // bumped after load
+
+// Initialize counters from saved state so IDs don't collide
+function initCountersFromSaved(saved: Partial<GameState> | null) {
+  if (!saved) return;
+  if (saved.components) {
+    for (const c of saved.components) {
+      const m = c.id.match(/^comp-(\d+)$/);
+      if (m) componentIdCounter = Math.max(componentIdCounter, parseInt(m[1]));
+    }
+  }
+  if (saved.connections) {
+    for (const c of saved.connections) {
+      const m = c.id.match(/^conn-(\d+)$/);
+      if (m) connectionIdCounter = Math.max(connectionIdCounter, parseInt(m[1]));
+    }
+  }
+}
 
 function createInitialComponents(): GameComponent[] {
   return [
@@ -176,6 +194,7 @@ function migrateGlobalUpgradeLevels(upgrades: GameState['upgrades'] | undefined)
 export const useGameStore = create<GameState>()(
   immer((set, get) => {
     const saved = loadSavedState();
+    initCountersFromSaved(saved);
 
     return {
       balance: saved?.balance ?? 5000000,
@@ -219,9 +238,68 @@ export const useGameStore = create<GameState>()(
           if (Date.now() - lastFireTime < cooldownDuration) return;
         }
 
-        const paths = state.getAllPathsForPublisher(publisherId);
-        const validPaths = paths.filter(p => p.length >= 2);
+        const allPaths = state._getAllPathsWithNodes(publisherId);
+        const validPaths = allPaths.filter(p => p.waypoints.length >= 2);
         if (validPaths.length === 0) return;
+
+        // Smart routing: without fan-out, pick the queue with most free buffer space
+        // Group paths by their broker (the node before the queue where paths diverge)
+        const selectedPaths: typeof validPaths = [];
+        const groupedByBroker = new Map<string, typeof validPaths>();
+
+        for (const p of validPaths) {
+          const queueNode = p.nodeIds.find(id => state.components.find(c => c.id === id)?.type === 'queue');
+          if (!queueNode) {
+            // No queue in path (e.g. direct broker→subscriber), always include
+            selectedPaths.push(p);
+            continue;
+          }
+          // Find the node before the queue (the broker) as the grouping key
+          const queueIdx = p.nodeIds.indexOf(queueNode);
+          const brokerId = queueIdx > 0 ? p.nodeIds[queueIdx - 1] : 'none';
+          if (!groupedByBroker.has(brokerId)) groupedByBroker.set(brokerId, []);
+          groupedByBroker.get(brokerId)!.push(p);
+        }
+
+        // For each broker group, check fan-out and pick best queue
+        for (const [, group] of groupedByBroker) {
+          // Check if ALL queues in this group have fan-out purchased
+          const allHaveFanOut = group.every(p => {
+            const queueId = p.nodeIds.find(id => state.components.find(c => c.id === id)?.type === 'queue');
+            const queue = state.components.find(c => c.id === queueId);
+            return queue && (queue.upgrades['fanOut'] ?? 0) > 0;
+          });
+
+          if (allHaveFanOut) {
+            selectedPaths.push(...group);
+          } else {
+            // Pick the queue with the most effective free space
+            // Account for: buffered dots + in-flight dots heading toward the queue
+            // Prefer queues that have a subscriber connected (path ends at a subscriber)
+            const pathsWithScore = group.map(p => {
+              const queueId = p.nodeIds.find(id => state.components.find(c => c.id === id)?.type === 'queue')!;
+              const queue = state.components.find(c => c.id === queueId)!;
+              const capacity = 1 + (queue.upgrades['bufferSize'] ?? 0);
+              const queued = state.eventDots.filter(d => d.status === 'queued' && d.queuedAtNodeId === queueId).length;
+              const inFlight = state.eventDots.filter(d =>
+                d.status === 'traveling' &&
+                d.path.some(wp => Math.abs(wp.x - queue.x) < 1 && Math.abs(wp.y - queue.y) < 1)
+              ).length;
+              const freeSpace = capacity - queued - inFlight;
+              return { path: p, freeSpace };
+            });
+
+            // Pick the queue with the most free space; skip full queues if others have room
+            const nonFull = pathsWithScore.filter(p => p.freeSpace > 0);
+            const candidates = nonFull.length > 0 ? nonFull : pathsWithScore;
+
+            let best = candidates[0];
+            for (const c of candidates) {
+              if (c.freeSpace > best.freeSpace) best = c;
+            }
+            selectedPaths.push(best.path);
+          }
+        }
 
         const value = state.getEventValue(publisherId);
         const speed = 0.0007 * state.upgrades.propagationSpeed;
@@ -230,11 +308,11 @@ export const useGameStore = create<GameState>()(
           if (!skipCooldown) {
             draft.publisherCooldowns[publisherId] = Date.now();
           }
-          for (const path of validPaths) {
+          for (const { waypoints } of selectedPaths) {
             const dotId = `dot-${++dotIdCounter}`;
             draft.eventDots.push({
               id: dotId,
-              path,
+              path: waypoints,
               progress: 0,
               speed,
               status: 'traveling',
@@ -467,32 +545,36 @@ export const useGameStore = create<GameState>()(
       },
 
       getAllPathsForPublisher: (publisherId: string) => {
-        const state = get();
-        const paths: { x: number; y: number }[][] = [];
+        return get()._getAllPathsWithNodes(publisherId).map(p => p.waypoints);
+      },
 
-        function walk(nodeId: string, currentPath: { x: number; y: number }[], visited: Set<string>) {
+      _getAllPathsWithNodes: (publisherId: string) => {
+        const state = get();
+        const results: { waypoints: { x: number; y: number }[]; nodeIds: string[] }[] = [];
+
+        function walk(nodeId: string, currentPath: { x: number; y: number }[], currentNodeIds: string[], visited: Set<string>) {
           if (visited.has(nodeId)) return;
           visited.add(nodeId);
           const node = state.components.find(c => c.id === nodeId);
           if (!node) return;
           const path = [...currentPath, { x: node.x, y: node.y }];
+          const nodeIds = [...currentNodeIds, nodeId];
 
           const nextConns = state.connections.filter(c => c.fromId === nodeId);
           if (nextConns.length === 0) {
-            // Leaf node — this is a complete path
-            paths.push(path);
+            results.push({ waypoints: path, nodeIds });
           } else {
             for (const conn of nextConns) {
-              walk(conn.toId, path, new Set(visited));
+              walk(conn.toId, path, nodeIds, new Set(visited));
             }
           }
         }
 
-        walk(publisherId, [], new Set());
+        walk(publisherId, [], [], new Set());
 
         // Expand node-center paths into orthogonal waypoints
-        return paths.map(nodePath => {
-          if (nodePath.length < 2) return nodePath;
+        return results.map(({ waypoints: nodePath, nodeIds }) => {
+          if (nodePath.length < 2) return { waypoints: nodePath, nodeIds };
           const expanded: { x: number; y: number }[] = [nodePath[0]];
           for (let i = 0; i < nodePath.length - 1; i++) {
             const a = nodePath[i];
@@ -504,7 +586,7 @@ export const useGameStore = create<GameState>()(
             }
             expanded.push(b);
           }
-          return expanded;
+          return { waypoints: expanded, nodeIds };
         });
       },
 

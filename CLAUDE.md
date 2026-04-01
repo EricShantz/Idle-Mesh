@@ -117,7 +117,8 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 7. **Buy queues** ($60 each) — placed unconnected, user wires them via drag-to-connect
 8. **Wire connections**: drag from output port to target node, or click existing connections to detach and reassign/delete
 9. **Automation**: unlock auto-publisher tiers for idle income
-10. **Fan-out**: broker connected to multiple queues creates one dot per path (functional)
+10. **Smart routing**: broker connected to multiple queues routes each event to the queue with the most free buffer space (accounting for buffered + in-flight dots). With fan-out upgrade purchased on all queues, events go to all queues (one dot per path).
+11. **Disconnected queues**: queues connected to a broker but not a subscriber still receive and buffer events. Once full, routing skips them in favor of non-full queues. Connecting a subscriber dynamically extends queued dots' paths and begins draining.
 
 ---
 
@@ -147,7 +148,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - Each queue is independent with its own unique ID, buffer, and connections
 - **Always captures** arriving dots on collision — dots never pass through a queue
 - Buffer capacity = `1 + bufferSize upgrade level` (base holds 1 event)
-- **Auto-release**: one queued dot released per frame, only when subscriber is free AND no dots traveling past the queue toward subscriber
+- **Auto-release**: one queued dot released per frame, only when the queue has a current connection to a subscriber AND subscriber is free (no pausing dot, no traveling dot past any queue heading to that subscriber). Uses current connection graph, not baked paths.
 - Visual slot indicators on queue cards show filled/empty buffer slots
 - Upgrades: Add Subscriber Slot (UI only), Persistent Delivery/`fanOut` (UI only), Increase Buffer Size (**functional**)
 
@@ -195,7 +196,7 @@ type EventDot = {
 - `traveling` → slows through webhook when dot visually overlaps the webhook node (bounding-box check via `dotTouchesNode()`), drops near webhook/broker if component is occupied (proximity check)
 - `traveling` → on collision with queue node, always transitions to `queued` if buffer has space, otherwise drops
 - `traveling` → on collision with subscriber node, transitions to `pausing` if subscriber is free, otherwise drops
-- `queued` → auto-released one per queue per frame when subscriber is free AND no traveling dots ahead in path (past queue's progress)
+- `queued` → auto-released one per queue per frame when queue has active connection to subscriber, subscriber is free, and no traveling dots past any queue heading to that subscriber. Path dynamically extended at release time if queue was disconnected when dot arrived.
 - `pausing` → at 50% of consume duration, value is passed directly to `consumeEvent(id, value)` and dot is removed from array
 - `dropped` → gravity fall + fade over 600ms; position is where the blockage occurred. `eventsDropped` counter incremented via batch `setState` after the dot loop (counted during loop, applied once per frame).
 
@@ -282,7 +283,9 @@ Global upgrades use the same `UpgradeDef` system as node upgrades — each is a 
 - Processing border animation on webhook only: cyan arcs sweep left→right along node border while a dot passes through (RAF-driven, imperative DOM updates via refs). Brokers have no animation.
 - **Collision-based detection**: `dotTouchesNode()` bounding-box hit test for queue capture and subscriber pause/drop; proximity check (30px) for webhook/broker blockage. Replaced old progress-threshold system.
 - **Mutable array game loop**: dots processed sequentially in `for` loop so each sees results of prior dots in same frame — prevents race conditions
-- **Queue buffering**: dots always captured on queue collision (no pass-through), auto-release one per frame when subscriber free. Visual slot indicators. Buffer capacity = 1 + bufferSize level. Overflow drops at queue edge.
+- **Queue buffering**: dots always captured on queue collision (no pass-through), auto-release one per frame when queue is connected to subscriber and subscriber is free. Visual slot indicators. Buffer capacity = 1 + bufferSize level. Overflow drops at queue edge. Disconnected queues buffer events and hold them until a subscriber is connected.
+- **Smart queue routing**: broker with multiple queues routes each event to the queue with most free buffer space (factoring in-flight dots). Fan-out upgrade on all queues sends to all paths instead.
+- **Connection-aware dots**: traveling dots validate their path against current connections each frame; removed connections cause immediate drop. Queued dot release checks live connection graph, not baked paths.
 - Blockage at webhook (drops at left edge if occupied — detected in a 20px zone before the node's left edge via `isComponentOccupied()` which checks for traveling dots inside the bounding box)
 - Broker: instant relay (no slowdown, no blockage, no border animation)
 - Blockage at subscriber (drops at subscriber edge if consuming)
@@ -340,12 +343,14 @@ src/
 ## Development Notes for Claude Code
 
 - **Starting balance for testing**: change `balance: saved?.balance ?? 5000000` in `gameStore.ts`. Clear localStorage **then hard-refresh the page** (Ctrl+Shift+R) to reset — the auto-save subscriber will re-persist in-memory state if the tab stays open.
-- **Component IDs**: initial components use fixed IDs (`pub-1`, `webhook-1`, `sub-1`, `conn-1`, `conn-2`). Dynamically added components use counter-based IDs starting at 10 (`comp-10+`, `conn-10+`).
+- **Component IDs**: initial components use fixed IDs (`pub-1`, `webhook-1`, `sub-1`, `conn-1`, `conn-2`). Dynamically added components use counter-based IDs starting at 10 (`comp-10+`, `conn-10+`). Counters are initialized from saved state on load via `initCountersFromSaved()` to prevent duplicate IDs.
 - **Collision & thresholds**: `useGameLoop.ts` uses `dotTouchesNode()` bounding-box collision for all node interactions: webhook slowdown (applied only while dot visually overlaps the webhook node), queue capture, and subscriber pause/drop. Webhook blockage uses a 20px approach zone before the node's left edge; `isComponentOccupied()` (defined inside the dot loop for frame-accurate state) detects traveling dots inside the webhook via `dotTouchesNode()`. Brokers skip blockage entirely.
 - **Drag-to-move**: implemented in `NodeCard.tsx` using pointer capture + ref-based drag state. State update happens on every `pointermove` (via `moveComponent` in `gameStore.ts`) so connection lines and event canvas follow in real-time. Gear button and output port have `onPointerDown` stopPropagation to prevent drag-start.
 - **Draggable connections**: `draggingConnection` transient state in `gameStore.ts` tracks active drag (type, fromId, connectionId, mouseX, mouseY). `MeshCanvas.tsx` handles pointer move/up for drop detection (bounding-box: 70px × 38px). `ConnectionLine.tsx` hides itself during reassign drag and initiates detach on click. Output port in `NodeCard.tsx` initiates create drags. `cancelDragConnection` deletes the connection when a reassign drag is dropped on nothing. Validation via `connectionRules.ts`.
 - **Connection line geometry**: orthogonal (Boomi-style) lines routed horizontal → vertical → horizontal with rounded 12px corners. Lines start from the output port's right edge and end at the target node's left edge. Port position = `from.x + halfW + 16` where halfW is 60 (120px nodes) or 70 (140px queue nodes). Rendering via `buildOrthogonalSvgPath()` in `orthogonalPath.ts`. All nodes use `minHeight: 56` and fixed `width` for consistent port alignment.
-- **Fan-out path resolution**: `getAllPathsForPublisher()` does DFS that forks at branch points, then expands each segment into orthogonal waypoints (horizontal → vertical → horizontal). Returns array of complete paths with orthogonal waypoints so dots follow the same visual path. `fireEvent()` creates one dot per valid path. `getPathForPublisher()` wraps it returning the first path for backward compat.
+- **Smart routing & fan-out**: `_getAllPathsWithNodes()` does DFS returning paths with both waypoints and node IDs. `fireEvent()` groups paths by broker, then for each group: if all queues have fan-out upgrade, sends to all; otherwise picks the queue with the most effective free space (buffer capacity − queued − in-flight dots). Prefers non-full queues. `getAllPathsForPublisher()` wraps it returning just waypoints. `getPathForPublisher()` returns the first path for backward compat.
+- **Connection-aware dot lifecycle**: traveling dots validate their remaining path against the current connection graph each frame — if a connection was removed, the dot drops immediately. Queued dots only release when the queue has an active connection to a subscriber (checked via `state.connections`, not baked path). Queue collision check skips waypoints the dot has already passed to prevent re-capture after release.
+- **ID counters**: `componentIdCounter` and `connectionIdCounter` are initialized from saved state on load via `initCountersFromSaved()` to prevent duplicate IDs after reload.
 - **Clock consistency**: `pauseStartTime` uses `Date.now()` (Unix epoch). The RAF `time` argument is a different clock — don't mix them.
 - **Upgrade effects location**: most per-component upgrade effects are read in `useGameLoop.ts` by looking up the component by position from the dot's path array. Global upgrade effects are applied in `purchaseGlobalUpgrade` in `gameStore.ts`.
 - **`getUpgradesForType`** is duplicated in `NodeModal.tsx` and `NodeCard.tsx` — keep both in sync when adding new component types.

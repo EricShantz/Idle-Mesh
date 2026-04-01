@@ -71,9 +71,38 @@ export function useGameLoop() {
           };
 
           if (dot.status === 'traveling') {
-            let actualSpeed = dot.speed * state.upgrades.propagationSpeed;
-
+            // Drop dots whose path no longer matches the connection graph (connection was removed)
             const eventPos = interpolatePath(dot.path, dot.progress);
+            // Extract component nodes from the path (skip orthogonal midpoints)
+            const pathComps: { comp: typeof state.components[0]; idx: number }[] = [];
+            for (let wp = 0; wp < dot.path.length; wp++) {
+              const pt = dot.path[wp];
+              const comp = state.components.find(c => Math.abs(c.x - pt.x) < 1 && Math.abs(c.y - pt.y) < 1);
+              if (comp && (pathComps.length === 0 || pathComps[pathComps.length - 1].comp.id !== comp.id)) {
+                pathComps.push({ comp, idx: wp });
+              }
+            }
+            // Check each consecutive component pair ahead of the dot has a connection
+            let pathInvalid = false;
+            for (let pc = 0; pc < pathComps.length - 1; pc++) {
+              const fromProgress = pathComps[pc].idx / (dot.path.length - 1);
+              // Only validate segments the dot hasn't passed yet
+              if (pathComps[pc + 1].idx / (dot.path.length - 1) < dot.progress - 0.01) continue;
+              const connExists = state.connections.some(c =>
+                c.fromId === pathComps[pc].comp.id && c.toId === pathComps[pc + 1].comp.id
+              );
+              if (!connExists) {
+                pathInvalid = true;
+                break;
+              }
+            }
+            if (pathInvalid) {
+              droppedCount++;
+              updated.push({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: '#ff4444' } as Dot);
+              continue;
+            }
+
+            let actualSpeed = dot.speed * state.upgrades.propagationSpeed;
 
             const webhookComponent = state.components.find(c => c.type === 'webhook');
             if (webhookComponent && dotTouchesNode(eventPos.x, eventPos.y, webhookComponent.x, webhookComponent.y)) {
@@ -104,9 +133,14 @@ export function useGameLoop() {
             const newProgress = Math.min(dot.progress + actualSpeed * dt, 1);
             const newPos = interpolatePath(dot.path, newProgress);
 
-            // Check collision with queues along the path
+            // Check collision with queues along the path (include last waypoint for disconnected queues)
+            // Only check queues that are AHEAD of the dot's current progress to avoid re-capturing after release
             let queued = false;
-            for (let j = 0; j < dot.path.length - 1; j++) {
+            for (let j = 0; j < dot.path.length; j++) {
+              // Skip waypoints the dot has already passed
+              const waypointProgress = j / (dot.path.length - 1);
+              if (waypointProgress < dot.progress - 0.01) continue;
+
               const pathPoint = dot.path[j];
               const queue = state.components.find(c =>
                 c.type === 'queue' && Math.hypot(c.x - pathPoint.x, c.y - pathPoint.y) < 50
@@ -201,7 +235,7 @@ export function useGameLoop() {
         const releasedQueues = new Set<string>();
 
         for (let i = 0; i < updated.length; i++) {
-          const dot = updated[i];
+          let dot = updated[i];
           if (dot.status !== 'queued' || !dot.queuedAtNodeId) continue;
           if (releasedQueues.has(dot.queuedAtNodeId)) continue;
 
@@ -215,20 +249,82 @@ export function useGameLoop() {
           );
           if (!isFirst) continue;
 
-          // Check if subscriber is free — check against the updated array
-          const subscriberPos = dot.path[dot.path.length - 1];
-          const isSubscriberBusy = updated.some(d =>
-            d.id !== dot.id &&
-            d.path.length > 0 &&
-            Math.hypot(d.path[d.path.length - 1].x - subscriberPos.x, d.path[d.path.length - 1].y - subscriberPos.y) < 50 &&
-            (
-              (d.status === 'pausing' && !d.moneyAdded) ||
-              // Only count traveling dots that are past the queue (between queue and subscriber)
-              (d.status === 'traveling' && d.progress > dot.progress)
-            )
+          // Find the subscriber this queue feeds into (check current connections, not baked path)
+          const queueOutConn = state.connections.find(c => c.fromId === queueId);
+          const subscriberComp = queueOutConn
+            ? state.components.find(c => c.id === queueOutConn.toId && c.type === 'subscriber')
+            : null;
+          // Also check baked path for dots that already have a valid path
+          const endPoint = dot.path[dot.path.length - 1];
+          const bakedSubscriber = state.components.find(c =>
+            c.type === 'subscriber' && Math.hypot(c.x - endPoint.x, c.y - endPoint.y) < 50
           );
+          const targetSub = subscriberComp ?? bakedSubscriber;
 
-          if (!isSubscriberBusy) {
+          // Check if subscriber is free — only block on dots that are past all queues (on queue→subscriber segment)
+          const isSubscriberBusy = !targetSub ? false : updated.some(d => {
+            if (d.id === dot.id || d.path.length === 0) return false;
+            const dEnd = d.path[d.path.length - 1];
+            if (Math.hypot(dEnd.x - targetSub.x, dEnd.y - targetSub.y) >= 50) return false;
+            if (d.status === 'pausing' && !d.moneyAdded) return true;
+            if (d.status === 'traveling') {
+              // Only block if this dot is past all queues in its path (on the final segment to subscriber)
+              const dPos = interpolatePath(d.path, d.progress);
+              const isPastAllQueues = !d.path.some((wp, idx) => {
+                if (idx >= d.path.length - 1) return false; // skip last waypoint
+                const q = state.components.find(c =>
+                  c.type === 'queue' && Math.abs(c.x - wp.x) < 1 && Math.abs(c.y - wp.y) < 1
+                );
+                if (!q) return false;
+                // Is the dot still at or before this queue?
+                const queueProgress = idx / (d.path.length - 1);
+                return d.progress <= queueProgress + 0.01;
+              });
+              return isPastAllQueues;
+            }
+            return false;
+          });
+
+          // Check if queue currently has a connection to a subscriber
+          let hasSubscriber = false;
+          let pendingExtension: { target: { x: number; y: number } } | null = null;
+
+          // Always use current connections as source of truth
+          {
+            const queue = state.components.find(c => c.id === queueId);
+            if (queue) {
+              const outConns = state.connections.filter(c => c.fromId === queueId);
+              for (const conn of outConns) {
+                const target = state.components.find(c => c.id === conn.toId && c.type === 'subscriber');
+                if (target) {
+                  hasSubscriber = true;
+                  // Only need to extend path if it doesn't already end at this subscriber
+                  const alreadyHasPath = Math.abs(endPoint.x - target.x) < 1 && Math.abs(endPoint.y - target.y) < 1;
+                  if (!alreadyHasPath) {
+                    pendingExtension = { target: { x: target.x, y: target.y } };
+                  }
+                  break;
+                }
+              }
+            }
+          }
+
+          if (hasSubscriber && !isSubscriberBusy) {
+            // Apply path extension only at release time so queued dots aren't mutated every frame
+            if (pendingExtension) {
+              const queueComp2 = state.components.find(c => c.id === queueId)!;
+              const extension: { x: number; y: number }[] = [];
+              if (Math.abs(queueComp2.y - pendingExtension.target.y) >= 1) {
+                const midX = (queueComp2.x + pendingExtension.target.x) / 2;
+                extension.push({ x: midX, y: queueComp2.y });
+                extension.push({ x: midX, y: pendingExtension.target.y });
+              }
+              extension.push(pendingExtension.target);
+              const newPath = [...dot.path, ...extension];
+              const oldLen = dot.path.length - 1;
+              const newLen = newPath.length - 1;
+              dot = { ...dot, path: newPath, progress: oldLen > 0 ? (dot.progress * oldLen) / newLen : 0 } as typeof dot;
+            }
             releasedQueues.add(queueId);
             // Set progress past the queue's far edge so the dot won't re-collide.
             // Since queued dots render at queue center (EventCanvas snaps them),
