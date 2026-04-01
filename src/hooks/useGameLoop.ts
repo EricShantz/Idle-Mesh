@@ -226,7 +226,32 @@ export function useGameLoop() {
 
           if (!isSubscriberBusy) {
             releasedQueues.add(queueId);
-            updated[i] = { ...dot, status: 'traveling', pauseStartTime: undefined, queuedAtNodeId: undefined } as Dot;
+            // Set progress past the queue's far edge so the dot won't re-collide.
+            // Since queued dots render at queue center (EventCanvas snaps them),
+            // and queue nodes render above the event canvas (z-26 vs z-25),
+            // the dot will appear to emerge from behind the queue.
+            const queue = state.components.find(c => c.id === queueId);
+            let releaseProgress = dot.progress;
+            if (queue) {
+              const totalSegments = dot.path.length - 1;
+              // Find the queue's waypoint index in the path
+              let bestIdx = 0;
+              let bestDist = Infinity;
+              for (let pi = 0; pi < dot.path.length; pi++) {
+                const d = Math.hypot(dot.path[pi].x - queue.x, dot.path[pi].y - queue.y);
+                if (d < bestDist) { bestDist = d; bestIdx = pi; }
+              }
+              // Calculate how far past the queue waypoint we need to go to clear dotTouchesNode
+              if (bestIdx < totalSegments) {
+                const from = dot.path[bestIdx];
+                const to = dot.path[bestIdx + 1];
+                const segLen = Math.hypot(to.x - from.x, to.y - from.y);
+                // Need to clear NODE_HALF_W + DOT_RADIUS to exit the bounding box
+                const clearanceFraction = segLen > 0 ? (NODE_HALF_W + DOT_RADIUS + 2) / segLen : 1;
+                releaseProgress = Math.min((bestIdx + clearanceFraction) / totalSegments, 1);
+              }
+            }
+            updated[i] = { ...dot, status: 'traveling', progress: releaseProgress, pauseStartTime: undefined, queuedAtNodeId: undefined } as Dot;
           }
         }
 
