@@ -82,9 +82,10 @@ export const queueUpgrades: UpgradeDef[] = [
   {
     key: 'bufferSize',
     label: 'Increase Buffer Size',
-    description: 'Allows more in-flight events before dropping',
+    description: 'Allows more in-flight events before dropping (max 20 slots)',
     baseCost: 45,
     costMultiplier: 2,
+    maxLevel: 17,
   },
 ];
 
@@ -101,7 +102,7 @@ export const dmqUpgrades: UpgradeDef[] = [
     label: 'Increase Buffer Size',
     description: 'Hold more events before overflow',
     baseCost: 45,
-    costMultiplier: 2,
+    costMultiplier: 1.3,
   },
   {
     key: 'dmqReleaseSpeed',
@@ -181,6 +182,21 @@ export const globalUpgrades: UpgradeDef[] = [
     maxLevel: 5,
   },
 ];
+
+/** Max DMQ buffer slots based on current width level. 2 rows, 8 per row at base, +3 per width upgrade. */
+export function getDmqMaxBuffer(dmqWidthLevel: number): number {
+  return (8 + dmqWidthLevel * 3) * 2;
+}
+
+/** Slots per row for DMQ visual indicators. */
+export function getDmqSlotsPerRow(dmqWidthLevel: number): number {
+  return 8 + dmqWidthLevel * 3;
+}
+
+/** Effective max level for dmqBufferSize given current width (base capacity is 3). */
+export function getDmqBufferMaxLevel(dmqWidthLevel: number): number {
+  return getDmqMaxBuffer(dmqWidthLevel) - 3;
+}
 
 export function getUpgradeCost(def: UpgradeDef, currentLevel: number, costReduction: number): number {
   const raw = def.baseCost * Math.pow(def.costMultiplier, currentLevel);

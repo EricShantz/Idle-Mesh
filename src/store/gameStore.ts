@@ -292,7 +292,7 @@ export const useGameStore = create<GameState>()(
             const pathsWithScore = group.map(p => {
               const queueId = p.nodeIds.find(id => state.components.find(c => c.id === id)?.type === 'queue')!;
               const queue = state.components.find(c => c.id === queueId)!;
-              const capacity = 1 + (queue.upgrades['bufferSize'] ?? 0);
+              const capacity = 3 + (queue.upgrades['bufferSize'] ?? 0);
               const queued = state.eventDots.filter(d => d.status === 'queued' && d.queuedAtNodeId === queueId).length;
               const inFlight = state.eventDots.filter(d =>
                 d.status === 'traveling' &&

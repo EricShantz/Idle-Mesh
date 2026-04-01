@@ -8,6 +8,7 @@ import {
   subscriberUpgrades,
   dmqUpgrades,
   getUpgradeCost,
+  getDmqBufferMaxLevel,
   type UpgradeDef,
 } from '../store/upgradeConfig';
 import { formatMoney } from '../utils/formatMoney';
@@ -30,8 +31,9 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number): strin
   switch (upgradeKey) {
     // Buffer/slot upgrades
     case 'bufferSize':
-    case 'addSubscriberSlot':
     case 'dmqBufferSize':
+      return `${3 + currentLevel} → ${3 + nextLevel}`;
+    case 'addSubscriberSlot':
       return `${1 + currentLevel} → ${1 + nextLevel}`;
 
     // DMQ width
@@ -113,7 +115,10 @@ export function NodeModal() {
 
   const handleUpgrade = (def: UpgradeDef) => {
     const level = node.upgrades[def.key] ?? 0;
-    if (def.maxLevel && level >= def.maxLevel) return;
+    const effectiveMax = def.key === 'dmqBufferSize'
+      ? getDmqBufferMaxLevel(node.upgrades['dmqWidth'] ?? 0)
+      : def.maxLevel;
+    if (effectiveMax && level >= effectiveMax) return;
     const cost = getUpgradeCost(def, level, costReduction);
     if (spend(cost)) {
       upgradeComponent(node.id, def.key);
@@ -150,7 +155,11 @@ export function NodeModal() {
         <div className="flex flex-col gap-1.5">
           {upgrades.map(def => {
             const level = node.upgrades[def.key] ?? 0;
-            const maxed = def.maxLevel ? level >= def.maxLevel : false;
+            const effectiveMax = def.key === 'dmqBufferSize'
+              ? getDmqBufferMaxLevel(node.upgrades['dmqWidth'] ?? 0)
+              : def.maxLevel;
+            const maxed = effectiveMax ? level >= effectiveMax : false;
+            const widthCapped = def.key === 'dmqBufferSize' && maxed;
             const cost = getUpgradeCost(def, level, costReduction);
             const canAfford = balance >= cost;
 
@@ -179,6 +188,9 @@ export function NodeModal() {
                 <div className="mt-0.5">
                   {maxed ? 'MAX' : formatMoney(cost)}
                 </div>
+                {widthCapped && (
+                  <div className="text-[10px] text-amber-400 mt-0.5">Increase Width to unlock more capacity</div>
+                )}
               </button>
             );
           })}

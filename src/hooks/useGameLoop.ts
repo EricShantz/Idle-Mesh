@@ -218,7 +218,7 @@ export function useGameLoop() {
             if (nextInteractable && nextInteractable.comp.type === 'queue') {
               const queue = nextInteractable.comp;
               if (dotTouchesNode(newPos.x, newPos.y, queue.x, queue.y)) {
-                const bufferSize = 1 + (queue.upgrades['bufferSize'] ?? 0);
+                const bufferSize = 3 + (queue.upgrades['bufferSize'] ?? 0);
                 // Count from the already-processed updated array for accurate counts
                 const queuedCount = updated.filter(d =>
                   d.status === 'queued' && d.queuedAtNodeId === queue.id
@@ -307,7 +307,7 @@ export function useGameLoop() {
 
                 if (dropX >= dmq.x - dmqHalfW && dropX <= dmq.x + dmqHalfW && newDropY >= dmqTop) {
                   // Check DMQ buffer capacity
-                  const dmqBufferSize = 1 + (dmq.upgrades['dmqBufferSize'] ?? 0);
+                  const dmqBufferSize = 3 + (dmq.upgrades['dmqBufferSize'] ?? 0);
                   const dmqQueuedCount = updated.filter(d =>
                     d.status === 'queued' && d.queuedAtNodeId === dmq.id
                   ).length;

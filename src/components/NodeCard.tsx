@@ -10,6 +10,8 @@ import {
   subscriberUpgrades,
   dmqUpgrades,
   getUpgradeCost,
+  getDmqBufferMaxLevel,
+  getDmqSlotsPerRow,
 } from '../store/upgradeConfig';
 import { canConnect } from '../utils/connectionRules';
 
@@ -92,7 +94,10 @@ export function NodeCard({ component }: Props) {
   const upgrades = getUpgradesForType(component.type).filter(d => !d.hidden);
   const affordableUpgradeCount = upgrades.filter(def => {
     const level = component.upgrades[def.key] ?? 0;
-    if (def.maxLevel && level >= def.maxLevel) return false; // maxed out
+    const effectiveMax = def.key === 'dmqBufferSize'
+      ? getDmqBufferMaxLevel(component.upgrades['dmqWidth'] ?? 0)
+      : def.maxLevel;
+    if (effectiveMax && level >= effectiveMax) return false; // maxed out
     const cost = getUpgradeCost(def, level, costReduction);
     return balance >= cost;
   }).length;
@@ -358,32 +363,15 @@ export function NodeCard({ component }: Props) {
           <div className="text-[10px] opacity-60">(click to fire)</div>
         )}
         {isDmq && (
-          <div className="flex gap-1.5 mt-1">
-            {Array.from({ length: 1 + (component.upgrades['dmqBufferSize'] ?? 0) }).map((_, i) => {
-              const queuedCount = eventDots.filter(d => d.status === 'queued' && d.queuedAtNodeId === component.id).length;
-              return (
-                <div
-                  key={i}
-                  className="w-1.5 h-1.5 rounded-full"
-                  style={{
-                    backgroundColor: i < queuedCount ? '#fb923c' : '#1e293b',
-                  }}
-                />
-              );
-            })}
-          </div>
-        )}
-        {component.type === 'queue' && (
-          <div className="flex gap-1.5 mt-1">
+          <div className="flex flex-col gap-1 mt-1 items-center">
             {(() => {
-              const capacity = 1 + (component.upgrades['bufferSize'] ?? 0);
+              const capacity = 3 + (component.upgrades['dmqBufferSize'] ?? 0);
               const queuedDots = eventDots
                 .filter(d => d.status === 'queued' && d.queuedAtNodeId === component.id)
                 .sort((a, b) => (a.pauseStartTime ?? 0) - (b.pauseStartTime ?? 0));
-              // oldest first in array: [oldest, ..., newest]
-              // Visual: empty slots on left, newest on leftmost filled, oldest on rightmost
               const emptyCount = capacity - queuedDots.length;
-              return Array.from({ length: capacity }).map((_, i) => {
+              const slotsPerRow = getDmqSlotsPerRow(component.upgrades['dmqWidth'] ?? 0);
+              const slots = Array.from({ length: capacity }).map((_, i) => {
                 const dot = i < emptyCount ? null : queuedDots[queuedDots.length - 1 - (i - emptyCount)];
                 return (
                   <div
@@ -395,6 +383,44 @@ export function NodeCard({ component }: Props) {
                   />
                 );
               });
+              const rows: typeof slots[] = [];
+              for (let i = 0; i < slots.length; i += slotsPerRow) {
+                rows.push(slots.slice(i, i + slotsPerRow));
+              }
+              return rows.map((row, ri) => (
+                <div key={ri} className="flex gap-1.5">{row}</div>
+              ));
+            })()}
+          </div>
+        )}
+        {component.type === 'queue' && (
+          <div className="flex flex-col gap-1 mt-1 items-center">
+            {(() => {
+              const capacity = 3 + (component.upgrades['bufferSize'] ?? 0);
+              const queuedDots = eventDots
+                .filter(d => d.status === 'queued' && d.queuedAtNodeId === component.id)
+                .sort((a, b) => (a.pauseStartTime ?? 0) - (b.pauseStartTime ?? 0));
+              const emptyCount = capacity - queuedDots.length;
+              const slots = Array.from({ length: capacity }).map((_, i) => {
+                const dot = i < emptyCount ? null : queuedDots[queuedDots.length - 1 - (i - emptyCount)];
+                return (
+                  <div
+                    key={i}
+                    className="w-1.5 h-1.5 rounded-full"
+                    style={{
+                      backgroundColor: dot ? (dot.isRetry ? '#fb923c' : '#66ffff') : '#1e293b',
+                    }}
+                  />
+                );
+              });
+              // Wrap into rows of 10
+              const rows: typeof slots[] = [];
+              for (let i = 0; i < slots.length; i += 10) {
+                rows.push(slots.slice(i, i + 10));
+              }
+              return rows.map((row, ri) => (
+                <div key={ri} className="flex gap-1.5">{row}</div>
+              ));
             })()}
           </div>
         )}

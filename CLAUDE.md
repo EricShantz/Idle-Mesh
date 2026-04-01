@@ -150,7 +150,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - User wires connections manually via drag-to-connect (output port → target node)
 - Each queue is independent with its own unique ID, buffer, and connections
 - **Always captures** arriving dots on collision — dots never pass through a queue
-- Buffer capacity = `1 + bufferSize upgrade level` (base holds 1 event)
+- Buffer capacity = `3 + bufferSize upgrade level` (base holds 3 events, max 20 slots = 2 rows of 10)
 - **Auto-release**: FIFO by `pauseStartTime` — oldest queued dot released first, one per frame, only when the queue has a current connection to a subscriber AND subscriber is free (no pausing dot, no traveling dot past any queue heading to that subscriber). Uses current connection graph, not baked paths.
 - **Visual slot indicators**: filled slots pack to the right (oldest dot = rightmost slot, newest = leftmost filled slot). Empty slots on the left. Retry dots show orange (`#fb923c`), normal dots cyan (`#66ffff`). Sorted by `pauseStartTime`.
 - **Subscriber slot limit**: queue starts with 1 subscriber connection slot, +1 per `addSubscriberSlot` upgrade level. Enforced the same way as broker queue slots.
@@ -163,7 +163,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - **Output port**: top-center (unique — all other nodes have right-edge ports). Can only connect to a broker.
 - **Catch mechanic**: while a dropped (non-retry) dot falls with gravity, if its `dropX` is within the DMQ's horizontal bounds and `dropY` reaches the DMQ's top edge, the dot is caught and queued in the DMQ buffer.
 - **Dynamic width**: base 120px, +40px per `dmqWidth` upgrade level. Wider = catches more falling events.
-- **Buffer**: works like regular queues — capacity = 1 + `dmqBufferSize` upgrade level. Visual slot indicators (orange when filled). Releases one dot per frame only when the previous retry dot has cleared the DMQ→broker connection line.
+- **Buffer**: works like regular queues — capacity = `3 + dmqBufferSize` upgrade level (base holds 3 events). Max capacity depends on width: 2 rows of `8 + dmqWidthLevel * 3` slots each (base = 16 max). Visual slot indicators use same fill/empty logic as queues (packed right, oldest rightmost, retry orange, normal cyan). Upgrade modal shows "Increase Width to unlock more capacity" when buffer is width-capped. Releases one dot per frame only when the previous retry dot has cleared the DMQ→broker connection line.
 - **Retry behavior**: released dots travel from DMQ → broker → same original route (rebuilt from current component positions via stored `originalNodeIds`). Retry dots are orange (`#fb923c`), worth `originalValue * (10% + 10% per dmqValueRecovery level)`, capped at 100%. Retry dots that drop a second time turn dark grey and are **not** re-caught by the DMQ (no infinite loops).
 - **Pass 2 exclusion**: DMQ-queued dots are skipped by the regular queue release pass (Pass 2); they are only released by the dedicated DMQ release pass (Pass 3).
 - **Faster Release**: accelerating curve (`boostPct = level * (level + 9) / 2`) reduces how far the previous retry dot must travel before the next is released. At level 0 the previous dot must be 100% past the DMQ→broker segment; each level reduces this threshold. Max level 10 (95%).
@@ -256,14 +256,14 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 |---|---|---|---|
 | Add Subscriber Slot | **Functional**: max subscriber connections = 1 + level | $30 | ×2 |
 | Persistent Delivery (`fanOut`) | **Functional**: all connected queues receive every event (broker-level routing) | $100 (one-time) |  |
-| Increase Buffer Size | **Functional**: buffer capacity = 1 + level | $45 | ×2 |
+| Increase Buffer Size | **Functional**: buffer capacity = 3 + level (max 20 slots) | $45 | ×2 | 17 |
 
 ### Dead Message Queue (DMQ)
 | Upgrade | Effect | Base Cost | Multiplier | Max Level |
 |---|---|---|---|---|
 | Increase Width +40px | Wider catch zone (base 120px) | $30 | ×1.8 | unlimited |
 | Faster Release | Accelerating: `level*(level+9)/2`% release threshold reduction | $40 | ×1.8 | 10 (95%) |
-| Increase Buffer Size | Buffer capacity = 1 + level | $45 | ×2 | unlimited |
+| Increase Buffer Size | Buffer capacity = 3 + level, max depends on width (2 rows of `8 + widthLevel*3`) | $45 | ×1.3 | width-dependent |
 | Value Recovery +10% | Retry value = (10% + 10%/level) of original, max 100% | $50 | ×2 | 9 |
 
 ### Subscriber
