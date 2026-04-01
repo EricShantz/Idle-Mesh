@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { type GameComponent, useGameStore } from '../store/gameStore';
+import { interpolatePath } from '../utils/pathUtils';
 import {
   publisherUpgrades,
   webhookUpgrades,
@@ -101,6 +102,95 @@ export function NodeCard({ component }: Props) {
         component.type
       ) && component.id !== draggingConnection.fromId
     : false;
+
+  // Compute dot's normalized x-position through this webhook/broker (0→1), or -1 if none
+  const isWebhookOrBroker = component.type === 'webhook' || component.type === 'broker';
+  const isWebhook = component.type === 'webhook';
+  const dotProgress = useMemo(() => {
+    if (!isWebhook) return -1;
+    const halfW = 60;
+    const topOff = 28;
+    const botOff = 28;
+    const dotR = 6;
+    let best = -1;
+    for (const d of eventDots) {
+      if (d.status !== 'traveling') continue;
+      const pos = interpolatePath(d.path, d.progress);
+      const left = component.x - halfW;
+      const right = component.x + halfW;
+      const top = component.y - topOff;
+      const bottom = component.y + botOff;
+      const cx = Math.max(left, Math.min(pos.x, right));
+      const cy = Math.max(top, Math.min(pos.y, bottom));
+      if (Math.hypot(pos.x - cx, pos.y - cy) <= dotR) {
+        const t = Math.max(0, Math.min(1, (pos.x - left) / (right - left)));
+        if (t > best) best = t;
+      }
+    }
+    return best;
+  }, [isWebhook, component.x, component.y, eventDots]);
+
+  // Imperative RAF-driven border animation synced to dot position
+  const dotProgressRef = useRef(-1);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const topPathRef = useRef<SVGPathElement>(null);
+  const botPathRef = useRef<SVGPathElement>(null);
+  const borderRaf = useRef<number>(0);
+  const displayedProgress = useRef(0);
+  const currentOpacity = useRef(0);
+  const graceTicks = useRef(0); // hold animation for N frames after dot exits
+
+  dotProgressRef.current = dotProgress;
+
+  useEffect(() => {
+    if (!isWebhook) return;
+
+    // Set initial values imperatively so React never manages these properties
+    if (svgRef.current) svgRef.current.style.opacity = '0';
+    if (topPathRef.current) topPathRef.current.style.strokeDashoffset = '35';
+    if (botPathRef.current) botPathRef.current.style.strokeDashoffset = '35';
+
+    const tick = () => {
+      const dp = dotProgressRef.current;
+
+      if (dp >= 0) {
+        if (!graceTicks.current || displayedProgress.current > 1) {
+          // New dot entering — fresh start (also reset if previous animation was finishing)
+          displayedProgress.current = dp;
+        } else {
+          // Continuing current transit — only move forward
+          displayedProgress.current = Math.max(displayedProgress.current, dp);
+        }
+        graceTicks.current = 1; // mark as active
+        currentOpacity.current = 1;
+      } else if (graceTicks.current && displayedProgress.current < 1.35) {
+        // Dot exited — push progress to completion before fading
+        displayedProgress.current = Math.min(1.35, displayedProgress.current + 0.12);
+        currentOpacity.current = 1;
+      } else if (currentOpacity.current > 0) {
+        // Fade out
+        currentOpacity.current = Math.max(0, currentOpacity.current - 0.12);
+        if (currentOpacity.current === 0) {
+          displayedProgress.current = 0;
+          graceTicks.current = 0; // reset for next dot
+        }
+      }
+
+      if (svgRef.current) {
+        svgRef.current.style.opacity = String(currentOpacity.current);
+      }
+      // Map displayedProgress 0→1 to dashoffset 35→-65
+      // At 35: dash (length 35) is just off the left end of path
+      // At -65: dash is just off the right end of path
+      const offset = 35 - displayedProgress.current * 100;
+      if (topPathRef.current) topPathRef.current.style.strokeDashoffset = String(offset);
+      if (botPathRef.current) botPathRef.current.style.strokeDashoffset = String(offset);
+
+      borderRaf.current = requestAnimationFrame(tick);
+    };
+    borderRaf.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(borderRaf.current);
+  }, [isWebhook]);
 
   const handleOutputPortDown = (e: React.PointerEvent) => {
     e.stopPropagation();
@@ -209,6 +299,31 @@ export function NodeCard({ component }: Props) {
               clipPath: `inset(${(1 - cooldownPct) * 100}% 0 0 0)`,
             }}
           />
+        )}
+        {/* Processing border animation for webhook/broker — RAF-driven, always mounted */}
+        {isWebhook && (
+          <svg
+            ref={svgRef}
+            className="absolute inset-0 pointer-events-none"
+            width="100%"
+            height="100%"
+            style={{ overflow: 'visible' }}
+          >
+            <path
+              ref={topPathRef}
+              d="M 0,28 L 0,8 Q 0,0 8,0 L 112,0 Q 120,0 120,8 L 120,28"
+              fill="none" stroke="#66ffff" strokeWidth="2" strokeLinecap="round"
+              pathLength={100}
+              style={{ strokeDasharray: '35 165', filter: 'drop-shadow(0 0 4px #66ffff)' }}
+            />
+            <path
+              ref={botPathRef}
+              d="M 0,28 L 0,48 Q 0,56 8,56 L 112,56 Q 120,56 120,48 L 120,28"
+              fill="none" stroke="#66ffff" strokeWidth="2" strokeLinecap="round"
+              pathLength={100}
+              style={{ strokeDasharray: '35 165', filter: 'drop-shadow(0 0 4px #66ffff)' }}
+            />
+          </svg>
         )}
         <button
           onClick={handleUpgradeClick}

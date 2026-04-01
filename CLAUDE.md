@@ -100,6 +100,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - Publisher click is on a **1-second cooldown** (upgradeable). Clicking during cooldown does nothing. A dark translucent overlay drains downward during cooldown (CSS `clipPath` animation driven by RAF in `NodeCard.tsx`).
 - Events travel at base speed `0.0007` (progress units/ms), taking ~1.3 seconds to traverse the full path
 - **Webhook slowdown**: events travel at 40% speed while passing through the webhook. The slowdown region is dynamically calculated to align with the webhook's visual edges. Up to 3 "Faster Routing" upgrades reduce this by 20% each.
+- **Processing border animation**: when an event dot passes through a webhook/broker (hidden behind it due to z-index), two cyan (`#66ffff`) border arcs animate from the left midpoint — one traveling clockwise along the top edge, one counterclockwise along the bottom — converging at the right midpoint. Driven by a dedicated RAF loop in `NodeCard.tsx` using SVG `stroke-dashoffset` on two half-perimeter `<path>` elements, manipulated imperatively via refs (bypasses React re-renders). Progress tracks the dot's normalized x-position through the node; after exit, progress pushes to completion before opacity fades out.
 - When the dot collides with the subscriber node (via `dotTouchesNode()` bounding-box hit test), it **pauses and shrinks** over 2.5 seconds, then money increments.
 - Dropped events travel toward the blockage point before falling, not from the publisher. Drop positions are calculated to match visual node edges.
 
@@ -277,6 +278,7 @@ Global upgrades use the same `UpgradeDef` system as node upgrades — each is a 
 - **Drag-to-move**: any component can be repositioned by dragging; connection lines follow in real-time
 - Click-to-fire with cooldown (upgradeable), cooldown overlay animation on publisher (dark translucent bar drains downward)
 - Event dot animation: travel, webhook slowdown, subscriber pause/shrink, drop with gravity
+- Processing border animation on webhook/broker: cyan arcs sweep left→right along node border while a dot passes through (RAF-driven, imperative DOM updates via refs)
 - **Collision-based detection**: `dotTouchesNode()` bounding-box hit test for queue capture and subscriber pause/drop; proximity check (30px) for webhook/broker blockage. Replaced old progress-threshold system.
 - **Mutable array game loop**: dots processed sequentially in `for` loop so each sees results of prior dots in same frame — prevents race conditions
 - **Queue buffering**: dots always captured on queue collision (no pass-through), auto-release one per frame when subscriber free. Visual slot indicators. Buffer capacity = 1 + bufferSize level. Overflow drops at queue edge.

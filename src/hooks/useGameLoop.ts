@@ -41,17 +41,6 @@ export function useGameLoop() {
       const toFinish: string[] = [];
       const toRemove: string[] = [];
 
-      // Helper: check if a component is occupied (has a pausing/queued dot)
-      const isComponentOccupied = (componentId: string) => {
-        const comp = state.components.find(c => c.id === componentId);
-        if (!comp) return false;
-        return state.eventDots.some(d => {
-          if (d.status !== 'pausing' && d.status !== 'queued') return false;
-          const lastPos = d.path[d.path.length - 1];
-          return Math.hypot(comp.x - lastPos.x, comp.y - lastPos.y) < 50;
-        });
-      };
-
       state.updateDots(dots => {
         type Dot = import('../store/gameStore').EventDot;
         // Use a mutable array so each dot sees the results of earlier dots in the same frame
@@ -59,6 +48,26 @@ export function useGameLoop() {
 
         for (let i = 0; i < dots.length; i++) {
           let dot = dots[i];
+
+          // Helper: check if a component is occupied — sees already-processed + remaining dots
+          const isComponentOccupied = (componentId: string) => {
+            const comp = state.components.find(c => c.id === componentId);
+            if (!comp) return false;
+            const allDots = [...updated, ...dots.slice(i + 1)];
+            return allDots.some(d => {
+              if (d.id === dot.id) return false; // never block yourself
+              if (d.status === 'pausing' || d.status === 'queued') {
+                const lastPos = d.path[d.path.length - 1];
+                return Math.hypot(comp.x - lastPos.x, comp.y - lastPos.y) < 50;
+              }
+              // A traveling dot inside a webhook/broker counts as occupying it
+              if (d.status === 'traveling' && (comp.type === 'webhook' || comp.type === 'broker')) {
+                const pos = interpolatePath(d.path, d.progress);
+                return dotTouchesNode(pos.x, pos.y, comp.x, comp.y);
+              }
+              return false;
+            });
+          };
 
           if (dot.status === 'traveling') {
             let actualSpeed = dot.speed * state.upgrades.propagationSpeed;
@@ -71,14 +80,17 @@ export function useGameLoop() {
               const slowFactor = Math.min(1.0, 0.4 + fasterRoutingLevel * 0.2);
               actualSpeed *= slowFactor;
             }
-            const blockRadius = 30;
+            const blockRadius = NODE_HALF_W + DOT_RADIUS + 15; // detect approaching dots before they enter the node
 
             let blocked = false;
             for (const comp of state.components) {
-              if (comp.type === 'publisher') continue;
-              const distToComp = Math.hypot(eventPos.x - comp.x, eventPos.y - comp.y);
-              if (distToComp < blockRadius && isComponentOccupied(comp.id)) {
-                if (comp.type === 'webhook' || comp.type === 'broker') {
+              if (comp.type === 'publisher' || comp.type === 'broker') continue;
+              if (comp.type === 'webhook') {
+                // Only block dots approaching from the left, just before the node's left edge
+                const leftEdge = comp.x - NODE_HALF_W - DOT_RADIUS;
+                if (eventPos.x >= leftEdge) continue; // already at or past the edge
+                if (eventPos.x < leftEdge - 20) continue; // too far away to block
+                if (isComponentOccupied(comp.id)) {
                   updated.push({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: '#ff4444' } as Dot);
                   blocked = true;
                   break;
