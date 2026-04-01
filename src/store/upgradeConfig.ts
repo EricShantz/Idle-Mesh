@@ -1,0 +1,174 @@
+export type UpgradeDef = {
+  key: string;
+  label: string;
+  description: string;
+  baseCost: number;
+  costMultiplier: number;
+  maxLevel?: number;
+};
+
+export const publisherUpgrades: UpgradeDef[] = [
+  {
+    key: 'eventValue',
+    label: 'Event Value +$0.50',
+    description: 'Each event this publisher fires is worth more',
+    baseCost: 10,
+    costMultiplier: 2.5,
+  },
+  {
+    key: 'publishSpeed',
+    label: 'Publish Speed +5%',
+    description: 'Reduces cooldown between publishing events',
+    baseCost: 8,
+    costMultiplier: 1.15,
+  },
+];
+
+export const webhookUpgrades: UpgradeDef[] = [
+  {
+    key: 'upgradeToBroker',
+    label: 'Upgrade to Broker',
+    description: 'Removes routing delay — events pass through instantly. Unlocks queue purchases.',
+    baseCost: 75,
+    costMultiplier: 1,
+    maxLevel: 1,
+  },
+  {
+    key: 'fasterRouting',
+    label: 'Faster Routing +20%',
+    description: 'Reduces travel time through this hop',
+    baseCost: 20,
+    costMultiplier: 2,
+    maxLevel: 3,
+  },
+];
+
+export const brokerUpgrades: UpgradeDef[] = [
+  {
+    key: 'addQueueSlot',
+    label: 'Add Queue Slot',
+    description: 'Allows connecting one more Queue to this broker',
+    baseCost: 40,
+    costMultiplier: 2,
+  },
+  {
+    key: 'topicFilterBoost',
+    label: 'Topic Filter Boost',
+    description: 'Routes events to more subscriber queues',
+    baseCost: 60,
+    costMultiplier: 2,
+  },
+];
+
+export const queueUpgrades: UpgradeDef[] = [
+  {
+    key: 'addSubscriberSlot',
+    label: 'Add Subscriber Slot',
+    description: 'Connect one more Subscriber to this queue',
+    baseCost: 30,
+    costMultiplier: 2,
+  },
+  {
+    key: 'fanOut',
+    label: 'Persistent Delivery (Fan-out)',
+    description: 'All connected subscribers receive every event',
+    baseCost: 100,
+    costMultiplier: 1,
+    maxLevel: 1,
+  },
+  {
+    key: 'bufferSize',
+    label: 'Increase Buffer Size',
+    description: 'Allows more in-flight events before dropping',
+    baseCost: 45,
+    costMultiplier: 2,
+  },
+];
+
+export const subscriberUpgrades: UpgradeDef[] = [
+  {
+    key: 'consumptionValue',
+    label: 'Consumption Value +$0.50',
+    description: 'Each event this subscriber consumes earns more',
+    baseCost: 10,
+    costMultiplier: 2.5,
+  },
+  {
+    key: 'fasterConsumption',
+    label: 'Faster Consumption +5%',
+    description: 'Reduces processing time at this subscriber',
+    baseCost: 8,
+    costMultiplier: 1.15,
+  },
+];
+
+export type GlobalUpgradeDef = {
+  key: string;
+  label: string;
+  description: string;
+  cost: number;
+  maxLevel?: number;
+};
+
+export const globalUpgrades: GlobalUpgradeDef[] = [
+  {
+    key: 'propagationSpeed',
+    label: 'Faster Event Propagation',
+    description: 'All event dots travel 15% faster',
+    cost: 25,
+  },
+  {
+    key: 'costReduction',
+    label: '10% Cheaper Upgrades',
+    description: 'All future upgrade costs reduced by 10%',
+    cost: 50,
+    maxLevel: 3,
+  },
+  {
+    key: 'dlq',
+    label: 'Dead Letter Queue',
+    description: 'Dropped events can be replayed for 50% value',
+    cost: 80,
+    maxLevel: 1,
+  },
+  {
+    key: 'autoPub1',
+    label: 'Auto-Publisher Lv.1',
+    description: 'First publisher fires automatically every 5s',
+    cost: 150,
+    maxLevel: 1,
+  },
+  {
+    key: 'autoPub2',
+    label: 'Auto-Publisher Lv.2',
+    description: 'Auto-fire every 3s',
+    cost: 400,
+    maxLevel: 1,
+  },
+  {
+    key: 'autoPub3',
+    label: 'Auto-Publisher Lv.3',
+    description: 'Auto-fire every 1s',
+    cost: 1000,
+    maxLevel: 1,
+  },
+  {
+    key: 'batchFire',
+    label: 'Event Batching',
+    description: 'Publishers fire 2 events per click',
+    cost: 200,
+    maxLevel: 1,
+  },
+  {
+    key: 'globalValueMultiplier',
+    label: 'Global Value x1.5',
+    description: 'All earned money x1.5',
+    cost: 500,
+    maxLevel: 1,
+  },
+];
+
+export function getUpgradeCost(def: UpgradeDef, currentLevel: number, costReduction: number): number {
+  const raw = def.baseCost * Math.pow(def.costMultiplier, currentLevel);
+  return Math.floor(raw * (1 - costReduction));
+}
