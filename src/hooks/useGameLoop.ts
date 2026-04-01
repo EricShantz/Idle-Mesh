@@ -205,20 +205,19 @@ export function useGameLoop() {
             const newProgress = Math.min(dot.progress + actualSpeed * dt, 1);
             const newPos = interpolatePath(dot.path, newProgress);
 
-            // Check collision with queues along the path (include last waypoint for disconnected queues)
-            // Only check queues that are AHEAD of the dot's current progress to avoid re-capturing after release
+            // Find the next component the dot should interact with (queue or subscriber)
+            // This prevents dots from being captured by nodes they pass through spatially
+            // but haven't reached yet along their connection path
+            const nextInteractable = pathComps.find(pc => {
+              const compProgress = pc.idx / (dot.path.length - 1);
+              return compProgress > dot.progress - 0.01 && (pc.comp.type === 'queue' || pc.comp.type === 'subscriber');
+            });
+
+            // Check collision with queues — only the next queue on the path
             let queued = false;
-            for (let j = 0; j < dot.path.length; j++) {
-              // Skip waypoints the dot has already passed
-              const waypointProgress = j / (dot.path.length - 1);
-              if (waypointProgress < dot.progress - 0.01) continue;
-
-              const pathPoint = dot.path[j];
-              const queue = state.components.find(c =>
-                c.type === 'queue' && Math.hypot(c.x - pathPoint.x, c.y - pathPoint.y) < 50
-              );
-
-              if (queue && dotTouchesNode(newPos.x, newPos.y, queue.x, queue.y)) {
+            if (nextInteractable && nextInteractable.comp.type === 'queue') {
+              const queue = nextInteractable.comp;
+              if (dotTouchesNode(newPos.x, newPos.y, queue.x, queue.y)) {
                 const bufferSize = 1 + (queue.upgrades['bufferSize'] ?? 0);
                 // Count from the already-processed updated array for accurate counts
                 const queuedCount = updated.filter(d =>
@@ -232,32 +231,31 @@ export function useGameLoop() {
                   updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
                 }
                 queued = true;
-                break;
               }
             }
             if (queued) continue;
 
-            // Check collision with subscriber
-            const lastPathPoint = dot.path[dot.path.length - 1];
-            const subscriber = state.components.find(c =>
-              c.type === 'subscriber' && Math.hypot(c.x - lastPathPoint.x, c.y - lastPathPoint.y) < 50
-            );
+            // Check collision with subscriber — only if subscriber is the next interactable node
+            if (nextInteractable && nextInteractable.comp.type === 'subscriber') {
+              const subscriber = nextInteractable.comp;
+              const lastPathPoint = dot.path[dot.path.length - 1];
 
-            if (subscriber && dotTouchesNode(newPos.x, newPos.y, subscriber.x, subscriber.y)) {
-              // Check updated array for accurate subscriber occupancy
-              const isSubscriberOccupied = updated.some(d =>
-                d.status === 'pausing' &&
-                !d.moneyAdded &&
-                d.path.length > 0 &&
-                Math.hypot(d.path[d.path.length - 1].x - lastPathPoint.x, d.path[d.path.length - 1].y - lastPathPoint.y) < 50
-              );
-              if (!isSubscriberOccupied) {
-                updated.push({ ...dot, status: 'pausing', pauseStartTime: Date.now(), progress: newProgress } as Dot);
-              } else {
-                droppedCount++;
-                updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
+              if (dotTouchesNode(newPos.x, newPos.y, subscriber.x, subscriber.y)) {
+                // Check updated array for accurate subscriber occupancy
+                const isSubscriberOccupied = updated.some(d =>
+                  d.status === 'pausing' &&
+                  !d.moneyAdded &&
+                  d.path.length > 0 &&
+                  Math.hypot(d.path[d.path.length - 1].x - lastPathPoint.x, d.path[d.path.length - 1].y - lastPathPoint.y) < 50
+                );
+                if (!isSubscriberOccupied) {
+                  updated.push({ ...dot, status: 'pausing', pauseStartTime: Date.now(), progress: newProgress } as Dot);
+                } else {
+                  droppedCount++;
+                  updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
+                }
+                continue;
               }
-              continue;
             }
 
             if (newProgress >= 1) {

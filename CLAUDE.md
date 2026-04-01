@@ -60,9 +60,9 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
   - Pausing at subscriber: cyan (or orange for retries), shrinks/fades over ~2.5s
   - Dropped: red (`#ff4444`), falls with gravity, fades over ~1.2s. Retry events that drop a second time turn dark grey (`#4a5568`) instead of red.
 - **Coin pops**: 🪙 emoji + green `+$X.XX` text floats up 50px from subscriber on money earned, fades over 1s. Color: green (`#22c55e`) with glow. Z-index 40.
-- **Z-index layering**: connections (5) → subscriber (20) → event canvas (25) → webhook/broker/queue (26) → publisher (30) → coin pops (40) → dragging node (50)
+- **Z-index layering**: connections (5) → back event canvas (19) → subscriber (20) → front event canvas (25) → webhook/broker/queue (26) → publisher (30) → coin pops (40) → dragging node (50)
+  - Two canvases: traveling/queued/dropped dots render behind subscribers (z-19), pausing (consuming) dots render above (z-25) so the shrink animation is visible
   - Publishers render on top so events appear to emerge from behind them
-  - Events render on top of subscribers so the consumption animation is visible
   - Dragged nodes elevate to z-index 50 to stay above everything
 
 ---
@@ -207,11 +207,12 @@ type EventDot = {
 **Collision detection:**
 - `dotTouchesNode(px, py, nodeX, nodeY)` tests a 6px-radius dot against node bounding boxes (NODE_HALF_W=60, NODE_TOP_OFFSET=28, NODE_BOTTOM_OFFSET=28)
 - Webhook/broker blockage uses proximity check (30px radius) + `isComponentOccupied()` (checks for pausing/queued dots)
+- **Path-ordered interaction**: dots only collide with the **next** queue or subscriber on their path (determined from `pathComps` by progress). This prevents dots from being captured by nodes they physically overlap but haven't reached yet along their connection route (e.g., a subscriber dragged near the broker won't consume dots that still need to pass through a queue first). DMQ catch is exempt — it uses spatial-only collision on falling dots.
 
 **Key behaviors:**
 - `traveling` → slows through webhook when dot visually overlaps the webhook node (bounding-box check via `dotTouchesNode()`), drops near webhook/broker if component is occupied (proximity check)
-- `traveling` → on collision with queue node, always transitions to `queued` if buffer has space, otherwise drops
-- `traveling` → on collision with subscriber node, transitions to `pausing` if subscriber is free, otherwise drops
+- `traveling` → on collision with next queue on path, always transitions to `queued` if buffer has space, otherwise drops
+- `traveling` → on collision with next subscriber on path (only if no queue ahead), transitions to `pausing` if subscriber is free, otherwise drops
 - `queued` → auto-released one per queue per frame when queue has active connection to subscriber, subscriber is free, and no traveling dots past any queue heading to that subscriber. Path dynamically extended at release time if queue was disconnected when dot arrived.
 - `pausing` → at 50% of consume duration, value is passed directly to `consumeEvent(id, value)` and dot is removed from array
 - `dropped` → gravity fall + fade over 1.2s; position is where the blockage occurred. Non-retry dots can be caught by the DMQ (bounding-box collision during fall). Retry dots turn dark grey and cannot be re-caught. `eventsDropped` counter incremented via batch `setState` after the dot loop (counted during loop, applied once per frame).
@@ -322,7 +323,7 @@ Global upgrades use the same `UpgradeDef` system as node upgrades — each is a 
 - Global upgrades: Propagation Speed (+5%/level), Cost Reduction, Auto-Publisher 7 tiers (all functional, level-based cost scaling)
 - Broker/Queue/Subscriber shop in sidebar (Queue purchasable, placed unconnected for manual wiring)
 - Auto-save / load from localStorage (snapshot comparison optimization, 500ms debounce, transient fields excluded: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`, `draggingConnection`, `draggingNodeId`)
-- Z-index layering (events emerge from publisher, fade on top of subscriber); dragged nodes elevate to z-index 50
+- Z-index layering: two event canvases (back z-19 for traveling/queued/dropped, front z-25 for pausing/consuming); dragged nodes elevate to z-index 50
 - Coin pop animation: 🪙 + earned amount floats up from subscriber on consumption (Framer Motion, `coinPops` transient state)
 - **Dead Message Queue (DMQ)**: purchasable component ($80, one-time, requires broker). Catches falling dropped events via bounding-box collision (dynamic width). Buffers caught events, releases one at a time as orange retry dots through the broker following the original route (rebuilt from current positions). Retry value = 10%–100% of original (upgradeable). Retry dots that fail again turn dark grey and are not re-caught. Three upgrades: width, buffer size, value recovery. Output port at top-center, connects only to broker. Connection line uses vertical-first routing to broker's bottom edge.
 - Only publisher has hover/tap scale animation (other nodes do not scale)
@@ -376,6 +377,7 @@ src/
 - **Draggable connections**: `draggingConnection` transient state in `gameStore.ts` tracks active drag (type, fromId, connectionId, mouseX, mouseY). `MeshCanvas.tsx` handles pointer move/up for drop detection (bounding-box: 70px × 38px). `ConnectionLine.tsx` hides itself during reassign drag and initiates detach on click. Output port in `NodeCard.tsx` initiates create drags. `cancelDragConnection` deletes the connection when a reassign drag is dropped on nothing. Validation via `connectionRules.ts`.
 - **Connection line geometry**: orthogonal (Boomi-style) lines routed horizontal → vertical → horizontal with rounded 12px corners. Lines start from the output port's right edge and end at the target node's left edge. Port position = `from.x + halfW + 16` where halfW is 60 (120px nodes) or 70 (140px queue nodes). Exception: DMQ uses top-center port (`from.x, from.y - 28 - 16`) with vertical-first routing (`buildVerticalFirstSvgPath()`), terminating at the broker's bottom edge (`to.x, to.y + 30`). Rendering via `orthogonalPath.ts`. All nodes use `minHeight: 56` and fixed `width` for consistent port alignment (DMQ width is dynamic: 120 + 40 * dmqWidthLevel).
 - **Smart routing & fan-out**: `_getAllPathsWithNodes()` does DFS returning paths with both waypoints and node IDs. `fireEvent()` groups paths by broker, then for each group: if all queues have fan-out upgrade, sends to all; otherwise picks the queue with the most effective free space (buffer capacity − queued − in-flight dots). Prefers non-full queues. `getAllPathsForPublisher()` wraps it returning just waypoints. `getPathForPublisher()` returns the first path for backward compat.
+- **Path deduplication**: `dedupeConsecutiveWaypoints()` removes consecutive duplicate waypoints (within 1px) from rebuilt paths in Pass 2 queue release. Without this, when a queue and subscriber share the same x-coordinate, the orthogonal midpoint `(midX, queue.y)` duplicates the queue waypoint, causing `isPastAllQueues` to fail — it finds the queue at both waypoints and considers the dot "not past" the second one. This made both queues release dots every frame instead of waiting for the subscriber, draining buffers at ~60×/s. Applied to both the `pendingExtension` path and the main queue→subscriber rebuild path.
 - **Connection-aware dot lifecycle**: traveling dots validate their remaining path against the current connection graph each frame — if a connection was removed, the dot drops immediately. Queued dots only release when the queue has an active connection to a subscriber (checked via `state.connections`, not baked path). Queue collision check skips waypoints the dot has already passed to prevent re-capture after release.
 - **ID counters**: `componentIdCounter` and `connectionIdCounter` are initialized from saved state on load via `initCountersFromSaved()` to prevent duplicate IDs after reload.
 - **Clock consistency**: `pauseStartTime` uses `Date.now()` (Unix epoch). The RAF `time` argument is a different clock — don't mix them.
