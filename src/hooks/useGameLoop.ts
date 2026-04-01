@@ -10,6 +10,58 @@ const NODE_BOTTOM_OFFSET = 28; // from center to bottom edge (generous to cover 
 
 const DOT_RADIUS = 6;
 
+/** Rebuild orthogonal waypoints from node IDs using current component positions */
+function rebuildPathFromNodeIds(
+  nodeIds: string[],
+  components: { id: string; type: string; x: number; y: number }[]
+): { x: number; y: number }[] {
+  const nodes: { id: string; type: string; x: number; y: number }[] = [];
+  for (const id of nodeIds) {
+    const comp = components.find(c => c.id === id);
+    if (comp) nodes.push(comp);
+  }
+  if (nodes.length === 0) return [];
+  const path: { x: number; y: number }[] = [{ x: nodes[0].x, y: nodes[0].y }];
+  for (let i = 0; i < nodes.length - 1; i++) {
+    const a = nodes[i], b = nodes[i + 1];
+    if (Math.abs(a.y - b.y) >= 1) {
+      // DMQ→broker uses vertical-first routing
+      if (a.type === 'dmq' && b.type === 'broker') {
+        const midY = (a.y + b.y) / 2;
+        path.push({ x: a.x, y: midY });
+        path.push({ x: b.x, y: midY });
+      } else {
+        const midX = (a.x + b.x) / 2;
+        path.push({ x: midX, y: a.y });
+        path.push({ x: midX, y: b.y });
+      }
+    }
+    path.push({ x: b.x, y: b.y });
+  }
+  return path;
+}
+
+/** Project a point onto a polyline path, returning the progress (0-1) of the closest point */
+function projectOntoPath(path: { x: number; y: number }[], px: number, py: number): number {
+  let bestProgress = 0;
+  let bestDist = Infinity;
+  for (let i = 0; i < path.length - 1; i++) {
+    const ax = path[i].x, ay = path[i].y;
+    const bx = path[i + 1].x, by = path[i + 1].y;
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + t * dx, cy = ay + t * dy;
+    const dist = Math.hypot(px - cx, py - cy);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestProgress = (i + t) / (path.length - 1);
+    }
+  }
+  return bestProgress;
+}
+
 /** Check if a point (dot) touches the rectangular bounding box of a node */
 function dotTouchesNode(px: number, py: number, nodeX: number, nodeY: number): boolean {
   const left = nodeX - NODE_HALF_W;
@@ -70,10 +122,22 @@ export function useGameLoop() {
             });
           };
 
+          // Rebuild path in real-time when a component on this dot's route is being dragged
+          if (state.draggingNodeId && dot.originalNodeIds?.includes(state.draggingNodeId) &&
+              (dot.status === 'traveling' || dot.status === 'queued')) {
+            const currentPos = dot.status === 'traveling' ? interpolatePath(dot.path, dot.progress) : null;
+            const newPath = rebuildPathFromNodeIds(dot.originalNodeIds, state.components);
+            if (newPath.length >= 2) {
+              const newProgress = currentPos ? projectOntoPath(newPath, currentPos.x, currentPos.y) : dot.progress;
+              dot = { ...dot, path: newPath, progress: newProgress } as typeof dot;
+            }
+          }
+
           if (dot.status === 'traveling') {
             const dropColor = dot.isRetry ? '#4a5568' : '#ff4444';
-            // Drop dots whose path no longer matches the connection graph (connection was removed)
             const eventPos = interpolatePath(dot.path, dot.progress);
+
+            // Drop dots whose path no longer matches the connection graph (connection was removed)
             // Extract component nodes from the path (skip orthogonal midpoints)
             const pathComps: { comp: typeof state.components[0]; idx: number }[] = [];
             for (let wp = 0; wp < dot.path.length; wp++) {
@@ -84,8 +148,10 @@ export function useGameLoop() {
               }
             }
             // Check each consecutive component pair ahead of the dot has a connection
+            // Skip validation while a node is being dragged — dragging moves positions
+            // but doesn't disconnect cables, so the position-based matching would give false positives
             let pathInvalid = false;
-            for (let pc = 0; pc < pathComps.length - 1; pc++) {
+            for (let pc = 0; pc < pathComps.length - 1 && !state.draggingNodeId; pc++) {
               const fromProgress = pathComps[pc].idx / (dot.path.length - 1);
               // Only validate segments the dot hasn't passed yet
               if (pathComps[pc + 1].idx / (dot.path.length - 1) < dot.progress - 0.01) continue;
@@ -282,8 +348,6 @@ export function useGameLoop() {
           const queueComp = state.components.find(c => c.id === queueId);
           if (queueComp?.type === 'dmq') continue;
 
-          // Skip release if this queue is being dragged
-          if (queueId === state.draggingNodeId) continue;
 
           // Only release the oldest queued dot in this queue (FIFO by pauseStartTime)
           let isOldest = true;
@@ -437,7 +501,7 @@ export function useGameLoop() {
 
         // --- Pass 3: auto-release ONE queued dot from DMQ if broker connection exists ---
         const dmqComp = state.components.find(c => c.type === 'dmq');
-        if (dmqComp && dmqComp.id !== state.draggingNodeId) {
+        if (dmqComp) {
           const dmqConn = state.connections.find(c => c.fromId === dmqComp.id);
           const brokerTarget = dmqConn
             ? state.components.find(c => c.id === dmqConn.toId && c.type === 'broker')
@@ -520,7 +584,7 @@ export function useGameLoop() {
                   opacity: 1,
                   value: retryValue,
                   isRetry: true,
-                  originalNodeIds: undefined,
+                  originalNodeIds: [dmqComp.id, ...nodeIdsFromBroker],
                   originalValue: undefined,
                   pauseStartTime: undefined,
                   queuedAtNodeId: undefined,
@@ -570,8 +634,6 @@ export function useGameLoop() {
 
 export function useAutoPublisher() {
   const autoPubLevel = useGameStore(s => s.upgrades.autoPubLevel);
-  const fireEvent = useGameStore(s => s.fireEvent);
-  const components = useGameStore(s => s.components);
 
   useEffect(() => {
     if (autoPubLevel === 0) return;
@@ -579,12 +641,13 @@ export function useAutoPublisher() {
     const intervals = [5000, 3000, 1000, 750, 500, 250, 100];
     const interval = intervals[Math.min(autoPubLevel - 1, intervals.length - 1)];
     const timer = setInterval(() => {
-      const firstPub = components.find(c => c.type === 'publisher');
+      const state = useGameStore.getState();
+      const firstPub = state.components.find(c => c.type === 'publisher');
       if (firstPub) {
-        fireEvent(firstPub.id, true);
+        state.fireEvent(firstPub.id, true);
       }
     }, interval);
 
     return () => clearInterval(timer);
-  }, [autoPubLevel, fireEvent, components]);
+  }, [autoPubLevel]);
 }

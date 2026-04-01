@@ -60,6 +60,8 @@ export function NodeCard({ component }: Props) {
   const dragStartPos = useRef({ x: 0, y: 0 });
   const nodeStartPos = useRef({ x: 0, y: 0 });
   const hasMoved = useRef(false);
+  const pendingMove = useRef({ x: 0, y: 0 });
+  const moveRaf = useRef(0);
 
   // Publisher cooldown overlay
   const publisherCooldowns = useGameStore(s => s.publisherCooldowns);
@@ -237,17 +239,25 @@ export function NodeCard({ component }: Props) {
       setDraggingNodeId(component.id);
     }
 
-    moveComponent(
-      component.id,
-      nodeStartPos.current.x + dx,
-      nodeStartPos.current.y + dy
-    );
+    pendingMove.current = { x: nodeStartPos.current.x + dx, y: nodeStartPos.current.y + dy };
+    if (!moveRaf.current) {
+      moveRaf.current = requestAnimationFrame(() => {
+        moveComponent(component.id, pendingMove.current.x, pendingMove.current.y);
+        moveRaf.current = 0;
+      });
+    }
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
     if (!isDragging.current) return;
     isDragging.current = false;
     setCursorGrabbing(false);
+    // Flush any pending move before clearing drag state
+    if (moveRaf.current) {
+      cancelAnimationFrame(moveRaf.current);
+      moveComponent(component.id, pendingMove.current.x, pendingMove.current.y);
+      moveRaf.current = 0;
+    }
     setDraggingNodeId(null);
 
     // Fire event if this was just a click (no drag)
