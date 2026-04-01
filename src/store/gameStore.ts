@@ -63,7 +63,7 @@ export type GameState = {
 
   // Actions
   fireEvent: (publisherId: string) => void;
-  consumeEvent: (dotId: string) => void;
+  consumeEvent: (dotId: string, value: number) => void;
   dropEvent: (dotId: string) => void;
   updateDots: (updateFn: (dots: EventDot[]) => EventDot[]) => void;
   removeDot: (dotId: string) => void;
@@ -199,15 +199,9 @@ export const useGameStore = create<GameState>()(
         });
       },
 
-      consumeEvent: (dotId: string) => {
-        const state = get();
-        const dot = state.eventDots.find(d => d.id === dotId);
-        if (!dot) return;
-
+      consumeEvent: (_dotId: string, value: number) => {
         set(draft => {
-          const d = draft.eventDots.find(d => d.id === dotId);
-          if (d) d.moneyAdded = true;
-          const earned = dot.value * draft.upgrades.globalValueMultiplier;
+          const earned = value * draft.upgrades.globalValueMultiplier;
           draft.balance += earned;
           draft.totalEarned += earned;
           draft.eventsConsumed += 1;
@@ -371,9 +365,9 @@ export const useGameStore = create<GameState>()(
       getEventValue: (publisherId: string) => {
         const state = get();
         const pub = state.components.find(c => c.id === publisherId);
-        if (!pub) return 1;
+        if (!pub) return 0.5;
         const valueLevel = pub.upgrades['eventValue'] ?? 0;
-        return 1 + valueLevel * 0.5;
+        return 0.5 + valueLevel * 0.5;
       },
     };
   })

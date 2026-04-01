@@ -34,8 +34,8 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number): strin
     // Value upgrades ($X.XX per unit)
     case 'eventValue':
     case 'consumptionValue':
-      const currentVal = (1 + currentLevel * 0.5).toFixed(2);
-      const nextVal = (1 + nextLevel * 0.5).toFixed(2);
+      const currentVal = (0.5 + currentLevel * 0.5).toFixed(2);
+      const nextVal = (0.5 + nextLevel * 0.5).toFixed(2);
       return `$${currentVal} → $${nextVal}`;
 
     // Level-based percentage upgrades

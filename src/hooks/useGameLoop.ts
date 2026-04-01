@@ -46,7 +46,7 @@ export function useGameLoop() {
       lastTimeRef.current = time;
 
       const state = useGameStore.getState();
-      const toConsume: string[] = [];
+      const toConsume: { id: string; value: number }[] = [];
       const toFinish: string[] = [];
       const toRemove: string[] = [];
 
@@ -169,7 +169,10 @@ export function useGameLoop() {
             const moneyAddTime = consumeDuration * 0.5;
 
             if (elapsed >= moneyAddTime && !dot.moneyAdded) {
-              toConsume.push(dot.id);
+              const consumptionValueLevel = subscriber?.upgrades['consumptionValue'] ?? 0;
+              const subscriberValue = 0.5 + consumptionValueLevel * 0.5;
+              const finalValue = dot.value + subscriberValue;
+              toConsume.push({ id: dot.id, value: finalValue });
               // Don't add to updated — dot is finished
             } else {
               updated.push(dot);
@@ -231,8 +234,8 @@ export function useGameLoop() {
       });
 
       // Add money for dots that reached 50% of animation
-      for (const id of toConsume) {
-        useGameStore.getState().consumeEvent(id);
+      for (const { id, value } of toConsume) {
+        useGameStore.getState().consumeEvent(id, value);
       }
 
       // Prune old earnings (keep last 5s)

@@ -30,7 +30,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - **Styling**: Tailwind CSS v4 (`@tailwindcss/vite` plugin)
 - **Animation**: Framer Motion (component transitions) + raw Canvas API (event dot animation on the mesh)
 - **State Management**: Zustand with `immer` middleware
-- **Persistence**: localStorage auto-save on state change, loaded on mount (`idle-mesh-save` key)
+- **Persistence**: localStorage auto-save with snapshot comparison (only persists when non-transient state changes), 500ms debounce. Excluded from save: `eventDots`, `recentEarnings`, `selectedNodeId`. Key: `idle-mesh-save`
 - **Target Platforms**:
   - Browser (primary)
   - Android via Capacitor
@@ -52,9 +52,10 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
   - Traveling: cyan (`#66ffff`) with radial glow
   - Pausing at subscriber: cyan, shrinks/fades over ~2.5s
   - Dropped: red (`#ff4444`), falls with gravity, fades over ~600ms
-- **Z-index layering**: connections (5) → event canvas (25) → non-publisher nodes (20) → publisher (30)
+- **Z-index layering**: connections (5) → subscriber (20) → event canvas (25) → webhook/broker/queue (26) → publisher (30) → dragging node (50)
   - Publishers render on top so events appear to emerge from behind them
   - Events render on top of subscribers so the consumption animation is visible
+  - Dragged nodes elevate to z-index 50 to stay above everything
 
 ---
 
@@ -92,7 +93,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - Publisher click is on a **1-second cooldown** (upgradeable). Clicking during cooldown does nothing.
 - Events travel at base speed `0.0007` (progress units/ms), taking ~1.3 seconds to traverse the full path
 - **Webhook slowdown**: events travel at 40% speed while passing through the webhook. The slowdown region is dynamically calculated to align with the webhook's visual edges. Up to 3 "Faster Routing" upgrades reduce this by 20% each.
-- When the dot reaches the subscriber edge, it **pauses and shrinks** over 2.5 seconds, then money increments. The pause threshold is dynamically calculated based on node positions and approach direction.
+- When the dot collides with the subscriber node (via `dotTouchesNode()` bounding-box hit test), it **pauses and shrinks** over 2.5 seconds, then money increments.
 - Dropped events travel toward the blockage point before falling, not from the publisher. Drop positions are calculated to match visual node edges.
 
 ---
@@ -116,6 +117,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 ### Publisher
 - Click target. Fires one event per click (subject to cooldown).
 - **Cooldown**: 1 second base, reduced 5% per `publishSpeed` upgrade level
+- **Base event value**: $0.50 (+ $0.50 per eventValue upgrade level)
 - Upgrades: Event Value (+$0.50), Publish Speed (+5% cooldown reduction, up to ~20 levels)
 
 ### Webhook
@@ -133,12 +135,17 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - Purchased from the sidebar shop for $60 (requires broker)
 - Placed at midpoint between broker and subscriber, offset downward: `y = 300 + (n+1) * 140`
 - On purchase: broker→subscriber direct connection is replaced with broker→queue→subscriber
-- Upgrades: Add Subscriber Slot, Persistent Delivery (Fan-out), Increase Buffer Size (config-defined, not yet mechanically implemented)
+- **Always captures** arriving dots on collision — dots never pass through a queue
+- Buffer capacity = `1 + bufferSize upgrade level` (base holds 1 event)
+- **Auto-release**: one queued dot released per frame, only when subscriber is free AND no dots traveling past the queue toward subscriber
+- Visual slot indicators on queue cards show filled/empty buffer slots
+- Upgrades: Add Subscriber Slot (UI only), Persistent Delivery/`fanOut` (UI only), Increase Buffer Size (**functional**)
 
 ### Subscriber
 - Consumes events. Pauses for ~2.5s while "processing" (shrink animation), then money increments.
 - **Faster Consumption** upgrade: 5% reduction per level (~20 levels to significantly reduce time)
-- Upgrades: Consumption Value (+$0.50), Faster Consumption (+5%)
+- **Value calculation**: final event value = publisher value + subscriber value (base $0.50 + $0.50 per consumptionValue level)
+- Upgrades: Consumption Value (+$0.50, **functional**), Faster Consumption (+5%)
 
 ---
 
@@ -150,22 +157,39 @@ type EventDot = {
   path: { x: number; y: number }[];  // waypoints from getPathForPublisher()
   progress: number;                   // 0.0 → 1.0 along full path
   speed: number;                      // 0.0007 * propagationSpeed multiplier
-  status: 'traveling' | 'pausing' | 'dropped' | 'consumed';
+  status: 'traveling' | 'pausing' | 'queued' | 'dropped' | 'consumed';
   pauseStartTime?: number;            // Date.now() when pausing began
+  queuedAtNodeId?: string;            // queue component ID when status is 'queued'
   dropX?: number;
   dropY?: number;
   dropVY?: number;
   color: string;
   opacity: number;
   value: number;
+  moneyAdded?: boolean;               // true once consumeEvent() has credited earnings
 };
 ```
 
+**Event value pipeline:**
+- Publisher sets initial value: `$0.50 + eventValueLevel * $0.50`
+- Subscriber adds consumption value: `$0.50 + consumptionValueLevel * $0.50`
+- Global multiplier applied in `consumeEvent()`: `finalValue * globalValueMultiplier`
+- Value is passed directly to `consumeEvent(id, value)` — no dot lookup needed
+
+**Collision detection:**
+- `dotTouchesNode(px, py, nodeX, nodeY)` tests a 6px-radius dot against node bounding boxes (NODE_HALF_W=60, NODE_TOP_OFFSET=28, NODE_BOTTOM_OFFSET=28)
+- Webhook/broker blockage uses proximity check (30px radius) + `isComponentOccupied()` (checks for pausing/queued dots)
+
 **Key behaviors:**
-- `traveling` → slows at webhook (0.4–0.6 progress), drops at webhook edge if occupied
-- `traveling` → transitions to `pausing` at progress 0.9 (subscriber edge) if subscriber is free
-- `pausing` → shrinks/fades over 2.5s; consumed (money added) when shrink reaches ~50%
+- `traveling` → slows through webhook segment (progress-based slowdown region via `getWebhookThresholds()`), drops near webhook/broker if component is occupied (proximity check)
+- `traveling` → on collision with queue node, always transitions to `queued` if buffer has space, otherwise drops
+- `traveling` → on collision with subscriber node, transitions to `pausing` if subscriber is free, otherwise drops
+- `queued` → auto-released one per queue per frame when subscriber is free AND no traveling dots ahead in path (past queue's progress)
+- `pausing` → at 50% of consume duration, value is passed directly to `consumeEvent(id, value)` and dot is removed from array
 - `dropped` → gravity fall + fade over 600ms; position is where the blockage occurred
+
+**Game loop pattern:**
+- Dots are processed sequentially in a `for` loop (not `.map()`) building a mutable `updated` array, so each dot sees the results of earlier dots in the same frame. This prevents race conditions like two dots both seeing a queue as empty.
 
 ---
 
@@ -176,7 +200,7 @@ Access by clicking the **⚙ icon** on any node. Modal is anchored to the node.
 ### Publisher
 | Upgrade | Effect | Base Cost | Multiplier |
 |---|---|---|---|
-| Event Value +$0.50 | Each event worth more | $10 | ×2.5 |
+| Event Value +$0.50 | Base $0.50, +$0.50 per level | $10 | ×2.5 |
 | Publish Speed +5% | 5% cooldown reduction per level | $8 | ×1.15 |
 
 ### Webhook
@@ -195,13 +219,13 @@ Access by clicking the **⚙ icon** on any node. Modal is anchored to the node.
 | Upgrade | Effect | Base Cost | Multiplier |
 |---|---|---|---|
 | Add Subscriber Slot | (UI only, not yet mechanical) | $30 | ×2 |
-| Persistent Delivery | Fan-out to all subscribers | $100 (one-time) |  |
-| Increase Buffer Size | (UI only, not yet mechanical) | $45 | ×2 |
+| Persistent Delivery (`fanOut`) | Fan-out to all subscribers (UI only) | $100 (one-time) |  |
+| Increase Buffer Size | **Functional**: buffer capacity = 1 + level | $45 | ×2 |
 
 ### Subscriber
 | Upgrade | Effect | Base Cost | Multiplier |
 |---|---|---|---|
-| Consumption Value +$0.50 | Each event earns more | $10 | ×2.5 |
+| Consumption Value +$0.50 | Base $0.50, +$0.50 per level added to event value | $10 | ×2.5 |
 | Faster Consumption +5% | 5% reduction per level | $8 | ×1.15 |
 
 ---
@@ -237,8 +261,9 @@ Balance (large), Total earned, Consumed, Dropped, Events/sec, $/sec, Mesh size
 - **Drag-to-move**: any component can be repositioned by dragging; connection lines follow in real-time
 - Click-to-fire with cooldown (upgradeable)
 - Event dot animation: travel, webhook slowdown, subscriber pause/shrink, drop with gravity
-- **Dynamic path thresholds**: webhook slowdown region and subscriber pause/drop points calculated from actual node positions and approach direction — works for any mesh configuration
-- **Queue buffering**: events pause at queue nodes when subscriber is busy, auto-release when free. Visual slot indicators on queue cards. Overflow drops at queue edge.
+- **Collision-based detection**: `dotTouchesNode()` bounding-box hit test for queue capture and subscriber pause/drop; proximity check (30px) for webhook/broker blockage. Replaced old progress-threshold system.
+- **Mutable array game loop**: dots processed sequentially in `for` loop so each sees results of prior dots in same frame — prevents race conditions
+- **Queue buffering**: dots always captured on queue collision (no pass-through), auto-release one per frame when subscriber free. Visual slot indicators. Buffer capacity = 1 + bufferSize level. Overflow drops at queue edge.
 - Blockage at webhook (drops at entrance if occupied)
 - Blockage at broker: instant relay (no slowdown), still blocks one at a time until queues added
 - Blockage at subscriber (drops at subscriber edge if consuming)
@@ -247,10 +272,10 @@ Balance (large), Total earned, Consumed, Dropped, Events/sec, $/sec, Mesh size
 - Webhook upgrades: Upgrade to Broker (functional — removes delay, changes type/color/label), Faster Routing (functional)
 - Broker upgrades: Add Queue Slot (UI only), Topic Filter Boost (UI only)
 - Queue upgrades: Add Subscriber Slot (UI only), Increase Buffer Size (functional), Persistent Delivery (UI only)
-- Subscriber upgrades: Consumption Value, Faster Consumption (both functional)
+- Subscriber upgrades: Faster Consumption (functional), Consumption Value (**functional** — base $0.50 + $0.50/level added at consumption time)
 - Global upgrades: Propagation Speed, Cost Reduction, Auto-Publisher (all functional)
 - Broker/Queue/Subscriber shop in sidebar (Queue purchasable, placed + connected automatically)
-- Auto-save / load from localStorage
+- Auto-save / load from localStorage (snapshot comparison optimization, 500ms debounce, transient fields excluded)
 - Z-index layering (events emerge from publisher, fade on top of subscriber); dragged nodes elevate to z-index 50
 
 ### 🔲 Not yet implemented (config exists, UI shows, but no mechanical effect)
@@ -291,8 +316,9 @@ src/
 
 ## Development Notes for Claude Code
 
-- **Starting balance for testing**: change `balance: saved?.balance ?? 0` in `gameStore.ts` line ~141. Clear localStorage to reset to the new default.
-- **Dynamic path thresholds**: `useGameLoop.ts` computes subscriber pause/drop and webhook slowdown thresholds on every frame for each dot using `getPathThresholds(dot.path)`. The function accounts for actual segment lengths and approach direction (horizontal vs vertical) so events pause/drop at the correct visual edges regardless of node positions. The math uses equal-progress-per-segment interpolation (from `interpolatePath`), not Euclidean distance.
+- **Starting balance for testing**: change `balance: saved?.balance ?? 500000` in `gameStore.ts` line ~144. Clear localStorage to reset to the new default.
+- **Component IDs**: initial components use fixed IDs (`pub-1`, `webhook-1`, `sub-1`, `conn-1`, `conn-2`). Dynamically added components use counter-based IDs starting at 10 (`comp-10+`, `conn-10+`).
+- **Collision & thresholds**: `useGameLoop.ts` uses two systems: (1) `getWebhookThresholds(path)` computes webhook slowdown start/end based on equal-progress-per-segment, (2) `dotTouchesNode()` does bounding-box collision for queue capture and subscriber pause/drop. Webhook/broker blockage uses a 30px proximity check with `isComponentOccupied()`.
 - **Drag-to-move**: implemented in `NodeCard.tsx` using pointer capture + ref-based drag state. State update happens on every `pointermove` (via `moveComponent` in `gameStore.ts`) so connection lines and event canvas follow in real-time. Gear button has `onPointerDown` stopPropagation to prevent drag-start when clicking upgrades.
 - **Clock consistency**: `pauseStartTime` uses `Date.now()` (Unix epoch). The RAF `time` argument is a different clock — don't mix them.
 - **Upgrade effects location**: most per-component upgrade effects are read in `useGameLoop.ts` by looking up the component by position from the dot's path array. Global upgrade effects are applied in `purchaseGlobalUpgrade` in `gameStore.ts`.
