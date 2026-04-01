@@ -30,7 +30,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - **Styling**: Tailwind CSS v4 (`@tailwindcss/vite` plugin)
 - **Animation**: Framer Motion (component transitions) + raw Canvas API (event dot animation on the mesh)
 - **State Management**: Zustand with `immer` middleware
-- **Persistence**: localStorage auto-save with snapshot comparison (only persists when non-transient state changes), 500ms debounce. Excluded from save: `eventDots`, `recentEarnings`, `selectedNodeId`. Key: `idle-mesh-save`
+- **Persistence**: localStorage auto-save with snapshot comparison (only persists when non-transient state changes), 500ms debounce. Excluded from save: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`. Key: `idle-mesh-save`
 - **Target Platforms**:
   - Browser (primary)
   - Android via Capacitor
@@ -52,7 +52,8 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
   - Traveling: cyan (`#66ffff`) with radial glow
   - Pausing at subscriber: cyan, shrinks/fades over ~2.5s
   - Dropped: red (`#ff4444`), falls with gravity, fades over ~600ms
-- **Z-index layering**: connections (5) → subscriber (20) → event canvas (25) → webhook/broker/queue (26) → publisher (30) → dragging node (50)
+- **Coin pops**: 🪙 emoji + green `+$X.XX` text floats up 50px from subscriber on money earned, fades over 1s. Color: green (`#22c55e`) with glow. Z-index 40.
+- **Z-index layering**: connections (5) → subscriber (20) → event canvas (25) → webhook/broker/queue (26) → publisher (30) → coin pops (40) → dragging node (50)
   - Publishers render on top so events appear to emerge from behind them
   - Events render on top of subscribers so the consumption animation is visible
   - Dragged nodes elevate to z-index 50 to stay above everything
@@ -143,6 +144,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 
 ### Subscriber
 - Consumes events. Pauses for ~2.5s while "processing" (shrink animation), then money increments.
+- **Coin pop animation**: when money is earned, a 🪙 coin icon with the earned amount floats upward from the subscriber and fades out over 1 second (Framer Motion `AnimatePresence` in `MeshCanvas.tsx`, state in `coinPops` array)
 - **Faster Consumption** upgrade: 5% reduction per level (~20 levels to significantly reduce time)
 - **Value calculation**: final event value = publisher value + subscriber value (base $0.50 + $0.50 per consumptionValue level)
 - Upgrades: Consumption Value (+$0.50, **functional**), Faster Consumption (+5%)
@@ -277,6 +279,7 @@ Balance (large), Total earned, Consumed, Dropped, Events/sec, $/sec, Mesh size
 - Broker/Queue/Subscriber shop in sidebar (Queue purchasable, placed + connected automatically)
 - Auto-save / load from localStorage (snapshot comparison optimization, 500ms debounce, transient fields excluded)
 - Z-index layering (events emerge from publisher, fade on top of subscriber); dragged nodes elevate to z-index 50
+- Coin pop animation: 🪙 + earned amount floats up from subscriber on consumption (Framer Motion, `coinPops` transient state)
 
 ### 🔲 Not yet implemented (config exists, UI shows, but no mechanical effect)
 - **Solace-inspired features**:
