@@ -96,6 +96,7 @@ export type GameState = {
   _getAllPathsWithNodes: (publisherId: string) => { waypoints: { x: number; y: number }[]; nodeIds: string[] }[];
   getEventValue: (publisherId: string) => number;
   addComponent: (type: ComponentType, x: number, y: number, label: string) => string;
+  removeComponent: (componentId: string) => void;
   addConnection: (fromId: string, toId: string) => void;
   removeConnection: (fromId: string, toId: string) => void;
   removeConnectionById: (connectionId: string) => void;
@@ -428,6 +429,25 @@ export const useGameStore = create<GameState>()(
           draft.components.push({ id, type, x, y, label, upgrades: {} });
         });
         return id;
+      },
+
+      removeComponent: (componentId: string) => {
+        set(draft => {
+          // Remove all connections to/from this component
+          draft.connections = draft.connections.filter(
+            c => c.fromId !== componentId && c.toId !== componentId
+          );
+          // Remove any dots queued at this component or with it in their path
+          draft.eventDots = draft.eventDots.filter(
+            d => d.queuedAtNodeId !== componentId
+          );
+          // Remove the component
+          draft.components = draft.components.filter(c => c.id !== componentId);
+          // Clear selection if this node was selected
+          if (draft.selectedNodeId === componentId) {
+            draft.selectedNodeId = null;
+          }
+        });
       },
 
       addConnection: (fromId: string, toId: string) => {

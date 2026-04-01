@@ -87,7 +87,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 
 - **Mesh canvas**: SVG connection lines + HTML5 canvas for event dots + React nodes
 - **Output ports**: Small circle with right-arrow icon on right edge of nodes that can output (all except subscriber). Drag from port to create a new connection. Hover highlights port in the node's theme color.
-- **Upgrade modal**: Small floating panel anchored to the node, opened via the ↑ upgrade icon in the node's top-right corner (bordered rounded box)
+- **Upgrade modal**: Small floating panel anchored to the node, opened via the ↑ upgrade icon in the node's top-right corner (bordered rounded box). Queues and DMQ have a red "Delete" button at the bottom of the modal to remove the component (deleting DMQ makes it available again in the shop).
 - **Upgrade badge**: Red circle on each node's **top-left** corner showing how many upgrades are currently affordable
 
 ---
@@ -154,6 +154,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - **Auto-release**: FIFO by `pauseStartTime` — oldest queued dot released first, one per frame, only when the queue has a current connection to a subscriber AND subscriber is free (no pausing dot, no traveling dot past any queue heading to that subscriber). Uses current connection graph, not baked paths.
 - **Visual slot indicators**: filled slots pack to the right (oldest dot = rightmost slot, newest = leftmost filled slot). Empty slots on the left. Retry dots show orange (`#fb923c`), normal dots cyan (`#66ffff`). Sorted by `pauseStartTime`.
 - **Subscriber slot limit**: queue starts with 1 subscriber connection slot, +1 per `addSubscriberSlot` upgrade level. Enforced the same way as broker queue slots.
+- **Deletable**: red "Delete Queue" button in upgrade modal. Removes the queue, all its connections, and any dots queued in it.
 - Upgrades: Add Subscriber Slot (**functional**), Persistent Delivery/`fanOut` (**functional** — routing logic in `fireEvent`), Increase Buffer Size (**functional**)
 
 ### Dead Message Queue (DMQ)
@@ -166,6 +167,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - **Retry behavior**: released dots travel from DMQ → broker → same original route (rebuilt from current component positions via stored `originalNodeIds`). Retry dots are orange (`#fb923c`), worth `originalValue * (10% + 10% per dmqValueRecovery level)`, capped at 100%. Retry dots that drop a second time turn dark grey and are **not** re-caught by the DMQ (no infinite loops).
 - **Pass 2 exclusion**: DMQ-queued dots are skipped by the regular queue release pass (Pass 2); they are only released by the dedicated DMQ release pass (Pass 3).
 - **Faster Release**: accelerating curve (`boostPct = level * (level + 9) / 2`) reduces how far the previous retry dot must travel before the next is released. At level 0 the previous dot must be 100% past the DMQ→broker segment; each level reduces this threshold. Max level 10 (95%).
+- **Deletable**: red "Delete DMQ" button in upgrade modal. Removes the DMQ and all its connections; DMQ becomes available again in the shop.
 - Upgrades: Increase Width (+40px), Faster Release (accelerating %), Increase Buffer Size, Value Recovery (+10%, max 9 levels = 100%)
 
 ### Subscriber
@@ -331,6 +333,7 @@ Global upgrades use the same `UpgradeDef` system as node upgrades — each is a 
 - Z-index layering: two event canvases (back z-19 for traveling/queued/dropped, front z-25 for pausing/consuming); dragged nodes elevate to z-index 50
 - Coin pop animation: 🪙 + earned amount floats up from subscriber on consumption (Framer Motion, `coinPops` transient state)
 - **Dead Message Queue (DMQ)**: purchasable component ($80, one-time, requires broker). Catches falling dropped events via bounding-box collision (dynamic width). Buffers caught events, releases one at a time as orange retry dots through the broker following the original route (rebuilt from current positions). Retry value = 10%–100% of original (upgradeable). Retry dots that fail again turn dark grey and are not re-caught. Four upgrades: width, faster release (accelerating curve), buffer size, value recovery. Output port at top-center, connects only to broker. Connection line uses vertical-first routing to broker's bottom edge.
+- **Delete component**: queues and DMQ can be deleted via a red button in their upgrade modal. `removeComponent` action removes the component, its connections, and queued dots. Deleting the DMQ makes it re-purchasable in the shop.
 - Only publisher has hover/tap scale animation (other nodes do not scale)
 
 ### 🔲 Not yet implemented
