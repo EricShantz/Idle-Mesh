@@ -12,6 +12,7 @@ Essential features that complete the Solace-inspired EDA experience.
   - Publishers emit events on topic strings (e.g., `orders/created`, `payments/processed`)
   - Visual topic labels on publisher nodes and connection lines
   - Default topic or user-configurable per publisher
+  - Topics could appear on the connection strings, but how would users manage workflows? e.g. publisher pushes event to topic A, queue subscribes to Topic A, then subscriber consumes from queue
 
 - [ ] **Queue Subscriptions with Wildcards**
   - Queues subscribe to topic patterns: `orders/*`, `orders/>`, `payments/*`

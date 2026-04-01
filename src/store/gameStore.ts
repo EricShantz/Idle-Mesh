@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { canConnect } from '../utils/connectionRules';
 
 export type ComponentType = 'publisher' | 'webhook' | 'broker' | 'queue' | 'subscriber';
 
@@ -62,6 +63,14 @@ export type GameState = {
   selectedNodeId: string | null;
   publisherCooldowns: Record<string, number>; // publisherId -> last fire timestamp
 
+  draggingConnection: {
+    type: 'reassign' | 'create';
+    connectionId?: string;
+    fromId: string;
+    mouseX: number;
+    mouseY: number;
+  } | null;
+
   // Actions
   fireEvent: (publisherId: string) => void;
   consumeEvent: (dotId: string, value: number, subscriberId: string) => void;
@@ -76,11 +85,17 @@ export type GameState = {
   purchaseGlobalUpgrade: (upgradeKey: string) => void;
   isPathOccupied: (publisherId: string) => boolean;
   getPathForPublisher: (publisherId: string) => { x: number; y: number }[];
+  getAllPathsForPublisher: (publisherId: string) => { x: number; y: number }[][];
   getEventValue: (publisherId: string) => number;
   addComponent: (type: ComponentType, x: number, y: number, label: string) => string;
   addConnection: (fromId: string, toId: string) => void;
   removeConnection: (fromId: string, toId: string) => void;
+  removeConnectionById: (connectionId: string) => void;
   moveComponent: (componentId: string, x: number, y: number) => void;
+  startDragConnection: (type: 'reassign' | 'create', fromId: string, connectionId: string | undefined, mouseX: number, mouseY: number) => void;
+  updateDragPosition: (mouseX: number, mouseY: number) => void;
+  completeDragConnection: (targetId: string) => void;
+  cancelDragConnection: () => void;
 };
 
 let dotIdCounter = 0;
@@ -166,6 +181,7 @@ export const useGameStore = create<GameState>()(
       coinPops: [],
       selectedNodeId: null,
       publisherCooldowns: {},
+      draggingConnection: null,
 
       fireEvent: (publisherId: string) => {
         const state = get();
@@ -179,26 +195,28 @@ export const useGameStore = create<GameState>()(
         const cooldownDuration = baseCooldown * Math.pow(0.95, publishSpeedLevel); // Each level reduces by 5%
         if (Date.now() - lastFireTime < cooldownDuration) return;
 
-        const path = state.getPathForPublisher(publisherId);
-        if (path.length < 2) return;
+        const paths = state.getAllPathsForPublisher(publisherId);
+        const validPaths = paths.filter(p => p.length >= 2);
+        if (validPaths.length === 0) return;
 
-        const dotId = `dot-${++dotIdCounter}`;
         const value = state.getEventValue(publisherId);
         const speed = 0.0007 * state.upgrades.propagationSpeed;
 
-        // Always create a traveling dot — drops near subscriber are handled in the game loop
         set(draft => {
           draft.publisherCooldowns[publisherId] = Date.now();
-          draft.eventDots.push({
-            id: dotId,
-            path,
-            progress: 0,
-            speed,
-            status: 'traveling',
-            color: '#66ffff',
-            opacity: 1,
-            value,
-          });
+          for (const path of validPaths) {
+            const dotId = `dot-${++dotIdCounter}`;
+            draft.eventDots.push({
+              id: dotId,
+              path,
+              progress: 0,
+              speed,
+              status: 'traveling',
+              color: '#66ffff',
+              opacity: 1,
+              value,
+            });
+          }
         });
       },
 
@@ -314,6 +332,72 @@ export const useGameStore = create<GameState>()(
         });
       },
 
+      removeConnectionById: (connectionId: string) => {
+        set(draft => {
+          draft.connections = draft.connections.filter(c => c.id !== connectionId);
+        });
+      },
+
+      startDragConnection: (type, fromId, connectionId, mouseX, mouseY) => {
+        set(draft => {
+          draft.draggingConnection = { type, fromId, connectionId, mouseX, mouseY };
+        });
+      },
+
+      updateDragPosition: (mouseX, mouseY) => {
+        set(draft => {
+          if (draft.draggingConnection) {
+            draft.draggingConnection.mouseX = mouseX;
+            draft.draggingConnection.mouseY = mouseY;
+          }
+        });
+      },
+
+      completeDragConnection: (targetId: string) => {
+        const state = get();
+        const drag = state.draggingConnection;
+        if (!drag) return;
+
+        const from = state.components.find(c => c.id === drag.fromId);
+        const to = state.components.find(c => c.id === targetId);
+        if (!from || !to) {
+          set(draft => { draft.draggingConnection = null; });
+          return;
+        }
+
+        if (!canConnect(from.type, to.type)) {
+          set(draft => { draft.draggingConnection = null; });
+          return;
+        }
+
+        // Don't allow duplicate connections
+        const alreadyExists = state.connections.some(
+          c => c.fromId === drag.fromId && c.toId === targetId
+        );
+        if (alreadyExists) {
+          set(draft => { draft.draggingConnection = null; });
+          return;
+        }
+
+        set(draft => {
+          if (drag.type === 'reassign' && drag.connectionId) {
+            const conn = draft.connections.find(c => c.id === drag.connectionId);
+            if (conn) {
+              conn.toId = targetId;
+            }
+          } else {
+            draft.connections.push({ id: `conn-${++connectionIdCounter}`, fromId: drag.fromId, toId: targetId });
+          }
+          draft.draggingConnection = null;
+        });
+      },
+
+      cancelDragConnection: () => {
+        set(draft => {
+          draft.draggingConnection = null;
+        });
+      },
+
       purchaseGlobalUpgrade: (upgradeKey: string) => {
         set(draft => {
           switch (upgradeKey) {
@@ -353,26 +437,35 @@ export const useGameStore = create<GameState>()(
         );
       },
 
-      getPathForPublisher: (publisherId: string) => {
+      getAllPathsForPublisher: (publisherId: string) => {
         const state = get();
-        const path: { x: number; y: number }[] = [];
-        const visited = new Set<string>();
+        const paths: { x: number; y: number }[][] = [];
 
-        function walk(nodeId: string) {
+        function walk(nodeId: string, currentPath: { x: number; y: number }[], visited: Set<string>) {
           if (visited.has(nodeId)) return;
           visited.add(nodeId);
           const node = state.components.find(c => c.id === nodeId);
           if (!node) return;
-          path.push({ x: node.x, y: node.y });
+          const path = [...currentPath, { x: node.x, y: node.y }];
 
           const nextConns = state.connections.filter(c => c.fromId === nodeId);
-          for (const conn of nextConns) {
-            walk(conn.toId);
+          if (nextConns.length === 0) {
+            // Leaf node — this is a complete path
+            paths.push(path);
+          } else {
+            for (const conn of nextConns) {
+              walk(conn.toId, path, new Set(visited));
+            }
           }
         }
 
-        walk(publisherId);
-        return path;
+        walk(publisherId, [], new Set());
+        return paths;
+      },
+
+      getPathForPublisher: (publisherId: string) => {
+        const paths = get().getAllPathsForPublisher(publisherId);
+        return paths[0] ?? [];
       },
 
       getEventValue: (publisherId: string) => {
@@ -391,7 +484,7 @@ let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 let lastSaveSnapshot = '';
 useGameStore.subscribe((state) => {
   // Build save data
-  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, ...toSave } = state;
+  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, ...toSave } = state;
   const data: Record<string, any> = {};
   for (const [key, val] of Object.entries(toSave)) {
     if (typeof val !== 'function') {

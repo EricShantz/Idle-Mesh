@@ -15,8 +15,6 @@ export function Sidebar() {
   const spend = useGameStore(s => s.spend);
   const purchaseGlobalUpgrade = useGameStore(s => s.purchaseGlobalUpgrade);
   const addComponent = useGameStore(s => s.addComponent);
-  const addConnection = useGameStore(s => s.addConnection);
-  const removeConnection = useGameStore(s => s.removeConnection);
 
   // Calculate $/sec
   const now = Date.now();
@@ -55,21 +53,15 @@ export function Sidebar() {
 
   const handleBuyQueue = () => {
     const broker = components.find(c => c.type === 'broker');
-    const subscriber = components.find(c => c.type === 'subscriber');
-    if (!broker || !subscriber) return;
+    if (!broker) return;
     if (!spend(QUEUE_COST)) return;
 
-    // Place queue between broker and subscriber, stacked vertically below the main line
+    // Place queue below existing components, stacked vertically
     const queueCount = components.filter(c => c.type === 'queue').length;
-    const qx = Math.round((broker.x + subscriber.x) / 2);
+    const qx = Math.round(broker.x + 150);
     const qy = 300 + (queueCount + 1) * 140;
 
-    const queueId = addComponent('queue', qx, qy, 'Queue');
-
-    // Rewire: remove direct broker→subscriber, add broker→queue→subscriber
-    removeConnection(broker.id, subscriber.id);
-    addConnection(broker.id, queueId);
-    addConnection(queueId, subscriber.id);
+    addComponent('queue', qx, qy, 'Queue');
   };
 
   const hasBroker = components.some(c => c.type === 'broker');
@@ -156,7 +148,7 @@ export function Sidebar() {
               }}
             >
               <div className="font-bold">Buy Queue</div>
-              <div className="opacity-60">Sits between broker and subscriber, buffers events</div>
+              <div className="opacity-60">Buffers events. Drag connections to wire it up.</div>
               <div className="mt-0.5 font-mono">{formatMoney(QUEUE_COST)}</div>
             </button>
           </div>

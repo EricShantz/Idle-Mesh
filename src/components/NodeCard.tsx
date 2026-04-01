@@ -9,6 +9,7 @@ import {
   subscriberUpgrades,
   getUpgradeCost,
 } from '../store/upgradeConfig';
+import { canConnect } from '../utils/connectionRules';
 
 function getUpgradesForType(type: string) {
   switch (type) {
@@ -41,6 +42,8 @@ export function NodeCard({ component }: Props) {
   const costReduction = useGameStore(s => s.upgrades.costReduction);
   const moveComponent = useGameStore(s => s.moveComponent);
   const eventDots = useGameStore(s => s.eventDots);
+  const draggingConnection = useGameStore(s => s.draggingConnection);
+  const startDragConnection = useGameStore(s => s.startDragConnection);
 
   const colors = typeColors[component.type] ?? typeColors.publisher;
   const isSelected = selectedNodeId === component.id;
@@ -62,6 +65,25 @@ export function NodeCard({ component }: Props) {
     return balance >= cost;
   }).length;
 
+
+  // Connection port visibility
+  const hasOutput = component.type !== 'subscriber';
+
+  // Valid target highlighting during drag
+  const isValidTarget = draggingConnection && component.type !== 'publisher'
+    ? canConnect(
+        useGameStore.getState().components.find(c => c.id === draggingConnection.fromId)?.type ?? 'publisher',
+        component.type
+      ) && component.id !== draggingConnection.fromId
+    : false;
+
+  const handleOutputPortDown = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const rect = (e.target as HTMLElement).closest('[data-mesh-container]')?.getBoundingClientRect()
+      ?? (e.target as HTMLElement).getBoundingClientRect();
+    startDragConnection('create', component.id, undefined, e.clientX - rect.left, e.clientY - rect.top);
+  };
 
   const handleUpgradeClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -136,16 +158,21 @@ export function NodeCard({ component }: Props) {
         whileTap={cursorGrabbing ? undefined : { scale: 0.95 }}
         className="px-4 py-2 rounded-lg font-mono text-sm select-none relative flex flex-col items-center"
         style={{
-          border: `1.5px solid ${colors.border}`,
+          border: `1.5px solid ${isValidTarget ? '#22d3ee' : colors.border}`,
           background: colors.bg,
-          boxShadow: isSelected
-            ? `${colors.glow}, 0 0 20px ${colors.border}44`
-            : colors.glow,
+          boxShadow: isValidTarget
+            ? '0 0 16px rgba(34,211,238,0.6), 0 0 30px rgba(34,211,238,0.3)'
+            : isSelected
+              ? `${colors.glow}, 0 0 20px ${colors.border}44`
+              : colors.glow,
           color: colors.border,
           cursor: cursorGrabbing ? 'grabbing' : (isPublisher ? 'pointer' : 'default'),
-          minWidth: component.type === 'queue' ? 140 : 120,
+          width: component.type === 'queue' ? 140 : 120,
+          minHeight: 56,
           textAlign: 'center',
+          justifyContent: 'center',
           pointerEvents: cursorGrabbing ? 'none' : 'auto',
+          transition: 'border-color 0.15s, box-shadow 0.15s',
         }}
       >
         <button
@@ -182,6 +209,39 @@ export function NodeCard({ component }: Props) {
             className="absolute -top-2 -right-2 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center"
           >
             {affordableUpgradeCount > 99 ? '99+' : affordableUpgradeCount}
+          </div>
+        )}
+        {/* Output port for creating connections — Boomi-style arrow circle */}
+        {hasOutput && (
+          <div
+            onPointerDown={handleOutputPortDown}
+            className="absolute top-1/2 -right-6 w-4 h-4 rounded-full border flex items-center justify-center group/port"
+            style={{
+              transform: 'translateY(-50%)',
+              cursor: 'crosshair',
+              background: '#1e293b',
+              borderColor: colors.border + '88',
+              transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
+            }}
+            title="Drag to connect"
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = colors.border;
+              e.currentTarget.style.background = colors.border + '22';
+              e.currentTarget.style.boxShadow = `0 0 8px ${colors.border}66`;
+              const path = e.currentTarget.querySelector('path');
+              if (path) path.setAttribute('stroke', colors.border);
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = colors.border + '88';
+              e.currentTarget.style.background = '#1e293b';
+              e.currentTarget.style.boxShadow = 'none';
+              const path = e.currentTarget.querySelector('path');
+              if (path) path.setAttribute('stroke', '#94a3b8');
+            }}
+          >
+            <svg width="8" height="8" viewBox="0 0 12 12" style={{ pointerEvents: 'none' }}>
+              <path d="M3 2 L9 6 L3 10" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </div>
         )}
       </motion.div>

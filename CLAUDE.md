@@ -30,7 +30,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - **Styling**: Tailwind CSS v4 (`@tailwindcss/vite` plugin)
 - **Animation**: Framer Motion (component transitions) + raw Canvas API (event dot animation on the mesh)
 - **State Management**: Zustand with `immer` middleware
-- **Persistence**: localStorage auto-save with snapshot comparison (only persists when non-transient state changes), 500ms debounce. Excluded from save: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`. Key: `idle-mesh-save`
+- **Persistence**: localStorage auto-save with snapshot comparison (only persists when non-transient state changes), 500ms debounce. Excluded from save: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`, `draggingConnection`. Key: `idle-mesh-save`
 - **Target Platforms**:
   - Browser (primary)
   - Android via Capacitor
@@ -47,7 +47,11 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
   - Broker: bright orange-red (`#fb923c`) — visually distinct from webhook to signal the upgrade
   - Queue: purple (`#a855f7`)
   - Subscriber: green (`#22c55e`)
-- **Connection lines**: 1.5px dashed, muted blue-gray (`#334155`), drawn in SVG at z-index 5
+- **Connection lines**: 1.5px dashed, muted blue-gray (`#334155`), drawn in SVG at z-index 5 via `ConnectionLine.tsx` components
+  - SVG arrowhead markers at target end (points to left edge of target node)
+  - Lines originate from the output port circle (3 o'clock edge) on the source node
+  - Hover reveals midpoint controls: reassign (cyan ↗) and delete (red ✕)
+  - Drag preview line shown in cyan during connection creation/reassignment
 - **Event dots**: 6px filled circles traveling along connection lines
   - Traveling: cyan (`#66ffff`) with radial glow
   - Pausing at subscriber: cyan, shrinks/fades over ~2.5s
@@ -79,6 +83,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 ```
 
 - **Mesh canvas**: SVG connection lines + HTML5 canvas for event dots + React nodes
+- **Output ports**: Small circle with right-arrow icon on right edge of nodes that can output (all except subscriber). Drag from port to create a new connection. Hover highlights port in the node's theme color.
 - **Upgrade modal**: Small floating panel anchored to the node, opened via the ⚙ gear icon in the node's top-right corner
 - **Upgrade badge**: Red circle on each node showing how many upgrades are currently affordable
 
@@ -107,9 +112,10 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 4. **Blockage points**: if webhook is occupied, next event drops at webhook edge; if subscriber is busy, event drops at subscriber edge
 5. **Spend money** on per-component upgrades (publish speed, event value, faster consumption) and global upgrades
 6. **Upgrade webhook → broker** ($75) to unlock queue purchases
-7. **Buy queues** ($60 each) to sit between broker and subscriber
-8. **Automation**: unlock auto-publisher tiers for idle income
-9. **Fan-out** (future): persistent delivery to multiple subscribers via queues
+7. **Buy queues** ($60 each) — placed unconnected, user wires them via drag-to-connect
+8. **Wire connections**: drag from output port to target node, or reassign/delete existing connections
+9. **Automation**: unlock auto-publisher tiers for idle income
+10. **Fan-out**: broker connected to multiple queues creates one dot per path (functional)
 
 ---
 
@@ -134,8 +140,9 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 
 ### Queue
 - Purchased from the sidebar shop for $60 (requires broker)
-- Placed at midpoint between broker and subscriber, offset downward: `y = 300 + (n+1) * 140`
-- On purchase: broker→subscriber direct connection is replaced with broker→queue→subscriber
+- Placed unconnected on the canvas, offset downward: `y = 300 + (n+1) * 140`
+- User wires connections manually via drag-to-connect (output port → target node)
+- Each queue is independent with its own unique ID, buffer, and connections
 - **Always captures** arriving dots on collision — dots never pass through a queue
 - Buffer capacity = `1 + bufferSize upgrade level` (base holds 1 event)
 - **Auto-release**: one queued dot released per frame, only when subscriber is free AND no dots traveling past the queue toward subscriber
@@ -156,7 +163,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 ```ts
 type EventDot = {
   id: string;
-  path: { x: number; y: number }[];  // waypoints from getPathForPublisher()
+  path: { x: number; y: number }[];  // waypoints from getAllPathsForPublisher()
   progress: number;                   // 0.0 → 1.0 along full path
   speed: number;                      // 0.0007 * propagationSpeed multiplier
   status: 'traveling' | 'pausing' | 'queued' | 'dropped' | 'consumed';
@@ -252,14 +259,17 @@ Balance (large), Total earned, Consumed, Dropped, Events/sec, $/sec, Mesh size
 ### Shop (visible after broker upgrade)
 | Component | Cost | Notes |
 |---|---|---|
-| Queue | $60 | Places between broker and subscriber, rewires connections |
+| Queue | $60 | Places unconnected on canvas, user wires via drag-to-connect |
 
 ---
 
 ## What's Implemented vs Planned
 
 ### ✅ Implemented
-- Publisher → Webhook → Subscriber static mesh
+- Publisher → Webhook → Subscriber initial mesh (pre-wired)
+- **Draggable connections (Boomi-style)**: drag from output port to create connections, hover midpoint to reassign (↗) or delete (✕). SVG arrowheads point to target node edge. Connection validation enforces semi-flexible rules: publisher→broker/webhook, broker/webhook→queue/subscriber, queue→subscriber. Validation in `connectionRules.ts`.
+- **Fan-out**: `getAllPathsForPublisher()` DFS forks at branch points, `fireEvent` creates one dot per path. Broker connected to multiple queues sends events to all paths.
+- **Multiple independent queues**: each queue has unique ID, own buffer, own connections. Purchased unconnected from shop, user wires manually.
 - **Drag-to-move**: any component can be repositioned by dragging; connection lines follow in real-time
 - Click-to-fire with cooldown (upgradeable)
 - Event dot animation: travel, webhook slowdown, subscriber pause/shrink, drop with gravity
@@ -276,19 +286,19 @@ Balance (large), Total earned, Consumed, Dropped, Events/sec, $/sec, Mesh size
 - Queue upgrades: Add Subscriber Slot (UI only), Increase Buffer Size (functional), Persistent Delivery (UI only)
 - Subscriber upgrades: Faster Consumption (functional), Consumption Value (**functional** — base $0.50 + $0.50/level added at consumption time)
 - Global upgrades: Propagation Speed, Cost Reduction, Auto-Publisher (all functional)
-- Broker/Queue/Subscriber shop in sidebar (Queue purchasable, placed + connected automatically)
-- Auto-save / load from localStorage (snapshot comparison optimization, 500ms debounce, transient fields excluded)
+- Broker/Queue/Subscriber shop in sidebar (Queue purchasable, placed unconnected for manual wiring)
+- Auto-save / load from localStorage (snapshot comparison optimization, 500ms debounce, transient fields excluded: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`, `draggingConnection`)
 - Z-index layering (events emerge from publisher, fade on top of subscriber); dragged nodes elevate to z-index 50
 - Coin pop animation: 🪙 + earned amount floats up from subscriber on consumption (Framer Motion, `coinPops` transient state)
 
 ### 🔲 Not yet implemented (config exists, UI shows, but no mechanical effect)
 - **Solace-inspired features**:
   - Topic hierarchies: publishers emit on topic strings (e.g., `orders/created`), queues subscribe with wildcards (`orders/*`, `orders/>`) following Solace syntax
-  - Persistent Delivery (fan-out): multiple subscribers attached to one queue, all receiving the event
+  - Persistent Delivery (fan-out via queue): multiple subscribers attached to one queue, all receiving the event (broker-level fan-out to multiple queues IS implemented)
   - Dead Letter Queue: dropped/overflowed events stored in DMQ, replayed for partial value
   - Topic Filter Boost: enables advanced wildcard patterns on broker/queue subscriptions
 - **Mechanical upgrades**: Broker Add Queue Slot (limits queue connections), Queue Add Subscriber Slot (prerequisite for fan-out)
-- **Shop expansion**: Second Publisher (different topic), Second Subscriber, additional queues
+- **Shop expansion**: Second Publisher (different topic), Second Subscriber
 - **Advanced mechanics**: Event batching (multi-fire), mesh topology visualization (topic labels on lines), multi-broker mesh
 
 ---
@@ -298,9 +308,10 @@ Balance (large), Total earned, Consumed, Dropped, Events/sec, $/sec, Mesh size
 ```
 src/
   components/
-    MeshCanvas.tsx      # SVG connections + EventCanvas + NodeCards + NodeModal
+    MeshCanvas.tsx      # SVG connections + EventCanvas + NodeCards + NodeModal + drag handling
+    ConnectionLine.tsx  # Individual connection: SVG line + arrowhead + midpoint hover controls
     EventCanvas.tsx     # HTML5 canvas RAF loop, draws traveling/pausing/dropped dots
-    NodeCard.tsx        # Individual node: color, gear icon, upgrade badge, click handlers
+    NodeCard.tsx        # Individual node: color, gear icon, upgrade badge, output port, click handlers
     NodeModal.tsx       # Floating upgrade modal anchored to selected node
     Sidebar.tsx         # Balance, stats, global upgrades, shop
   store/
@@ -309,6 +320,7 @@ src/
   hooks/
     useGameLoop.ts      # RAF game loop (dot movement, webhook slowdown, consume/drop logic) + useAutoPublisher
   utils/
+    connectionRules.ts  # canConnect(fromType, toType), getValidTargets() — connection validation
     pathUtils.ts        # interpolatePath(path, progress) → {x, y}
     formatMoney.ts      # $1,234.56 formatter
   App.tsx               # Root: MeshCanvas + Sidebar, runs useGameLoop + useAutoPublisher
@@ -322,10 +334,13 @@ src/
 - **Starting balance for testing**: change `balance: saved?.balance ?? 500000` in `gameStore.ts` line ~144. Clear localStorage to reset to the new default.
 - **Component IDs**: initial components use fixed IDs (`pub-1`, `webhook-1`, `sub-1`, `conn-1`, `conn-2`). Dynamically added components use counter-based IDs starting at 10 (`comp-10+`, `conn-10+`).
 - **Collision & thresholds**: `useGameLoop.ts` uses two systems: (1) `getWebhookThresholds(path)` computes webhook slowdown start/end based on equal-progress-per-segment, (2) `dotTouchesNode()` does bounding-box collision for queue capture and subscriber pause/drop. Webhook/broker blockage uses a 30px proximity check with `isComponentOccupied()`.
-- **Drag-to-move**: implemented in `NodeCard.tsx` using pointer capture + ref-based drag state. State update happens on every `pointermove` (via `moveComponent` in `gameStore.ts`) so connection lines and event canvas follow in real-time. Gear button has `onPointerDown` stopPropagation to prevent drag-start when clicking upgrades.
+- **Drag-to-move**: implemented in `NodeCard.tsx` using pointer capture + ref-based drag state. State update happens on every `pointermove` (via `moveComponent` in `gameStore.ts`) so connection lines and event canvas follow in real-time. Gear button and output port have `onPointerDown` stopPropagation to prevent drag-start.
+- **Draggable connections**: `draggingConnection` transient state in `gameStore.ts` tracks active drag (type, fromId, connectionId, mouseX, mouseY). `MeshCanvas.tsx` handles pointer move/up for drop detection (bounding-box: 70px × 38px). `ConnectionLine.tsx` has midpoint hover controls for reassign/delete. Output port in `NodeCard.tsx` initiates create drags. Validation via `connectionRules.ts`.
+- **Connection line geometry**: lines start from the output port circle edge (direction-aware) and end at the target node's left edge. Port position = `from.x + halfW + 16` where halfW is 60 (120px nodes) or 70 (140px queue nodes). All nodes use `minHeight: 56` and fixed `width` for consistent port alignment.
+- **Fan-out path resolution**: `getAllPathsForPublisher()` does DFS that forks at branch points, returns array of complete paths. `fireEvent()` creates one dot per valid path. `getPathForPublisher()` wraps it returning the first path for backward compat.
 - **Clock consistency**: `pauseStartTime` uses `Date.now()` (Unix epoch). The RAF `time` argument is a different clock — don't mix them.
 - **Upgrade effects location**: most per-component upgrade effects are read in `useGameLoop.ts` by looking up the component by position from the dot's path array. Global upgrade effects are applied in `purchaseGlobalUpgrade` in `gameStore.ts`.
 - **`getUpgradesForType`** is duplicated in `NodeModal.tsx` and `NodeCard.tsx` — keep both in sync when adding new component types.
-- **Adding new shop items**: add action logic to `gameStore.ts`, add UI to `Sidebar.tsx` shop section. Auto-placement should respect existing component positions.
+- **Adding new shop items**: add action logic to `gameStore.ts`, add UI to `Sidebar.tsx` shop section. New components are placed unconnected; user wires via drag-to-connect.
 - Keep game logic (store, hooks) decoupled from rendering components.
 - All upgrade costs/effects in `upgradeConfig.ts` — avoid hardcoding in components.
