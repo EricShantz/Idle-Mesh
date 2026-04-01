@@ -460,7 +460,23 @@ export const useGameStore = create<GameState>()(
         }
 
         walk(publisherId, [], new Set());
-        return paths;
+
+        // Expand node-center paths into orthogonal waypoints
+        return paths.map(nodePath => {
+          if (nodePath.length < 2) return nodePath;
+          const expanded: { x: number; y: number }[] = [nodePath[0]];
+          for (let i = 0; i < nodePath.length - 1; i++) {
+            const a = nodePath[i];
+            const b = nodePath[i + 1];
+            if (Math.abs(a.y - b.y) >= 1) {
+              const midX = (a.x + b.x) / 2;
+              expanded.push({ x: midX, y: a.y });
+              expanded.push({ x: midX, y: b.y });
+            }
+            expanded.push(b);
+          }
+          return expanded;
+        });
       },
 
       getPathForPublisher: (publisherId: string) => {

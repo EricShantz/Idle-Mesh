@@ -7,6 +7,7 @@ import { EventCanvas } from './EventCanvas';
 import { ConnectionLine } from './ConnectionLine';
 import { formatMoney } from '../utils/formatMoney';
 import { canConnect } from '../utils/connectionRules';
+import { buildOrthogonalSvgPath } from '../utils/orthogonalPath';
 
 export function MeshCanvas() {
   const components = useGameStore(s => s.components);
@@ -111,11 +112,9 @@ export function MeshCanvas() {
         ))}
         {/* Drag preview line */}
         {draggingConnection && (
-          <line
-            x1={dragFromX}
-            y1={dragFromY}
-            x2={draggingConnection.mouseX}
-            y2={draggingConnection.mouseY}
+          <path
+            d={buildOrthogonalSvgPath(dragFromX, dragFromY, draggingConnection.mouseX, draggingConnection.mouseY)}
+            fill="none"
             stroke="#22d3ee"
             strokeWidth={1.5}
             strokeDasharray="6 3"

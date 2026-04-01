@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useGameStore, type Connection } from '../store/gameStore';
+import { buildOrthogonalSvgPath } from '../utils/orthogonalPath';
 
 type Props = {
   conn: Connection;
@@ -16,33 +17,25 @@ export function ConnectionLine({ conn }: Props) {
   if (!from || !to) return null;
 
   // Output port center: node half-width + port offset
-  // right: -24px positions port's right edge 24px past parent right, port is 16px wide
-  // so center = halfW + (24 - 8) = halfW + 16
   const fromHalfW = from.type === 'queue' ? 70 : 60;
   const portCX = from.x + fromHalfW + 16;
   const portCY = from.y;
   const portR = 8;
 
-  // Direction from port center to target
-  const dxRaw = to.x - portCX;
-  const dyRaw = to.y - portCY;
-  const lenRaw = Math.hypot(dxRaw, dyRaw);
+  // Start at port edge (right side)
+  const startX = portCX + portR;
+  const startY = portCY;
 
-  // Start at the edge of the port circle in the direction of the target
-  const startX = lenRaw > 0 ? portCX + (dxRaw / lenRaw) * portR : portCX + portR;
-  const startY = lenRaw > 0 ? portCY + (dyRaw / lenRaw) * portR : portCY;
+  // End at left edge of target node
+  const toHalfW = to.type === 'queue' ? 70 : 60;
+  const endX = to.x - toHalfW - 2;
+  const endY = to.y;
 
-  // End line at the left edge of the target node
-  const dx = to.x - startX;
-  const dy = to.y - startY;
-  const len = Math.hypot(dx, dy);
-  const endOffset = len > 0 ? 62 / len : 0; // 60px half-width + 2px arrowhead clearance
-  const endX = to.x - dx * endOffset;
-  const endY = to.y - dy * endOffset;
+  const pathD = buildOrthogonalSvgPath(startX, startY, endX, endY);
 
-  // Midpoint for controls
-  const midX = (from.x + to.x) / 2;
-  const midY = (from.y + to.y) / 2;
+  // Midpoint for controls — center of the vertical segment
+  const midX = (startX + endX) / 2;
+  const midY = (startY + endY) / 2;
 
   const handleDragFromMidpoint = (e: React.PointerEvent) => {
     e.stopPropagation();
@@ -66,12 +59,10 @@ export function ConnectionLine({ conn }: Props) {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* Visible line with arrowhead */}
-      <line
-        x1={startX}
-        y1={startY}
-        x2={endX}
-        y2={endY}
+      {/* Visible path with arrowhead */}
+      <path
+        d={pathD}
+        fill="none"
         stroke={hovered ? '#4b6a82' : '#334155'}
         strokeWidth={1.5}
         strokeDasharray="4 4"
@@ -79,11 +70,9 @@ export function ConnectionLine({ conn }: Props) {
         style={{ transition: 'stroke 0.15s' }}
       />
       {/* Invisible wider hit area */}
-      <line
-        x1={startX}
-        y1={startY}
-        x2={endX}
-        y2={endY}
+      <path
+        d={pathD}
+        fill="none"
         stroke="transparent"
         strokeWidth={14}
         style={{ cursor: 'pointer' }}
