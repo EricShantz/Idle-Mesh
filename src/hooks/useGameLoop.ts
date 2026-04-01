@@ -273,7 +273,7 @@ export function useGameLoop() {
               c.type === 'subscriber' && Math.hypot(c.x - lastComponent.x, c.y - lastComponent.y) < 50
             );
             const fasterConsumptionLevel = subscriber?.upgrades['fasterConsumption'] ?? 0;
-            const boostPct = fasterConsumptionLevel * (fasterConsumptionLevel + 9) / 2;
+            const boostPct = Math.min(fasterConsumptionLevel * (fasterConsumptionLevel + 9) / 2, 100);
             const consumeDuration = 2500 * (1 - boostPct / 100);
             const moneyAddTime = consumeDuration * 0.5;
 
@@ -378,7 +378,11 @@ export function useGameLoop() {
           );
           const targetSub = subscriberComp ?? bakedSubscriber;
 
-          // Check if subscriber is free — only block on dots that are past all queues (on queue→subscriber segment)
+          // Check if subscriber is free — gated by queue's Faster Release upgrade
+          const releaseSpeedLevel = queueComp?.upgrades.queueReleaseSpeed ?? 0;
+          const releaseBoostPct = releaseSpeedLevel * (releaseSpeedLevel + 9) / 2;
+          const releaseThreshold = 1 - (releaseBoostPct / 100); // 0→1.0, 10→0.05
+
           const isSubscriberBusy = !targetSub ? false : updated.some(d => {
             if (d.id === dot.id || d.path.length === 0) return false;
             const dEnd = d.path[d.path.length - 1];
@@ -386,18 +390,31 @@ export function useGameLoop() {
             if (d.status === 'pausing' && !d.moneyAdded) return true;
             if (d.status === 'traveling') {
               // Only block if this dot is past all queues in its path (on the final segment to subscriber)
-              const dPos = interpolatePath(d.path, d.progress);
               const isPastAllQueues = !d.path.some((wp, idx) => {
                 if (idx >= d.path.length - 1) return false; // skip last waypoint
                 const q = state.components.find(c =>
                   c.type === 'queue' && Math.abs(c.x - wp.x) < 1 && Math.abs(c.y - wp.y) < 1
                 );
                 if (!q) return false;
-                // Is the dot still at or before this queue?
                 const queueProgress = idx / (d.path.length - 1);
                 return d.progress <= queueProgress + 0.01;
               });
-              return isPastAllQueues;
+              if (!isPastAllQueues) return false;
+              // With Faster Release, allow next release once previous dot has traveled
+              // far enough past the queue on the queue→subscriber segment
+              // Find queue waypoint progress and subscriber (end) progress
+              let queueWpProgress = 0;
+              for (let pi = d.path.length - 2; pi >= 0; pi--) {
+                const wp = d.path[pi];
+                const q = state.components.find(c =>
+                  c.type === 'queue' && Math.abs(c.x - wp.x) < 1 && Math.abs(c.y - wp.y) < 1
+                );
+                if (q) { queueWpProgress = pi / (d.path.length - 1); break; }
+              }
+              const segmentProgress = queueWpProgress < 1
+                ? (d.progress - queueWpProgress) / (1 - queueWpProgress)
+                : 1;
+              return segmentProgress < releaseThreshold;
             }
             return false;
           });

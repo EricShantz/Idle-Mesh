@@ -44,8 +44,9 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number): strin
     case 'dmqValueRecovery':
       return `${10 + currentLevel * 10}% → ${10 + nextLevel * 10}%`;
 
-    // DMQ release speed
-    case 'dmqReleaseSpeed': {
+    // Release speed (DMQ and Queue)
+    case 'dmqReleaseSpeed':
+    case 'queueReleaseSpeed': {
       const curPct = currentLevel * (currentLevel + 9) / 2;
       const nxtPct = nextLevel * (nextLevel + 9) / 2;
       return `${curPct}% → ${nxtPct}% (+${nxtPct - curPct}%)`;
@@ -67,8 +68,8 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number): strin
 
     // Level-based percentage upgrades
     case 'fasterConsumption': {
-      const currentPct = currentLevel * (currentLevel + 9) / 2;
-      const nextPct = nextLevel * (nextLevel + 9) / 2;
+      const currentPct = Math.min(currentLevel * (currentLevel + 9) / 2, 100);
+      const nextPct = Math.min(nextLevel * (nextLevel + 9) / 2, 100);
       return `${currentPct}% → ${nextPct}% (+${nextPct - currentPct}%)`;
     }
     case 'publishSpeed': {

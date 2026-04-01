@@ -155,7 +155,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - **Visual slot indicators**: filled slots pack to the right (oldest dot = rightmost slot, newest = leftmost filled slot). Empty slots on the left. Retry dots show orange (`#fb923c`), normal dots cyan (`#66ffff`). Sorted by `pauseStartTime`.
 - **Subscriber slot limit**: queue starts with 1 subscriber connection slot, +1 per `addSubscriberSlot` upgrade level. Enforced the same way as broker queue slots.
 - **Deletable**: red "Delete Queue" button in upgrade modal. Removes the queue, all its connections, and any dots queued in it.
-- Upgrades: Add Subscriber Slot (**functional**), Persistent Delivery/`fanOut` (**functional** — routing logic in `fireEvent`), Increase Buffer Size (**functional**)
+- Upgrades: Add Subscriber Slot (**functional**), Persistent Delivery/`fanOut` (**functional** — routing logic in `fireEvent`), Faster Release (**functional** — accelerating release threshold), Increase Buffer Size (**functional**)
 
 ### Dead Message Queue (DMQ)
 - Purchased from the sidebar shop for $80 (requires broker, one-time purchase)
@@ -173,7 +173,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 ### Subscriber
 - Consumes events. Pauses for ~2.5s while "processing" (shrink animation), then money increments.
 - **Coin pop animation**: when money is earned, a 🪙 coin icon with the earned amount floats upward from the subscriber and fades out over 1 second (Framer Motion `AnimatePresence` in `MeshCanvas.tsx`, state in `coinPops` array)
-- **Faster Consumption** upgrade: accelerating curve `boostPct = level * (level + 9) / 2`, `duration = 2500 * (1 - boostPct/100)`. Max level 10 (95% reduction).
+- **Faster Consumption** upgrade: accelerating curve `boostPct = min(level * (level + 9) / 2, 100)`, `duration = 2500 * (1 - boostPct/100)`. Max level 11 (100% reduction = instant consumption).
 - **Value calculation**: final event value = publisher value + subscriber value. Subscriber value uses same accelerating formula as publisher: `0.5 + level * 0.45 + level² * 0.05`. No max level.
 - Upgrades: Consumption Value (accelerating $, **functional**), Faster Consumption (accelerating %, **functional**)
 
@@ -256,6 +256,7 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 |---|---|---|---|
 | Add Subscriber Slot | **Functional**: max subscriber connections = 1 + level | $30 | ×2 |
 | Persistent Delivery (`fanOut`) | **Functional**: all connected queues receive every event (broker-level routing) | $100 (one-time) |  |
+| Faster Release | **Functional**: Accelerating `level*(level+9)/2`% release threshold reduction | $35 | ×1.8 | 10 (95%) |
 | Increase Buffer Size | **Functional**: buffer capacity = 3 + level (max 20 slots) | $45 | ×2 | 17 |
 
 ### Dead Message Queue (DMQ)
@@ -270,7 +271,7 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 | Upgrade | Effect | Base Cost | Multiplier | Max Level |
 |---|---|---|---|---|
 | Consumption Value | Accelerating: `$0.50 + level*0.45 + level²*0.05` (+$0.10 more each level) | $10 | ×1.8 | unlimited |
-| Faster Consumption | Accelerating: `level*(level+9)/2`% consume duration reduction | $8 | ×1.8 | 10 (95%) |
+| Faster Consumption | Accelerating: `min(level*(level+9)/2, 100)`% consume duration reduction | $8 | ×1.8 | 11 (100%) |
 
 ---
 
