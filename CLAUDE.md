@@ -30,7 +30,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - **Styling**: Tailwind CSS v4 (`@tailwindcss/vite` plugin)
 - **Animation**: Framer Motion (component transitions) + raw Canvas API (event dot animation on the mesh)
 - **State Management**: Zustand with `immer` middleware
-- **Persistence**: localStorage auto-save with snapshot comparison (only persists when non-transient state changes), 500ms debounce. Excluded from save: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`, `draggingConnection`, `draggingNodeId`. Key: `idle-mesh-save`
+- **Persistence**: localStorage auto-save with snapshot comparison (only persists when non-transient state changes), 500ms debounce. Excluded from save: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`, `draggingConnection`, `draggingNodeId`, `meshError`. Key: `idle-mesh-save`
 - **Target Platforms**:
   - Browser (primary)
   - Android via Capacitor
@@ -141,7 +141,8 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 ### Broker (upgraded Webhook)
 - Same position as the webhook it replaced; label and color change on purchase
 - Unlocks the **Queue shop item** in the sidebar
-- Upgrades: Add Queue Slot, Topic Filter Boost (config-defined, not yet mechanically implemented)
+- **Queue slot limit**: broker starts with 1 queue connection slot, +1 per `addQueueSlot` upgrade level. Connection validation enforces this — excess connections are rejected with a mesh error toast.
+- Upgrades: Add Queue Slot (**functional**), Topic Filter Boost (hidden in UI — requires topic hierarchy system, not yet implemented)
 
 ### Queue
 - Purchased from the sidebar shop for $60 (requires broker)
@@ -152,7 +153,8 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - Buffer capacity = `1 + bufferSize upgrade level` (base holds 1 event)
 - **Auto-release**: FIFO by `pauseStartTime` — oldest queued dot released first, one per frame, only when the queue has a current connection to a subscriber AND subscriber is free (no pausing dot, no traveling dot past any queue heading to that subscriber). Uses current connection graph, not baked paths.
 - **Visual slot indicators**: filled slots pack to the right (oldest dot = rightmost slot, newest = leftmost filled slot). Empty slots on the left. Retry dots show orange (`#fb923c`), normal dots cyan (`#66ffff`). Sorted by `pauseStartTime`.
-- Upgrades: Add Subscriber Slot (UI only), Persistent Delivery/`fanOut` (UI only), Increase Buffer Size (**functional**)
+- **Subscriber slot limit**: queue starts with 1 subscriber connection slot, +1 per `addSubscriberSlot` upgrade level. Enforced the same way as broker queue slots.
+- Upgrades: Add Subscriber Slot (**functional**), Persistent Delivery/`fanOut` (**functional** — routing logic in `fireEvent`), Increase Buffer Size (**functional**)
 
 ### Dead Message Queue (DMQ)
 - Purchased from the sidebar shop for $80 (requires broker, one-time purchase)
@@ -243,14 +245,14 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 ### Broker
 | Upgrade | Effect | Base Cost | Multiplier |
 |---|---|---|---|
-| Add Queue Slot | (UI only, not yet mechanical) | $40 | ×2 |
-| Topic Filter Boost | (UI only, not yet mechanical) | $60 | ×2 |
+| Add Queue Slot | **Functional**: max queue connections = 1 + level | $40 | ×2 |
+| Topic Filter Boost | Hidden in UI (requires topic hierarchy system) | $60 | ×2 |
 
 ### Queue
 | Upgrade | Effect | Base Cost | Multiplier |
 |---|---|---|---|
-| Add Subscriber Slot | (UI only, not yet mechanical) | $30 | ×2 |
-| Persistent Delivery (`fanOut`) | Fan-out to all subscribers (UI only) | $100 (one-time) |  |
+| Add Subscriber Slot | **Functional**: max subscriber connections = 1 + level | $30 | ×2 |
+| Persistent Delivery (`fanOut`) | **Functional**: all connected queues receive every event (broker-level routing) | $100 (one-time) |  |
 | Increase Buffer Size | **Functional**: buffer capacity = 1 + level | $45 | ×2 |
 
 ### Dead Message Queue (DMQ)
@@ -282,7 +284,7 @@ Global upgrades use the same `UpgradeDef` system as node upgrades — each is a 
 | Faster Event Propagation | All dots 5% faster per level | $50 | ×2 | unlimited |
 | 10% Cheaper Upgrades | Cost reduction, stackable | $50 | ×2 | 3 |
 | Auto-Publisher | Lv1: 5s, Lv2: 3s, Lv3: 1s, Lv4: 0.75s, Lv5: 0.5s, Lv6: 0.25s, Lv7: 0.1s | $150 | ×4 | 7 |
-| Event Batching | (UI only) | $200 | — | 1 |
+| Event Batching | Publishers fire 2 events per click (staggered start) | $200 | — | 1 |
 | Global Value ×1.5 | All earnings multiplied | $500 | — | 1 |
 
 **Auto-Publisher**: bypasses the manual click cooldown (`fireEvent(id, true)` with `skipCooldown`). Auto-fires do NOT reset the manual cooldown timer, so players can click manually between auto-fires. `useAutoPublisher` uses `getState()` inside the `setInterval` callback (not Zustand subscriptions) so the interval is only reset when `autoPubLevel` changes, not on every component position update.
@@ -317,25 +319,25 @@ Global upgrades use the same `UpgradeDef` system as node upgrades — each is a 
 - Per-node upgrade modal (↑ icon), upgrade count badge (top-left)
 - Publisher upgrades: Event Value, Publish Speed (both functional)
 - Webhook upgrades: Upgrade to Broker (functional — removes delay, changes type/color/label), Faster Routing (functional)
-- Broker upgrades: Add Queue Slot (UI only), Topic Filter Boost (UI only)
-- Queue upgrades: Add Subscriber Slot (UI only), Increase Buffer Size (functional), Persistent Delivery (UI only)
+- Broker upgrades: Add Queue Slot (**functional** — enforces connection slot limit), Topic Filter Boost (hidden in UI, requires topic system)
+- Queue upgrades: Add Subscriber Slot (**functional** — enforces connection slot limit), Increase Buffer Size (functional), Persistent Delivery/Fan-out (**functional** — routing logic in `fireEvent`)
 - Subscriber upgrades: Faster Consumption (functional), Consumption Value (**functional** — base $0.50 + $0.50/level added at consumption time)
-- Global upgrades: Propagation Speed (+5%/level), Cost Reduction, Auto-Publisher 7 tiers (all functional, level-based cost scaling)
+- Global upgrades: Propagation Speed (+5%/level), Cost Reduction, Auto-Publisher 7 tiers, Event Batching (fires 2 staggered dots per click) (all functional, level-based cost scaling)
+- **Mesh error toast**: red notification in top-left of canvas when connection slot limits are exceeded, auto-dismisses after 2.5s (`meshError` transient state)
 - Broker/Queue/Subscriber shop in sidebar (Queue purchasable, placed unconnected for manual wiring)
-- Auto-save / load from localStorage (snapshot comparison optimization, 500ms debounce, transient fields excluded: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`, `draggingConnection`, `draggingNodeId`)
+- Auto-save / load from localStorage (snapshot comparison optimization, 500ms debounce, transient fields excluded: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`, `draggingConnection`, `draggingNodeId`, `meshError`)
 - Z-index layering: two event canvases (back z-19 for traveling/queued/dropped, front z-25 for pausing/consuming); dragged nodes elevate to z-index 50
 - Coin pop animation: 🪙 + earned amount floats up from subscriber on consumption (Framer Motion, `coinPops` transient state)
 - **Dead Message Queue (DMQ)**: purchasable component ($80, one-time, requires broker). Catches falling dropped events via bounding-box collision (dynamic width). Buffers caught events, releases one at a time as orange retry dots through the broker following the original route (rebuilt from current positions). Retry value = 10%–100% of original (upgradeable). Retry dots that fail again turn dark grey and are not re-caught. Three upgrades: width, buffer size, value recovery. Output port at top-center, connects only to broker. Connection line uses vertical-first routing to broker's bottom edge.
 - Only publisher has hover/tap scale animation (other nodes do not scale)
 
-### 🔲 Not yet implemented (config exists, UI shows, but no mechanical effect)
+### 🔲 Not yet implemented
 - **Solace-inspired features**:
   - Topic hierarchies: publishers emit on topic strings (e.g., `orders/created`), queues subscribe with wildcards (`orders/*`, `orders/>`) following Solace syntax
+  - Topic Filter Boost: enables advanced wildcard patterns on broker/queue subscriptions (hidden in UI until topic system exists)
   - Persistent Delivery (fan-out via queue): multiple subscribers attached to one queue, all receiving the event (broker-level fan-out to multiple queues IS implemented)
-  - Topic Filter Boost: enables advanced wildcard patterns on broker/queue subscriptions
-- **Mechanical upgrades**: Broker Add Queue Slot (limits queue connections), Queue Add Subscriber Slot (prerequisite for fan-out)
 - **Shop expansion**: Second Publisher (different topic), Second Subscriber
-- **Advanced mechanics**: Event batching (multi-fire), mesh topology visualization (topic labels on lines), multi-broker mesh
+- **Advanced mechanics**: mesh topology visualization (topic labels on lines), multi-broker mesh
 
 ---
 
@@ -356,7 +358,7 @@ src/
   hooks/
     useGameLoop.ts      # RAF game loop (dot movement, webhook slowdown, consume/drop logic) + useAutoPublisher
   utils/
-    connectionRules.ts  # canConnect(fromType, toType), getValidTargets() — connection validation
+    connectionRules.ts  # canConnect(fromType, toType), getValidTargets() — connection validation + slot capacity enforcement
     orthogonalPath.ts   # getOrthogonalWaypoints(), buildOrthogonalSvgPath(), buildVerticalFirstSvgPath() — orthogonal line routing
     pathUtils.ts        # interpolatePath(path, progress) → {x, y}
     formatMoney.ts      # $1,234.56 formatter
@@ -385,5 +387,9 @@ src/
 - **`getUpgradesForType`** is duplicated in `NodeModal.tsx` and `NodeCard.tsx` — keep both in sync when adding new component types (currently includes `dmq`).
 - **DMQ mechanics**: DMQ catch detection runs inside the `dropped` dot branch of Pass 1 — checks `!dot.isRetry` to prevent infinite loops. DMQ release (Pass 3) gates on `dmqLineBusy` — checks if any retry dot is still traveling between DMQ and broker. Retry paths are rebuilt at release time from `dot.originalNodeIds` using current component positions (not baked waypoints), so moved components are respected. Released retry dots preserve `originalNodeIds` (set to `[dmqId, ...nodeIdsFromBroker]`) so they benefit from live path rebuilding during drag. DMQ width for collision = `(120 + dmqWidthLevel * 40) / 2` as half-width.
 - **Adding new shop items**: add action logic to `gameStore.ts`, add UI to `Sidebar.tsx` shop section. New components are placed unconnected; user wires via drag-to-connect.
+- **Connection slot limits**: enforced in both `getValidTargets()` (filters drag targets during preview) and `completeDragConnection()` (rejects on drop). Broker→queue limited by `addQueueSlot` level, queue→subscriber by `addSubscriberSlot` level. Both default to 1 slot. Existing saves with more connections than upgrade levels are grandfathered — only new connections are validated.
+- **Mesh error toast**: `meshError` transient state in store, rendered as a red toast in top-left of `MeshCanvas.tsx` via Framer Motion `AnimatePresence`. Auto-clears after 2.5s. Used for slot limit rejections.
+- **Event batching**: `batchFire` flag in `upgrades` state. When true, `fireEvent` creates 2 dots per path — the second starts at `progress: -0.04` so it visually trails the first by ~57ms. `interpolatePath()` clamps negative progress to the path start.
+- **Hidden upgrades**: `UpgradeDef` has optional `hidden?: boolean`. Hidden upgrades are filtered out of `NodeModal` and `NodeCard` badge counts. Used for `topicFilterBoost` until the topic system is implemented.
 - Keep game logic (store, hooks) decoupled from rendering components.
 - All upgrade costs/effects in `upgradeConfig.ts` — avoid hardcoding in components.

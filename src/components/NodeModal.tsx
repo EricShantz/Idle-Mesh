@@ -57,7 +57,7 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number): strin
 
     // Queue slot upgrade
     case 'addQueueSlot':
-      return `Slot ${currentLevel} → ${nextLevel}`;
+      return `${1 + currentLevel} → ${1 + nextLevel}`;
 
     // One-time upgrades (no progression display)
     case 'upgradeToBroker':
@@ -82,7 +82,7 @@ export function NodeModal() {
   const node = components.find(c => c.id === selectedNodeId);
   if (!node) return null;
 
-  const upgrades = getUpgradesForType(node.type);
+  const upgrades = getUpgradesForType(node.type).filter(d => !d.hidden);
   if (upgrades.length === 0) return null;
 
   const modalX = node.x + 80;

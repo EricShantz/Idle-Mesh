@@ -16,6 +16,7 @@ export function MeshCanvas() {
   const coinPops = useGameStore(s => s.coinPops);
   const removeCoinPop = useGameStore(s => s.removeCoinPop);
   const draggingConnection = useGameStore(s => s.draggingConnection);
+  const meshError = useGameStore(s => s.meshError);
   const updateDragPosition = useGameStore(s => s.updateDragPosition);
   const completeDragConnection = useGameStore(s => s.completeDragConnection);
   const cancelDragConnection = useGameStore(s => s.cancelDragConnection);
@@ -88,6 +89,27 @@ export function MeshCanvas() {
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
     >
+      {/* Mesh error toast */}
+      <AnimatePresence>
+        {meshError && (
+          <motion.div
+            key={meshError}
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            onAnimationComplete={(def: { opacity?: number }) => {
+              if (def.opacity === 1) {
+                setTimeout(() => useGameStore.setState({ meshError: null }), 2500);
+              }
+            }}
+            className="absolute top-3 left-3 px-3 py-2 rounded text-xs font-semibold"
+            style={{ zIndex: 50, background: '#7f1d1dee', color: '#fecaca', border: '1px solid #ef4444' }}
+          >
+            {meshError}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Connection lines */}
       <svg className="absolute inset-0 w-full h-full" style={{ zIndex: 5 }}>
         <defs>

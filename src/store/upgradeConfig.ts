@@ -5,6 +5,7 @@ export type UpgradeDef = {
   baseCost: number;
   costMultiplier: number;
   maxLevel?: number;
+  hidden?: boolean;
 };
 
 export const publisherUpgrades: UpgradeDef[] = [
@@ -57,6 +58,7 @@ export const brokerUpgrades: UpgradeDef[] = [
     description: 'Routes events to more subscriber queues',
     baseCost: 60,
     costMultiplier: 2,
+    hidden: true,
   },
 ];
 

@@ -89,7 +89,7 @@ export function NodeCard({ component }: Props) {
   }, [isPublisher, publisherCooldowns[component.id], component.upgrades]);
 
   // Count affordable upgrades
-  const upgrades = getUpgradesForType(component.type);
+  const upgrades = getUpgradesForType(component.type).filter(d => !d.hidden);
   const affordableUpgradeCount = upgrades.filter(def => {
     const level = component.upgrades[def.key] ?? 0;
     if (def.maxLevel && level >= def.maxLevel) return false; // maxed out

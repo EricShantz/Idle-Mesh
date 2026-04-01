@@ -63,6 +63,7 @@ export type GameState = {
   recentEarnings: { time: number; amount: number }[];
   coinPops: { id: string; x: number; y: number; amount: number }[];
   selectedNodeId: string | null;
+  meshError: string | null;
   publisherCooldowns: Record<string, number>; // publisherId -> last fire timestamp
 
   globalUpgradeLevels: Record<string, number>;
@@ -222,6 +223,7 @@ export const useGameStore = create<GameState>()(
       recentEarnings: [],
       coinPops: [],
       selectedNodeId: null,
+      meshError: null,
       publisherCooldowns: {},
       draggingConnection: null,
       draggingNodeId: null,
@@ -310,20 +312,23 @@ export const useGameStore = create<GameState>()(
           if (!skipCooldown) {
             draft.publisherCooldowns[publisherId] = Date.now();
           }
-          for (const { waypoints, nodeIds } of selectedPaths) {
-            const dotId = `dot-${++dotIdCounter}`;
-            draft.eventDots.push({
-              id: dotId,
-              path: waypoints,
-              progress: 0,
-              speed,
-              status: 'traveling',
-              color: '#66ffff',
-              opacity: 1,
-              value,
-              originalValue: value,
-              originalNodeIds: nodeIds,
-            });
+          const fireCount = state.upgrades.batchFire ? 2 : 1;
+          for (let batch = 0; batch < fireCount; batch++) {
+            for (const { waypoints, nodeIds } of selectedPaths) {
+              const dotId = `dot-${++dotIdCounter}`;
+              draft.eventDots.push({
+                id: dotId,
+                path: waypoints,
+                progress: batch * -0.04,
+                speed,
+                status: 'traveling',
+                color: '#66ffff',
+                opacity: 1,
+                value,
+                originalValue: value,
+                originalNodeIds: nodeIds,
+              });
+            }
           }
         });
       },
@@ -488,6 +493,38 @@ export const useGameStore = create<GameState>()(
           return;
         }
 
+        // Slot limit: broker → queue
+        if (from.type === 'broker' && to.type === 'queue') {
+          const queueConns = state.connections.filter(
+            c => c.fromId === drag.fromId &&
+            state.components.find(comp => comp.id === c.toId)?.type === 'queue'
+          ).length;
+          const maxSlots = 1 + (from.upgrades['addQueueSlot'] ?? 0);
+          if (queueConns >= maxSlots) {
+            set(draft => {
+              draft.draggingConnection = null;
+              draft.meshError = `Broker needs "Add Queue Slot" upgrade (${maxSlots}/${maxSlots} used)`;
+            });
+            return;
+          }
+        }
+
+        // Slot limit: queue → subscriber
+        if (from.type === 'queue' && to.type === 'subscriber') {
+          const subConns = state.connections.filter(
+            c => c.fromId === drag.fromId &&
+            state.components.find(comp => comp.id === c.toId)?.type === 'subscriber'
+          ).length;
+          const maxSlots = 1 + (from.upgrades['addSubscriberSlot'] ?? 0);
+          if (subConns >= maxSlots) {
+            set(draft => {
+              draft.draggingConnection = null;
+              draft.meshError = `Queue needs "Add Subscriber Slot" upgrade (${maxSlots}/${maxSlots} used)`;
+            });
+            return;
+          }
+        }
+
         set(draft => {
           if (drag.type === 'reassign' && drag.connectionId) {
             const conn = draft.connections.find(c => c.id === drag.connectionId);
@@ -616,7 +653,7 @@ let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 let lastSaveSnapshot = '';
 useGameStore.subscribe((state) => {
   // Build save data
-  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, ...toSave } = state;
+  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, ...toSave } = state;
   const data: Record<string, any> = {};
   for (const [key, val] of Object.entries(toSave)) {
     if (typeof val !== 'function') {

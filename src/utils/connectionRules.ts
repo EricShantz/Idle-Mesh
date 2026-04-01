@@ -25,9 +25,34 @@ export function getValidTargets(
     connections.filter(c => c.fromId === fromId).map(c => c.toId)
   );
 
-  return components.filter(c =>
-    c.id !== fromId &&
-    canConnect(from.type, c.type) &&
-    !existingTargetIds.has(c.id)
-  );
+  // Count outgoing connections by target type for slot limits
+  const outgoingByType: Record<string, number> = {};
+  for (const c of connections) {
+    if (c.fromId === fromId) {
+      const target = components.find(comp => comp.id === c.toId);
+      if (target) {
+        outgoingByType[target.type] = (outgoingByType[target.type] ?? 0) + 1;
+      }
+    }
+  }
+
+  return components.filter(c => {
+    if (c.id === fromId) return false;
+    if (!canConnect(from.type, c.type)) return false;
+    if (existingTargetIds.has(c.id)) return false;
+
+    // Broker → queue slot limit
+    if (from.type === 'broker' && c.type === 'queue') {
+      const maxSlots = 1 + (from.upgrades['addQueueSlot'] ?? 0);
+      if ((outgoingByType['queue'] ?? 0) >= maxSlots) return false;
+    }
+
+    // Queue → subscriber slot limit
+    if (from.type === 'queue' && c.type === 'subscriber') {
+      const maxSlots = 1 + (from.upgrades['addSubscriberSlot'] ?? 0);
+      if ((outgoingByType['subscriber'] ?? 0) >= maxSlots) return false;
+    }
+
+    return true;
+  });
 }
