@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useGameStore, type Connection } from '../store/gameStore';
-import { buildOrthogonalSvgPath } from '../utils/orthogonalPath';
+import { buildOrthogonalSvgPath, buildVerticalFirstSvgPath } from '../utils/orthogonalPath';
 
 type Props = {
   conn: Connection;
@@ -21,22 +21,38 @@ export function ConnectionLine({ conn }: Props) {
     return null;
   }
 
-  // Output port center: node half-width + port offset
-  const fromHalfW = from.type === 'queue' ? 70 : 60;
-  const portCX = from.x + fromHalfW + 16;
-  const portCY = from.y;
-  const portR = 8;
+  // Output port center: depends on node type
+  let startX: number;
+  let startY: number;
 
-  // Start at port edge (right side)
-  const startX = portCX + portR;
-  const startY = portCY;
+  if (from.type === 'dmq') {
+    // Top-center port for DMQ
+    startX = from.x;
+    startY = from.y - 28 - 16; // top edge - port offset
+  } else {
+    const fromHalfW = from.type === 'queue' ? 70 : 60;
+    const portCX = from.x + fromHalfW + 16;
+    const portCY = from.y;
+    const portR = 8;
+    startX = portCX + portR;
+    startY = portCY;
+  }
 
-  // End at left edge of target node
-  const toHalfW = to.type === 'queue' ? 70 : 60;
-  const endX = to.x - toHalfW - 2;
-  const endY = to.y;
+  // End point: bottom edge of broker for DMQ connections, left edge otherwise
+  let endX: number;
+  let endY: number;
+  if (from.type === 'dmq') {
+    endX = to.x;
+    endY = to.y + 28 + 2; // bottom edge of broker
+  } else {
+    const toHalfW = to.type === 'queue' ? 70 : 60;
+    endX = to.x - toHalfW - 2;
+    endY = to.y;
+  }
 
-  const pathD = buildOrthogonalSvgPath(startX, startY, endX, endY);
+  const pathD = from.type === 'dmq'
+    ? buildVerticalFirstSvgPath(startX, startY, endX, endY)
+    : buildOrthogonalSvgPath(startX, startY, endX, endY);
 
   const handleClickLine = (e: React.PointerEvent) => {
     e.stopPropagation();

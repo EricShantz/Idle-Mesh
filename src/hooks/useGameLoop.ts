@@ -71,6 +71,7 @@ export function useGameLoop() {
           };
 
           if (dot.status === 'traveling') {
+            const dropColor = dot.isRetry ? '#4a5568' : '#ff4444';
             // Drop dots whose path no longer matches the connection graph (connection was removed)
             const eventPos = interpolatePath(dot.path, dot.progress);
             // Extract component nodes from the path (skip orthogonal midpoints)
@@ -98,7 +99,7 @@ export function useGameLoop() {
             }
             if (pathInvalid) {
               droppedCount++;
-              updated.push({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: '#ff4444' } as Dot);
+              updated.push({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: dropColor } as Dot);
               continue;
             }
 
@@ -122,7 +123,7 @@ export function useGameLoop() {
                 if (eventPos.x < leftEdge - 20) continue; // too far away to block
                 if (isComponentOccupied(comp.id)) {
                   droppedCount++;
-                  updated.push({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: '#ff4444' } as Dot);
+                  updated.push({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: dropColor } as Dot);
                   blocked = true;
                   break;
                 }
@@ -157,7 +158,7 @@ export function useGameLoop() {
                   updated.push({ ...dot, status: 'queued', pauseStartTime: Date.now(), queuedAtNodeId: queue.id, progress: newProgress } as Dot);
                 } else {
                   droppedCount++;
-                  updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: '#ff4444' } as Dot);
+                  updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
                 }
                 queued = true;
                 break;
@@ -183,7 +184,7 @@ export function useGameLoop() {
                 updated.push({ ...dot, status: 'pausing', pauseStartTime: Date.now(), progress: newProgress } as Dot);
               } else {
                 droppedCount++;
-                updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: '#ff4444' } as Dot);
+                updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
               }
               continue;
             }
@@ -191,7 +192,7 @@ export function useGameLoop() {
             if (newProgress >= 1) {
               const endPos = dot.path[dot.path.length - 1];
               droppedCount++;
-              updated.push({ ...dot, status: 'dropped', dropX: endPos.x, dropY: endPos.y, dropVY: 0, color: '#ff4444' } as Dot);
+              updated.push({ ...dot, status: 'dropped', dropX: endPos.x, dropY: endPos.y, dropVY: 0, color: dropColor } as Dot);
               continue;
             }
 
@@ -217,12 +218,48 @@ export function useGameLoop() {
             }
           } else if (dot.status === 'dropped') {
             const newVY = (dot.dropVY ?? 0) + 0.3 * dt / 16;
+            const newDropY = (dot.dropY ?? 0) + newVY;
             const newDot = {
               ...dot,
               dropVY: newVY,
-              dropY: (dot.dropY ?? 0) + newVY,
-              opacity: dot.opacity - dt / 600,
+              dropY: newDropY,
+              opacity: dot.opacity - dt / 1200,
             } as Dot;
+
+            // DMQ catch: check if dropping dot lands on the DMQ
+            if (!dot.isRetry) {
+              const dmq = state.components.find(c => c.type === 'dmq');
+              if (dmq) {
+                const dmqWidthLevel = dmq.upgrades['dmqWidth'] ?? 0;
+                const dmqHalfW = (120 + dmqWidthLevel * 40) / 2;
+                const dmqTop = dmq.y - NODE_TOP_OFFSET;
+                const dropX = dot.dropX ?? 0;
+
+                if (dropX >= dmq.x - dmqHalfW && dropX <= dmq.x + dmqHalfW && newDropY >= dmqTop) {
+                  // Check DMQ buffer capacity
+                  const dmqBufferSize = 1 + (dmq.upgrades['dmqBufferSize'] ?? 0);
+                  const dmqQueuedCount = updated.filter(d =>
+                    d.status === 'queued' && d.queuedAtNodeId === dmq.id
+                  ).length;
+
+                  if (dmqQueuedCount < dmqBufferSize) {
+                    updated.push({
+                      ...dot,
+                      status: 'queued',
+                      pauseStartTime: Date.now(),
+                      queuedAtNodeId: dmq.id,
+                      dropX: undefined,
+                      dropY: undefined,
+                      dropVY: undefined,
+                      opacity: 1,
+                      originalValue: dot.originalValue ?? dot.value,
+                    } as Dot);
+                    continue;
+                  }
+                }
+              }
+            }
+
             if (newDot.opacity > 0) {
               updated.push(newDot);
             }
@@ -241,13 +278,22 @@ export function useGameLoop() {
 
           const queueId = dot.queuedAtNodeId;
 
-          // Only release the first queued dot in this queue
-          const isFirst = !updated.some((d, di) =>
-            di < i &&
-            d.status === 'queued' &&
-            d.queuedAtNodeId === queueId
-          );
-          if (!isFirst) continue;
+          // Skip DMQ-queued dots — they're handled in Pass 3
+          const queueComp = state.components.find(c => c.id === queueId);
+          if (queueComp?.type === 'dmq') continue;
+
+          // Only release the oldest queued dot in this queue (FIFO by pauseStartTime)
+          let isOldest = true;
+          for (let j = 0; j < updated.length; j++) {
+            if (j === i) continue;
+            const d = updated[j];
+            if (d.status === 'queued' && d.queuedAtNodeId === queueId &&
+                (d.pauseStartTime ?? 0) < (dot.pauseStartTime ?? 0)) {
+              isOldest = false;
+              break;
+            }
+          }
+          if (!isOldest) continue;
 
           // Find the subscriber this queue feeds into (check current connections, not baked path)
           const queueOutConn = state.connections.find(c => c.fromId === queueId);
@@ -352,6 +398,105 @@ export function useGameLoop() {
               }
             }
             updated[i] = { ...dot, status: 'traveling', progress: releaseProgress, pauseStartTime: undefined, queuedAtNodeId: undefined } as Dot;
+          }
+        }
+
+        // --- Pass 3: auto-release ONE queued dot from DMQ if broker connection exists ---
+        const dmqComp = state.components.find(c => c.type === 'dmq');
+        if (dmqComp) {
+          const dmqConn = state.connections.find(c => c.fromId === dmqComp.id);
+          const brokerTarget = dmqConn
+            ? state.components.find(c => c.id === dmqConn.toId && c.type === 'broker')
+            : null;
+
+          if (brokerTarget) {
+            // Only release if no previously-released DMQ dot is still traveling on the DMQ→broker segment
+            const dmqLineBusy = updated.some(d => {
+              if (d.status !== 'traveling' || !d.isRetry) return false;
+              // Check if this dot's path starts at DMQ and it hasn't reached the broker yet
+              if (d.path.length < 2) return false;
+              const startsAtDmq = Math.abs(d.path[0].x - dmqComp.x) < 1 && Math.abs(d.path[0].y - dmqComp.y) < 1;
+              if (!startsAtDmq) return false;
+              // Find broker waypoint progress — if dot is before it, the line is busy
+              for (let pi = 0; pi < d.path.length; pi++) {
+                if (Math.abs(d.path[pi].x - brokerTarget.x) < 1 && Math.abs(d.path[pi].y - brokerTarget.y) < 1) {
+                  const brokerProgress = pi / (d.path.length - 1);
+                  return d.progress < brokerProgress - 0.01;
+                }
+              }
+              return false;
+            });
+
+            if (!dmqLineBusy) {
+              // Find the first queued dot in DMQ
+              for (let i = 0; i < updated.length; i++) {
+                const dot = updated[i];
+                if (dot.status !== 'queued' || dot.queuedAtNodeId !== dmqComp.id) continue;
+
+                // Rebuild path using current component positions from originalNodeIds
+                const origValue = dot.originalValue ?? dot.value;
+                const dmqValueRecoveryLevel = dmqComp.upgrades['dmqValueRecovery'] ?? 0;
+                const recoveryPct = Math.min(1.0, 0.1 + dmqValueRecoveryLevel * 0.1);
+                const retryValue = origValue * recoveryPct;
+
+                // Get node IDs from broker onward using the original route
+                const origNodeIds = dot.originalNodeIds ?? [];
+                const brokerIdx = origNodeIds.indexOf(brokerTarget.id);
+                const nodeIdsFromBroker = brokerIdx >= 0 ? origNodeIds.slice(brokerIdx) : [brokerTarget.id];
+
+                // Build fresh waypoints from current positions: broker → ... → subscriber
+                const nodeCenters: { x: number; y: number }[] = [];
+                for (const nid of nodeIdsFromBroker) {
+                  const comp = state.components.find(c => c.id === nid);
+                  if (comp) nodeCenters.push({ x: comp.x, y: comp.y });
+                }
+
+                // Expand to orthogonal waypoints
+                const pathFromBroker: { x: number; y: number }[] = nodeCenters.length > 0 ? [nodeCenters[0]] : [];
+                for (let ni = 0; ni < nodeCenters.length - 1; ni++) {
+                  const a = nodeCenters[ni];
+                  const b = nodeCenters[ni + 1];
+                  if (Math.abs(a.y - b.y) >= 1) {
+                    const midX = (a.x + b.x) / 2;
+                    pathFromBroker.push({ x: midX, y: a.y });
+                    pathFromBroker.push({ x: midX, y: b.y });
+                  }
+                  pathFromBroker.push(b);
+                }
+
+                // Build DMQ → broker path (vertical first)
+                const dmqToBroker: { x: number; y: number }[] = [{ x: dmqComp.x, y: dmqComp.y }];
+                if (Math.abs(dmqComp.x - brokerTarget.x) >= 1) {
+                  const midY = (dmqComp.y + brokerTarget.y) / 2;
+                  dmqToBroker.push({ x: dmqComp.x, y: midY });
+                  dmqToBroker.push({ x: brokerTarget.x, y: midY });
+                }
+                // Combine: DMQ → broker → original route from broker
+                const fullPath = [...dmqToBroker, ...pathFromBroker];
+
+                const speed = 0.0007 * state.upgrades.propagationSpeed;
+
+                updated[i] = {
+                  ...dot,
+                  status: 'traveling',
+                  path: fullPath,
+                  progress: 0,
+                  speed,
+                  color: '#fb923c',
+                  opacity: 1,
+                  value: retryValue,
+                  isRetry: true,
+                  originalNodeIds: undefined,
+                  originalValue: undefined,
+                  pauseStartTime: undefined,
+                  queuedAtNodeId: undefined,
+                  dropX: undefined,
+                  dropY: undefined,
+                  dropVY: undefined,
+                } as Dot;
+                break; // Only release one per frame
+              }
+            } // end !dmqLineBusy
           }
         }
 

@@ -6,6 +6,7 @@ import {
   brokerUpgrades,
   queueUpgrades,
   subscriberUpgrades,
+  dmqUpgrades,
   getUpgradeCost,
   type UpgradeDef,
 } from '../store/upgradeConfig';
@@ -18,6 +19,7 @@ function getUpgradesForType(type: string): UpgradeDef[] {
     case 'broker': return brokerUpgrades;
     case 'queue': return queueUpgrades;
     case 'subscriber': return subscriberUpgrades;
+    case 'dmq': return dmqUpgrades;
     default: return [];
   }
 }
@@ -29,7 +31,16 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number): strin
     // Buffer/slot upgrades
     case 'bufferSize':
     case 'addSubscriberSlot':
+    case 'dmqBufferSize':
       return `${1 + currentLevel} → ${1 + nextLevel}`;
+
+    // DMQ width
+    case 'dmqWidth':
+      return `${120 + currentLevel * 40}px → ${120 + nextLevel * 40}px`;
+
+    // DMQ value recovery
+    case 'dmqValueRecovery':
+      return `${10 + currentLevel * 10}% → ${10 + nextLevel * 10}%`;
 
     // Value upgrades ($X.XX per unit)
     case 'eventValue':

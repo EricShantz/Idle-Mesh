@@ -3,7 +3,7 @@ import { immer } from 'zustand/middleware/immer';
 import { canConnect } from '../utils/connectionRules';
 import { globalUpgrades, getUpgradeCost } from './upgradeConfig';
 
-export type ComponentType = 'publisher' | 'webhook' | 'broker' | 'queue' | 'subscriber';
+export type ComponentType = 'publisher' | 'webhook' | 'broker' | 'queue' | 'subscriber' | 'dmq';
 
 export type GameComponent = {
   id: string;
@@ -37,6 +37,9 @@ export type EventDot = {
   opacity: number;
   value: number;
   moneyAdded?: boolean;
+  isRetry?: boolean;
+  originalNodeIds?: string[];
+  originalValue?: number;
 };
 
 export type GameState = {
@@ -52,8 +55,6 @@ export type GameState = {
   upgrades: {
     propagationSpeed: number;
     costReduction: number;
-    dlqUnlocked: boolean;
-    dlqEvents: number;
     autoPubLevel: number;
     batchFire: boolean;
     globalValueMultiplier: number;
@@ -184,7 +185,6 @@ function migrateGlobalUpgradeLevels(upgrades: GameState['upgrades'] | undefined)
   if (upgrades.costReduction > 0) {
     levels.costReduction = Math.round(upgrades.costReduction / 0.1);
   }
-  if (upgrades.dlqUnlocked) levels.dlq = 1;
   if (upgrades.autoPubLevel > 0) levels.autoPub = upgrades.autoPubLevel;
   if (upgrades.batchFire) levels.batchFire = 1;
   if (upgrades.globalValueMultiplier > 1) levels.globalValueMultiplier = 1;
@@ -209,8 +209,6 @@ export const useGameStore = create<GameState>()(
       upgrades: saved?.upgrades ?? {
         propagationSpeed: 1.0,
         costReduction: 0,
-        dlqUnlocked: false,
-        dlqEvents: 0,
         autoPubLevel: 0,
         batchFire: false,
         globalValueMultiplier: 1.0,
@@ -308,7 +306,7 @@ export const useGameStore = create<GameState>()(
           if (!skipCooldown) {
             draft.publisherCooldowns[publisherId] = Date.now();
           }
-          for (const { waypoints } of selectedPaths) {
+          for (const { waypoints, nodeIds } of selectedPaths) {
             const dotId = `dot-${++dotIdCounter}`;
             draft.eventDots.push({
               id: dotId,
@@ -319,6 +317,8 @@ export const useGameStore = create<GameState>()(
               color: '#66ffff',
               opacity: 1,
               value,
+              originalValue: value,
+              originalNodeIds: nodeIds,
             });
           }
         });
@@ -519,9 +519,6 @@ export const useGameStore = create<GameState>()(
               break;
             case 'costReduction':
               draft.upgrades.costReduction = Math.min(0.3, draft.upgrades.costReduction + 0.1);
-              break;
-            case 'dlq':
-              draft.upgrades.dlqUnlocked = true;
               break;
             case 'autoPub':
               draft.upgrades.autoPubLevel = level + 1;

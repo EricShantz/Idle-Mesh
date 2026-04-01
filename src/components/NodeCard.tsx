@@ -8,6 +8,7 @@ import {
   brokerUpgrades,
   queueUpgrades,
   subscriberUpgrades,
+  dmqUpgrades,
   getUpgradeCost,
 } from '../store/upgradeConfig';
 import { canConnect } from '../utils/connectionRules';
@@ -19,6 +20,7 @@ function getUpgradesForType(type: string) {
     case 'broker': return brokerUpgrades;
     case 'queue': return queueUpgrades;
     case 'subscriber': return subscriberUpgrades;
+    case 'dmq': return dmqUpgrades;
     default: return [];
   }
 }
@@ -29,6 +31,7 @@ const typeColors: Record<string, { border: string; bg: string; glow: string }> =
   broker: { border: '#fb923c', bg: '#431407', glow: '0 0 12px rgba(251,146,60,0.5)' },
   queue: { border: '#a855f7', bg: '#2e1065', glow: '0 0 12px rgba(168,85,247,0.4)' },
   subscriber: { border: '#22c55e', bg: '#0a3b1e', glow: '0 0 12px rgba(34,197,94,0.4)' },
+  dmq: { border: '#ef4444', bg: '#2a0a0a', glow: '0 0 12px rgba(239,68,68,0.4)' },
 };
 
 type Props = {
@@ -94,6 +97,9 @@ export function NodeCard({ component }: Props) {
 
   // Connection port visibility
   const hasOutput = component.type !== 'subscriber';
+  const isDmq = component.type === 'dmq';
+  const dmqWidthLevel = isDmq ? (component.upgrades['dmqWidth'] ?? 0) : 0;
+  const dmqNodeWidth = 120 + dmqWidthLevel * 40;
 
   // Valid target highlighting during drag
   const isValidTarget = draggingConnection && component.type !== 'publisher'
@@ -262,15 +268,15 @@ export function NodeCard({ component }: Props) {
       onPointerUp={handlePointerUp}
       className="absolute flex flex-col items-center gap-1"
       style={{
-        left: component.x - 60,
+        left: component.x - (isDmq ? dmqNodeWidth / 2 : 60),
         top: component.y - 28,
         zIndex: cursorGrabbing ? 50 : (isPublisher ? 30 : (component.type === 'subscriber' ? 20 : 26)),
         cursor: cursorGrabbing ? 'grabbing' : 'grab',
       }}
     >
       <motion.div
-        whileHover={cursorGrabbing ? undefined : { scale: 1.05 }}
-        whileTap={cursorGrabbing ? undefined : { scale: 0.95 }}
+        whileHover={cursorGrabbing || !isPublisher ? undefined : { scale: 1.05 }}
+        whileTap={cursorGrabbing || !isPublisher ? undefined : { scale: 0.95 }}
         className="px-4 py-2 rounded-lg font-mono text-sm select-none relative flex flex-col items-center"
         style={{
           border: `1.5px solid ${isValidTarget ? '#22d3ee' : colors.border}`,
@@ -282,7 +288,7 @@ export function NodeCard({ component }: Props) {
               : colors.glow,
           color: colors.border,
           cursor: cursorGrabbing ? 'grabbing' : (isPublisher ? 'pointer' : 'default'),
-          width: component.type === 'queue' ? 140 : 120,
+          width: isDmq ? dmqNodeWidth : component.type === 'queue' ? 140 : 120,
           minHeight: 56,
           textAlign: 'center',
           justifyContent: 'center',
@@ -338,20 +344,45 @@ export function NodeCard({ component }: Props) {
         {isPublisher && (
           <div className="text-[10px] opacity-60">(click to fire)</div>
         )}
-        {component.type === 'queue' && (
+        {isDmq && (
           <div className="flex gap-1.5 mt-1">
-            {Array.from({ length: 1 + (component.upgrades['bufferSize'] ?? 0) }).map((_, i) => {
+            {Array.from({ length: 1 + (component.upgrades['dmqBufferSize'] ?? 0) }).map((_, i) => {
               const queuedCount = eventDots.filter(d => d.status === 'queued' && d.queuedAtNodeId === component.id).length;
               return (
                 <div
                   key={i}
                   className="w-1.5 h-1.5 rounded-full"
                   style={{
-                    backgroundColor: i < queuedCount ? '#66ffff' : '#1e293b',
+                    backgroundColor: i < queuedCount ? '#fb923c' : '#1e293b',
                   }}
                 />
               );
             })}
+          </div>
+        )}
+        {component.type === 'queue' && (
+          <div className="flex gap-1.5 mt-1">
+            {(() => {
+              const capacity = 1 + (component.upgrades['bufferSize'] ?? 0);
+              const queuedDots = eventDots
+                .filter(d => d.status === 'queued' && d.queuedAtNodeId === component.id)
+                .sort((a, b) => (a.pauseStartTime ?? 0) - (b.pauseStartTime ?? 0));
+              // oldest first in array: [oldest, ..., newest]
+              // Visual: empty slots on left, newest on leftmost filled, oldest on rightmost
+              const emptyCount = capacity - queuedDots.length;
+              return Array.from({ length: capacity }).map((_, i) => {
+                const dot = i < emptyCount ? null : queuedDots[queuedDots.length - 1 - (i - emptyCount)];
+                return (
+                  <div
+                    key={i}
+                    className="w-1.5 h-1.5 rounded-full"
+                    style={{
+                      backgroundColor: dot ? (dot.isRetry ? '#fb923c' : '#66ffff') : '#1e293b',
+                    }}
+                  />
+                );
+              });
+            })()}
           </div>
         )}
         {affordableUpgradeCount > 0 && (
@@ -365,9 +396,9 @@ export function NodeCard({ component }: Props) {
         {hasOutput && (
           <div
             onPointerDown={handleOutputPortDown}
-            className="absolute top-1/2 -right-6 w-4 h-4 rounded-full border flex items-center justify-center group/port"
+            className={`absolute w-4 h-4 rounded-full border flex items-center justify-center group/port ${isDmq ? 'left-1/2 -top-6' : 'top-1/2 -right-6'}`}
             style={{
-              transform: 'translateY(-50%)',
+              transform: isDmq ? 'translateX(-50%)' : 'translateY(-50%)',
               cursor: 'crosshair',
               background: '#1e293b',
               borderColor: colors.border + '88',
@@ -389,7 +420,7 @@ export function NodeCard({ component }: Props) {
               if (path) path.setAttribute('stroke', '#94a3b8');
             }}
           >
-            <svg width="8" height="8" viewBox="0 0 12 12" style={{ pointerEvents: 'none' }}>
+            <svg width="8" height="8" viewBox="0 0 12 12" style={{ pointerEvents: 'none', transform: isDmq ? 'rotate(-90deg)' : undefined }}>
               <path d="M3 2 L9 6 L3 10" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>

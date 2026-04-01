@@ -6,6 +6,7 @@ const ALLOWED_TARGETS: Record<ComponentType, ComponentType[]> = {
   broker: ['queue', 'subscriber'],
   queue: ['subscriber'],
   subscriber: [],
+  dmq: ['broker'],
 };
 
 export function canConnect(fromType: ComponentType, toType: ComponentType): boolean {

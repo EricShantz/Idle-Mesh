@@ -28,6 +28,35 @@ export function getOrthogonalWaypoints(
 }
 
 /**
+ * Builds an SVG path string for vertical-first orthogonal routing (up → horizontal → vertical).
+ * Used for DMQ top-center port connecting upward to broker.
+ */
+export function buildVerticalFirstSvgPath(
+  startX: number, startY: number,
+  endX: number, endY: number,
+  radius = 12,
+): string {
+  if (Math.abs(startX - endX) < 1) {
+    return `M ${startX} ${startY} L ${endX} ${endY}`;
+  }
+
+  const midY = (startY + endY) / 2;
+  const dx = endX - startX;
+  const r = Math.min(radius, Math.abs(dx) / 2, Math.abs(midY - startY), Math.abs(endY - midY));
+
+  const dirX = dx > 0 ? 1 : -1;
+
+  return [
+    `M ${startX} ${startY}`,
+    `L ${startX} ${midY + r}`,
+    `Q ${startX} ${midY} ${startX + r * dirX} ${midY}`,
+    `L ${endX - r * dirX} ${midY}`,
+    `Q ${endX} ${midY} ${endX} ${midY - r}`,
+    `L ${endX} ${endY}`,
+  ].join(' ');
+}
+
+/**
  * Builds an SVG path string for orthogonal waypoints with rounded corners.
  */
 export function buildOrthogonalSvgPath(

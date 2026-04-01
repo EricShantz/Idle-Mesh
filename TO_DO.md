@@ -44,6 +44,7 @@ Expand player agency and deepen the optimization puzzle.
   - Cost: ~$200-300 per publisher
   - Similarly, purchase additional subscribers from shop after queue purchase
   - Enables parallel processing and complex topologies
+  - Each new publisher and subscriber could have a different "topic", and they should be more and more expensive, but their base value for events / consumming events should also be higher
 
 - [ ] **Broker: Add Queue Slot (Mechanical)**
   - Currently UI-only; make it mechanically limit queue connections

@@ -85,6 +85,31 @@ export const queueUpgrades: UpgradeDef[] = [
   },
 ];
 
+export const dmqUpgrades: UpgradeDef[] = [
+  {
+    key: 'dmqWidth',
+    label: 'Increase Width +40px',
+    description: 'Wider catch zone for falling events',
+    baseCost: 30,
+    costMultiplier: 1.8,
+  },
+  {
+    key: 'dmqBufferSize',
+    label: 'Increase Buffer Size',
+    description: 'Hold more events before overflow',
+    baseCost: 45,
+    costMultiplier: 2,
+  },
+  {
+    key: 'dmqValueRecovery',
+    label: 'Value Recovery +10%',
+    description: 'Retry events recover more of their original value',
+    baseCost: 50,
+    costMultiplier: 2,
+    maxLevel: 9,
+  },
+];
+
 export const subscriberUpgrades: UpgradeDef[] = [
   {
     key: 'consumptionValue',
@@ -117,14 +142,6 @@ export const globalUpgrades: UpgradeDef[] = [
     baseCost: 50,
     costMultiplier: 2,
     maxLevel: 3,
-  },
-  {
-    key: 'dlq',
-    label: 'Dead Letter Queue',
-    description: 'Dropped events can be replayed for 50% value',
-    baseCost: 80,
-    costMultiplier: 1,
-    maxLevel: 1,
   },
   {
     key: 'autoPub',

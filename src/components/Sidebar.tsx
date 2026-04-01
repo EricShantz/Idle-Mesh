@@ -3,6 +3,7 @@ import { globalUpgrades, getUpgradeCost } from '../store/upgradeConfig';
 import { formatMoney } from '../utils/formatMoney';
 
 const QUEUE_COST = 60;
+const DMQ_COST = 80;
 
 export function Sidebar() {
   const balance = useGameStore(s => s.balance);
@@ -45,7 +46,19 @@ export function Sidebar() {
   };
 
   const hasBroker = components.some(c => c.type === 'broker');
+  const hasDmq = components.some(c => c.type === 'dmq');
   const canAffordQueue = balance >= QUEUE_COST;
+  const canAffordDmq = balance >= DMQ_COST;
+
+  const handleBuyDmq = () => {
+    if (hasDmq) return;
+    if (!spend(DMQ_COST)) return;
+    // Place DMQ below the mesh, centered under the broker
+    const broker = components.find(c => c.type === 'broker');
+    const dmqX = broker ? broker.x : 450;
+    const dmqY = 550;
+    addComponent('dmq', dmqX, dmqY, 'Dead Message Queue');
+  };
 
   return (
     <div
@@ -137,6 +150,22 @@ export function Sidebar() {
               <div className="opacity-60">Buffers events. Drag connections to wire it up.</div>
               <div className="mt-0.5 font-mono">{formatMoney(QUEUE_COST)}</div>
             </button>
+            {!hasDmq && (
+              <button
+                onClick={handleBuyDmq}
+                disabled={!canAffordDmq}
+                className="text-left px-2 py-1.5 rounded text-xs border transition-colors cursor-pointer disabled:cursor-not-allowed"
+                style={{
+                  borderColor: canAffordDmq ? '#ef4444' : '#374151',
+                  background: canAffordDmq ? '#2a0a0a22' : '#1f293744',
+                  color: canAffordDmq ? '#fecaca' : '#6b7280',
+                }}
+              >
+                <div className="font-bold">Buy Dead Message Queue</div>
+                <div className="opacity-60">Catches dropped events and retries them through the broker.</div>
+                <div className="mt-0.5 font-mono">{formatMoney(DMQ_COST)}</div>
+              </button>
+            )}
           </div>
         </div>
       )}
