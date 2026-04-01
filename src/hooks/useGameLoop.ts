@@ -62,6 +62,11 @@ function projectOntoPath(path: { x: number; y: number }[], px: number, py: numbe
   return bestProgress;
 }
 
+/** Remove consecutive duplicate waypoints (within 1px) that break isPastAllQueues checks */
+function dedupeConsecutiveWaypoints(path: { x: number; y: number }[]): { x: number; y: number }[] {
+  return path.filter((p, i) => i === 0 || Math.abs(p.x - path[i - 1].x) >= 1 || Math.abs(p.y - path[i - 1].y) >= 1);
+}
+
 /** Check if a point (dot) touches the rectangular bounding box of a node */
 function dotTouchesNode(px: number, py: number, nodeX: number, nodeY: number): boolean {
   const left = nodeX - NODE_HALF_W;
@@ -433,7 +438,7 @@ export function useGameLoop() {
                 extension.push({ x: midX, y: pendingExtension.target.y });
               }
               extension.push(pendingExtension.target);
-              const newPath = [...dot.path, ...extension];
+              const newPath = dedupeConsecutiveWaypoints([...dot.path, ...extension]);
               const oldLen = dot.path.length - 1;
               const newLen = newPath.length - 1;
               dot = { ...dot, path: newPath, progress: oldLen > 0 ? (dot.progress * oldLen) / newLen : 0 } as typeof dot;
@@ -467,7 +472,7 @@ export function useGameLoop() {
                   extension.push({ x: midX, y: subTarget.y });
                 }
                 extension.push({ x: subTarget.x, y: subTarget.y });
-                const newPath = [...pathBeforeQueue, queuePoint, ...extension];
+                const newPath = dedupeConsecutiveWaypoints([...pathBeforeQueue, queuePoint, ...extension]);
                 // Find the new queue index and recalculate progress
                 const newQueueIdx = pathBeforeQueue.length;
                 const totalSegments = newPath.length - 1;
