@@ -273,12 +273,13 @@ export function useGameLoop() {
               c.type === 'subscriber' && Math.hypot(c.x - lastComponent.x, c.y - lastComponent.y) < 50
             );
             const fasterConsumptionLevel = subscriber?.upgrades['fasterConsumption'] ?? 0;
-            const consumeDuration = 2500 * Math.pow(0.95, fasterConsumptionLevel);
+            const boostPct = fasterConsumptionLevel * (fasterConsumptionLevel + 9) / 2;
+            const consumeDuration = 2500 * (1 - boostPct / 100);
             const moneyAddTime = consumeDuration * 0.5;
 
             if (elapsed >= moneyAddTime && !dot.moneyAdded) {
               const consumptionValueLevel = subscriber?.upgrades['consumptionValue'] ?? 0;
-              const subscriberValue = 0.5 + consumptionValueLevel * 0.5;
+              const subscriberValue = 0.5 + consumptionValueLevel * 0.45 + consumptionValueLevel * consumptionValueLevel * 0.05;
               const finalValue = dot.value + subscriberValue;
               toConsume.push({ id: dot.id, value: finalValue, subscriberId: subscriber?.id ?? '' });
               // Don't add to updated — dot is finished
@@ -512,6 +513,9 @@ export function useGameLoop() {
 
           if (brokerTarget) {
             // Only release if no previously-released DMQ dot is still traveling on the DMQ→broker segment
+            const releaseSpeedLevel = dmqComp.upgrades.dmqReleaseSpeed ?? 0;
+            const releaseBoostPct = releaseSpeedLevel * (releaseSpeedLevel + 9) / 2;
+            const releaseThreshold = 1 - (releaseBoostPct / 100);
             const dmqLineBusy = updated.some(d => {
               if (d.status !== 'traveling' || !d.isRetry) return false;
               // Check if this dot's path starts at DMQ and it hasn't reached the broker yet
@@ -522,7 +526,7 @@ export function useGameLoop() {
               for (let pi = 0; pi < d.path.length; pi++) {
                 if (Math.abs(d.path[pi].x - brokerTarget.x) < 1 && Math.abs(d.path[pi].y - brokerTarget.y) < 1) {
                   const brokerProgress = pi / (d.path.length - 1);
-                  return d.progress < brokerProgress - 0.01;
+                  return d.progress < brokerProgress * releaseThreshold;
                 }
               }
               return false;

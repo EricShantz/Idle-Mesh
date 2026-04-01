@@ -128,9 +128,9 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 
 ### Publisher
 - Click target. Fires one event per click (subject to cooldown).
-- **Cooldown**: 1 second base, reduced 5% per `publishSpeed` upgrade level
-- **Base event value**: $0.50 (+ $0.50 per eventValue upgrade level)
-- Upgrades: Event Value (+$0.50), Publish Speed (+5% cooldown reduction, up to ~20 levels)
+- **Cooldown**: 1 second base, reduced by accelerating curve: `boostPct = level * (level + 9) / 2`, `cooldown = 1000 * (1 - boostPct/100)`. Max level 10 (95% reduction).
+- **Base event value**: $0.50, accelerating increments: `value = 0.5 + level * 0.45 + level² * 0.05` (each level adds $0.10 more than the last, starting at +$0.50). No max level.
+- Upgrades: Event Value (accelerating $), Publish Speed (accelerating % cooldown reduction)
 
 ### Webhook
 - Middle-hop between publisher and subscriber
@@ -165,14 +165,15 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - **Buffer**: works like regular queues — capacity = 1 + `dmqBufferSize` upgrade level. Visual slot indicators (orange when filled). Releases one dot per frame only when the previous retry dot has cleared the DMQ→broker connection line.
 - **Retry behavior**: released dots travel from DMQ → broker → same original route (rebuilt from current component positions via stored `originalNodeIds`). Retry dots are orange (`#fb923c`), worth `originalValue * (10% + 10% per dmqValueRecovery level)`, capped at 100%. Retry dots that drop a second time turn dark grey and are **not** re-caught by the DMQ (no infinite loops).
 - **Pass 2 exclusion**: DMQ-queued dots are skipped by the regular queue release pass (Pass 2); they are only released by the dedicated DMQ release pass (Pass 3).
-- Upgrades: Increase Width (+40px), Increase Buffer Size, Value Recovery (+10%, max 9 levels = 100%)
+- **Faster Release**: accelerating curve (`boostPct = level * (level + 9) / 2`) reduces how far the previous retry dot must travel before the next is released. At level 0 the previous dot must be 100% past the DMQ→broker segment; each level reduces this threshold. Max level 10 (95%).
+- Upgrades: Increase Width (+40px), Faster Release (accelerating %), Increase Buffer Size, Value Recovery (+10%, max 9 levels = 100%)
 
 ### Subscriber
 - Consumes events. Pauses for ~2.5s while "processing" (shrink animation), then money increments.
 - **Coin pop animation**: when money is earned, a 🪙 coin icon with the earned amount floats upward from the subscriber and fades out over 1 second (Framer Motion `AnimatePresence` in `MeshCanvas.tsx`, state in `coinPops` array)
-- **Faster Consumption** upgrade: 5% reduction per level (~20 levels to significantly reduce time)
-- **Value calculation**: final event value = publisher value + subscriber value (base $0.50 + $0.50 per consumptionValue level)
-- Upgrades: Consumption Value (+$0.50, **functional**), Faster Consumption (+5%)
+- **Faster Consumption** upgrade: accelerating curve `boostPct = level * (level + 9) / 2`, `duration = 2500 * (1 - boostPct/100)`. Max level 10 (95% reduction).
+- **Value calculation**: final event value = publisher value + subscriber value. Subscriber value uses same accelerating formula as publisher: `0.5 + level * 0.45 + level² * 0.05`. No max level.
+- Upgrades: Consumption Value (accelerating $, **functional**), Faster Consumption (accelerating %, **functional**)
 
 ---
 
@@ -201,8 +202,8 @@ type EventDot = {
 ```
 
 **Event value pipeline:**
-- Publisher sets initial value: `$0.50 + eventValueLevel * $0.50`
-- Subscriber adds consumption value: `$0.50 + consumptionValueLevel * $0.50`
+- Publisher sets initial value: `$0.50 + level * 0.45 + level² * 0.05` (accelerating increments)
+- Subscriber adds consumption value: `$0.50 + level * 0.45 + level² * 0.05` (same formula)
 - Global multiplier applied in `consumeEvent()`: `finalValue * globalValueMultiplier`
 - Value is passed directly to `consumeEvent(id, value)` — no dot lookup needed
 
@@ -231,10 +232,10 @@ type EventDot = {
 Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 
 ### Publisher
-| Upgrade | Effect | Base Cost | Multiplier |
-|---|---|---|---|
-| Event Value +$0.50 | Base $0.50, +$0.50 per level | $10 | ×2.5 |
-| Publish Speed +5% | 5% cooldown reduction per level | $8 | ×1.15 |
+| Upgrade | Effect | Base Cost | Multiplier | Max Level |
+|---|---|---|---|---|
+| Event Value | Accelerating: `$0.50 + level*0.45 + level²*0.05` (+$0.10 more each level) | $10 | ×1.8 | unlimited |
+| Publish Speed | Accelerating: `level*(level+9)/2`% cooldown reduction | $8 | ×1.8 | 10 (95%) |
 
 ### Webhook
 | Upgrade | Effect | Cost |
@@ -256,17 +257,18 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 | Increase Buffer Size | **Functional**: buffer capacity = 1 + level | $45 | ×2 |
 
 ### Dead Message Queue (DMQ)
-| Upgrade | Effect | Base Cost | Multiplier |
-|---|---|---|---|
-| Increase Width +40px | Wider catch zone (base 120px) | $30 | ×1.8 |
-| Increase Buffer Size | Buffer capacity = 1 + level | $45 | ×2 |
-| Value Recovery +10% | Retry value = (10% + 10%/level) of original, max 100% | $50 | ×2 (max 9) |
+| Upgrade | Effect | Base Cost | Multiplier | Max Level |
+|---|---|---|---|---|
+| Increase Width +40px | Wider catch zone (base 120px) | $30 | ×1.8 | unlimited |
+| Faster Release | Accelerating: `level*(level+9)/2`% release threshold reduction | $40 | ×1.8 | 10 (95%) |
+| Increase Buffer Size | Buffer capacity = 1 + level | $45 | ×2 | unlimited |
+| Value Recovery +10% | Retry value = (10% + 10%/level) of original, max 100% | $50 | ×2 | 9 |
 
 ### Subscriber
-| Upgrade | Effect | Base Cost | Multiplier |
-|---|---|---|---|
-| Consumption Value +$0.50 | Base $0.50, +$0.50 per level added to event value | $10 | ×2.5 |
-| Faster Consumption +5% | 5% reduction per level | $8 | ×1.15 |
+| Upgrade | Effect | Base Cost | Multiplier | Max Level |
+|---|---|---|---|---|
+| Consumption Value | Accelerating: `$0.50 + level*0.45 + level²*0.05` (+$0.10 more each level) | $10 | ×1.8 | unlimited |
+| Faster Consumption | Accelerating: `level*(level+9)/2`% consume duration reduction | $8 | ×1.8 | 10 (95%) |
 
 ---
 
@@ -281,11 +283,11 @@ Global upgrades use the same `UpgradeDef` system as node upgrades — each is a 
 
 | Upgrade | Effect | Base Cost | Multiplier | Max Level |
 |---|---|---|---|---|
-| Faster Event Propagation | All dots 5% faster per level | $50 | ×2 | unlimited |
+| Faster Event Propagation | Accelerating: `level*(level+9)/2`% speed boost, multiplier = `1 + boostPct/100` | $50 | ×1.8 | 10 (95%) |
 | 10% Cheaper Upgrades | Cost reduction, stackable | $50 | ×2 | 3 |
 | Auto-Publisher | Lv1: 5s, Lv2: 3s, Lv3: 1s, Lv4: 0.75s, Lv5: 0.5s, Lv6: 0.25s, Lv7: 0.1s | $150 | ×4 | 7 |
-| Event Batching | Publishers fire 2 events per click (staggered start) | $200 | — | 1 |
-| Global Value ×1.5 | All earnings multiplied | $500 | — | 1 |
+| Event Batching | +1 event per click per level (staggered start, `progress: batch * -0.04`) | $200 | ×2.5 | 5 (6 events) |
+| Income Multiplier | Accelerating: each level multiplies by `1.4 + level*0.1` (×1.5, ×1.6, ×1.7...) | $500 | ×3 | 5 |
 
 **Auto-Publisher**: bypasses the manual click cooldown (`fireEvent(id, true)` with `skipCooldown`). Auto-fires do NOT reset the manual cooldown timer, so players can click manually between auto-fires. `useAutoPublisher` uses `getState()` inside the `setInterval` callback (not Zustand subscriptions) so the interval is only reset when `autoPubLevel` changes, not on every component position update.
 
@@ -321,14 +323,14 @@ Global upgrades use the same `UpgradeDef` system as node upgrades — each is a 
 - Webhook upgrades: Upgrade to Broker (functional — removes delay, changes type/color/label), Faster Routing (functional)
 - Broker upgrades: Add Queue Slot (**functional** — enforces connection slot limit), Topic Filter Boost (hidden in UI, requires topic system)
 - Queue upgrades: Add Subscriber Slot (**functional** — enforces connection slot limit), Increase Buffer Size (functional), Persistent Delivery/Fan-out (**functional** — routing logic in `fireEvent`)
-- Subscriber upgrades: Faster Consumption (functional), Consumption Value (**functional** — base $0.50 + $0.50/level added at consumption time)
-- Global upgrades: Propagation Speed (+5%/level), Cost Reduction, Auto-Publisher 7 tiers, Event Batching (fires 2 staggered dots per click) (all functional, level-based cost scaling)
+- Subscriber upgrades: Faster Consumption (**functional** — accelerating curve), Consumption Value (**functional** — accelerating $ increments)
+- Global upgrades: Propagation Speed (accelerating curve), Cost Reduction, Auto-Publisher 7 tiers, Event Batching (multi-level, +1 event/click/level), Income Multiplier (multi-level, accelerating ×) (all functional, level-based cost scaling)
 - **Mesh error toast**: red notification in top-left of canvas when connection slot limits are exceeded, auto-dismisses after 2.5s (`meshError` transient state)
 - Broker/Queue/Subscriber shop in sidebar (Queue purchasable, placed unconnected for manual wiring)
 - Auto-save / load from localStorage (snapshot comparison optimization, 500ms debounce, transient fields excluded: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`, `draggingConnection`, `draggingNodeId`, `meshError`)
 - Z-index layering: two event canvases (back z-19 for traveling/queued/dropped, front z-25 for pausing/consuming); dragged nodes elevate to z-index 50
 - Coin pop animation: 🪙 + earned amount floats up from subscriber on consumption (Framer Motion, `coinPops` transient state)
-- **Dead Message Queue (DMQ)**: purchasable component ($80, one-time, requires broker). Catches falling dropped events via bounding-box collision (dynamic width). Buffers caught events, releases one at a time as orange retry dots through the broker following the original route (rebuilt from current positions). Retry value = 10%–100% of original (upgradeable). Retry dots that fail again turn dark grey and are not re-caught. Three upgrades: width, buffer size, value recovery. Output port at top-center, connects only to broker. Connection line uses vertical-first routing to broker's bottom edge.
+- **Dead Message Queue (DMQ)**: purchasable component ($80, one-time, requires broker). Catches falling dropped events via bounding-box collision (dynamic width). Buffers caught events, releases one at a time as orange retry dots through the broker following the original route (rebuilt from current positions). Retry value = 10%–100% of original (upgradeable). Retry dots that fail again turn dark grey and are not re-caught. Four upgrades: width, faster release (accelerating curve), buffer size, value recovery. Output port at top-center, connects only to broker. Connection line uses vertical-first routing to broker's bottom edge.
 - Only publisher has hover/tap scale animation (other nodes do not scale)
 
 ### 🔲 Not yet implemented
@@ -383,13 +385,14 @@ src/
 - **Connection-aware dot lifecycle**: traveling dots validate their remaining path against the current connection graph each frame — if a connection was removed, the dot drops immediately. Queued dots only release when the queue has an active connection to a subscriber (checked via `state.connections`, not baked path). Queue collision check skips waypoints the dot has already passed to prevent re-capture after release.
 - **ID counters**: `componentIdCounter` and `connectionIdCounter` are initialized from saved state on load via `initCountersFromSaved()` to prevent duplicate IDs after reload.
 - **Clock consistency**: `pauseStartTime` uses `Date.now()` (Unix epoch). The RAF `time` argument is a different clock — don't mix them.
+- **Accelerating upgrade curves**: most percentage-based upgrades use the formula `boostPct = level * (level + 9) / 2` (5%, 11%, 18%, 26%... 95% at level 10). This gives each level a bigger effect than the last. Value upgrades (Event Value, Consumption Value) use `$0.50 + level * 0.45 + level² * 0.05` so each level adds $0.10 more than the previous. Income Multiplier uses compounding `1.4 + level * 0.1` per level (×1.5, ×1.6, ×1.7...). All upgrade cards show current value, next value, and increment in a `current → next (+delta)` format via `getUpgradeValueDisplay()` (node upgrades) and `getGlobalUpgradeValueDisplay()` (sidebar). Level number shown in top-right corner of each card.
 - **Upgrade effects location**: most per-component upgrade effects are read in `useGameLoop.ts` by looking up the component by position from the dot's path array. Global upgrade effects are applied in `purchaseGlobalUpgrade` in `gameStore.ts`.
 - **`getUpgradesForType`** is duplicated in `NodeModal.tsx` and `NodeCard.tsx` — keep both in sync when adding new component types (currently includes `dmq`).
 - **DMQ mechanics**: DMQ catch detection runs inside the `dropped` dot branch of Pass 1 — checks `!dot.isRetry` to prevent infinite loops. DMQ release (Pass 3) gates on `dmqLineBusy` — checks if any retry dot is still traveling between DMQ and broker. Retry paths are rebuilt at release time from `dot.originalNodeIds` using current component positions (not baked waypoints), so moved components are respected. Released retry dots preserve `originalNodeIds` (set to `[dmqId, ...nodeIdsFromBroker]`) so they benefit from live path rebuilding during drag. DMQ width for collision = `(120 + dmqWidthLevel * 40) / 2` as half-width.
 - **Adding new shop items**: add action logic to `gameStore.ts`, add UI to `Sidebar.tsx` shop section. New components are placed unconnected; user wires via drag-to-connect.
 - **Connection slot limits**: enforced in both `getValidTargets()` (filters drag targets during preview) and `completeDragConnection()` (rejects on drop). Broker→queue limited by `addQueueSlot` level, queue→subscriber by `addSubscriberSlot` level. Both default to 1 slot. Existing saves with more connections than upgrade levels are grandfathered — only new connections are validated.
 - **Mesh error toast**: `meshError` transient state in store, rendered as a red toast in top-left of `MeshCanvas.tsx` via Framer Motion `AnimatePresence`. Auto-clears after 2.5s. Used for slot limit rejections.
-- **Event batching**: `batchFire` flag in `upgrades` state. When true, `fireEvent` creates 2 dots per path — the second starts at `progress: -0.04` so it visually trails the first by ~57ms. `interpolatePath()` clamps negative progress to the path start.
+- **Event batching**: `batchFire` number in `upgrades` state (0 = 1 event, N = N events per click). `fireEvent` creates `batchFire` dots per path — each starts at `progress: batch * -0.04` so they visually trail by ~57ms each. `interpolatePath()` clamps negative progress to the path start. Multi-level: base $200, ×2.5 cost scaling, max 5 levels (6 events/click). Old boolean saves migrated to level 1 (2 events).
 - **Hidden upgrades**: `UpgradeDef` has optional `hidden?: boolean`. Hidden upgrades are filtered out of `NodeModal` and `NodeCard` badge counts. Used for `topicFilterBoost` until the topic system is implemented.
 - Keep game logic (store, hooks) decoupled from rendering components.
 - All upgrade costs/effects in `upgradeConfig.ts` — avoid hardcoding in components.

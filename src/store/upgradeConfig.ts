@@ -11,17 +11,18 @@ export type UpgradeDef = {
 export const publisherUpgrades: UpgradeDef[] = [
   {
     key: 'eventValue',
-    label: 'Event Value +$0.50',
-    description: 'Each event this publisher fires is worth more',
+    label: 'Event Value',
+    description: 'Accelerating value increase per event',
     baseCost: 10,
-    costMultiplier: 2.5,
+    costMultiplier: 1.8,
   },
   {
     key: 'publishSpeed',
-    label: 'Publish Speed +5%',
-    description: 'Reduces cooldown between publishing events',
+    label: 'Publish Speed',
+    description: 'Accelerating cooldown reduction',
     baseCost: 8,
-    costMultiplier: 1.15,
+    costMultiplier: 1.8,
+    maxLevel: 10,
   },
 ];
 
@@ -103,6 +104,14 @@ export const dmqUpgrades: UpgradeDef[] = [
     costMultiplier: 2,
   },
   {
+    key: 'dmqReleaseSpeed',
+    label: 'Faster Release',
+    description: 'Accelerating release speed for queued events',
+    baseCost: 40,
+    costMultiplier: 1.8,
+    maxLevel: 10,
+  },
+  {
     key: 'dmqValueRecovery',
     label: 'Value Recovery +10%',
     description: 'Retry events recover more of their original value',
@@ -115,17 +124,18 @@ export const dmqUpgrades: UpgradeDef[] = [
 export const subscriberUpgrades: UpgradeDef[] = [
   {
     key: 'consumptionValue',
-    label: 'Consumption Value +$0.50',
-    description: 'Each event this subscriber consumes earns more',
+    label: 'Consumption Value',
+    description: 'Accelerating value increase per consumed event',
     baseCost: 10,
-    costMultiplier: 2.5,
+    costMultiplier: 1.8,
   },
   {
     key: 'fasterConsumption',
-    label: 'Faster Consumption +5%',
-    description: 'Reduces processing time at this subscriber',
+    label: 'Faster Consumption',
+    description: 'Accelerating speed boost for processing events',
     baseCost: 8,
-    costMultiplier: 1.15,
+    costMultiplier: 1.8,
+    maxLevel: 10,
   },
 ];
 
@@ -133,9 +143,10 @@ export const globalUpgrades: UpgradeDef[] = [
   {
     key: 'propagationSpeed',
     label: 'Faster Event Propagation',
-    description: 'All event dots travel 5% faster',
+    description: 'Accelerating speed boost for all event dots',
     baseCost: 50,
-    costMultiplier: 2,
+    costMultiplier: 1.8,
+    maxLevel: 10,
   },
   {
     key: 'costReduction',
@@ -156,18 +167,18 @@ export const globalUpgrades: UpgradeDef[] = [
   {
     key: 'batchFire',
     label: 'Event Batching',
-    description: 'Publishers fire 2 events per click',
+    description: 'Publishers fire extra events per click',
     baseCost: 200,
-    costMultiplier: 1,
-    maxLevel: 1,
+    costMultiplier: 2.5,
+    maxLevel: 5,
   },
   {
     key: 'globalValueMultiplier',
-    label: 'Global Value x1.5',
-    description: 'All earned money x1.5',
+    label: 'Income Multiplier',
+    description: 'All earned money ×1.5 per level',
     baseCost: 500,
-    costMultiplier: 1,
-    maxLevel: 1,
+    costMultiplier: 3,
+    maxLevel: 5,
   },
 ];
 

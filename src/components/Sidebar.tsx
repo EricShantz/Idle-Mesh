@@ -5,6 +5,38 @@ import { formatMoney } from '../utils/formatMoney';
 const QUEUE_COST = 60;
 const DMQ_COST = 80;
 
+const autoPubIntervals = [5, 3, 1, 0.75, 0.5, 0.25, 0.1];
+
+function getGlobalUpgradeValueDisplay(key: string, level: number): string | null {
+  const next = level + 1;
+  switch (key) {
+    case 'propagationSpeed': {
+      const cur = level * (level + 9) / 2;
+      const nxt = next * (next + 9) / 2;
+      return `${cur}% → ${nxt}% (+${nxt - cur}%)`;
+    }
+    case 'costReduction': {
+      return `${level * 10}% → ${next * 10}%`;
+    }
+    case 'autoPub': {
+      const curInterval = level > 0 ? `${autoPubIntervals[Math.min(level - 1, 6)]}s` : 'Off';
+      const nxtInterval = `${autoPubIntervals[Math.min(level, 6)]}s`;
+      return `${curInterval} → ${nxtInterval}`;
+    }
+    case 'batchFire': {
+      return `${level + 1} → ${next + 1} events/click`;
+    }
+    case 'globalValueMultiplier': {
+      let curMult = 1;
+      for (let i = 1; i <= level; i++) curMult *= (1.4 + i * 0.1);
+      const nxtMult = curMult * (1.4 + next * 0.1);
+      return `${curMult.toFixed(2)}× → ${nxtMult.toFixed(2)}× (×${(1.4 + next * 0.1).toFixed(1)})`;
+    }
+    default:
+      return null;
+  }
+}
+
 export function Sidebar() {
   const balance = useGameStore(s => s.balance);
   const totalEarned = useGameStore(s => s.totalEarned);
@@ -120,9 +152,11 @@ export function Sidebar() {
                     <span className="text-[10px] opacity-50">Lv {level}</span>
                   )}
                 </div>
-                <div className="opacity-60">{u.key === 'autoPub' && level > 0
-                  ? `Currently: every ${[5, 3, 1, 0.75, 0.5, 0.25, 0.1][Math.min(level - 1, 6)]}s`
-                  : u.description}</div>
+                <div className="opacity-60">{u.description}</div>
+                {!maxed && (() => {
+                  const valueDisplay = getGlobalUpgradeValueDisplay(u.key, level);
+                  return valueDisplay ? <div className="text-xs text-blue-300 mt-0.5">{valueDisplay}</div> : null;
+                })()}
                 <div className="mt-0.5 font-mono">
                   {maxed ? 'MAX' : formatMoney(cost)}
                 </div>

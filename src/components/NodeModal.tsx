@@ -42,18 +42,40 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number): strin
     case 'dmqValueRecovery':
       return `${10 + currentLevel * 10}% → ${10 + nextLevel * 10}%`;
 
+    // DMQ release speed
+    case 'dmqReleaseSpeed': {
+      const curPct = currentLevel * (currentLevel + 9) / 2;
+      const nxtPct = nextLevel * (nextLevel + 9) / 2;
+      return `${curPct}% → ${nxtPct}% (+${nxtPct - curPct}%)`;
+    }
+
     // Value upgrades ($X.XX per unit)
-    case 'eventValue':
-    case 'consumptionValue':
-      const currentVal = (0.5 + currentLevel * 0.5).toFixed(2);
-      const nextVal = (0.5 + nextLevel * 0.5).toFixed(2);
-      return `$${currentVal} → $${nextVal}`;
+    case 'eventValue': {
+      const curVal = (0.5 + currentLevel * 0.45 + currentLevel * currentLevel * 0.05).toFixed(2);
+      const nxtVal = (0.5 + nextLevel * 0.45 + nextLevel * nextLevel * 0.05).toFixed(2);
+      const increment = (nextLevel * 0.45 + nextLevel * nextLevel * 0.05 - currentLevel * 0.45 - currentLevel * currentLevel * 0.05).toFixed(2);
+      return `$${curVal} → $${nxtVal} (+$${increment})`;
+    }
+    case 'consumptionValue': {
+      const curVal = (0.5 + currentLevel * 0.45 + currentLevel * currentLevel * 0.05).toFixed(2);
+      const nxtVal = (0.5 + nextLevel * 0.45 + nextLevel * nextLevel * 0.05).toFixed(2);
+      const increment = (nextLevel * 0.45 + nextLevel * nextLevel * 0.05 - currentLevel * 0.45 - currentLevel * currentLevel * 0.05).toFixed(2);
+      return `$${curVal} → $${nxtVal} (+$${increment})`;
+    }
 
     // Level-based percentage upgrades
-    case 'publishSpeed':
-    case 'fasterConsumption':
+    case 'fasterConsumption': {
+      const currentPct = currentLevel * (currentLevel + 9) / 2;
+      const nextPct = nextLevel * (nextLevel + 9) / 2;
+      return `${currentPct}% → ${nextPct}% (+${nextPct - currentPct}%)`;
+    }
+    case 'publishSpeed': {
+      const curPct = currentLevel * (currentLevel + 9) / 2;
+      const nxtPct = nextLevel * (nextLevel + 9) / 2;
+      return `${curPct}% → ${nxtPct}% (+${nxtPct - curPct}%)`;
+    }
     case 'fasterRouting':
-      return `Lv.${currentLevel} → Lv.${nextLevel}`;
+      return `${currentLevel * 20}% → ${nextLevel * 20}%`;
 
     // Queue slot upgrade
     case 'addQueueSlot':
@@ -143,12 +165,18 @@ export function NodeModal() {
                   color: maxed ? '#6b7280' : canAfford ? '#d1fae5' : '#9ca3af',
                 }}
               >
-                <div className="font-bold">{def.label}</div>
+                <div className="flex justify-between items-center">
+                  <span className="font-bold">
+                    {def.label}
+                    {['fasterConsumption', 'publishSpeed', 'dmqReleaseSpeed'].includes(def.key) && level > 0 && ` (${level * (level + 9) / 2}%)`}
+                    {['eventValue', 'consumptionValue'].includes(def.key) && level > 0 && ` ($${(0.5 + level * 0.45 + level * level * 0.05).toFixed(2)})`}
+                  </span>
+                  {!maxed && <span className="text-[10px] opacity-50">Lv {level}</span>}
+                </div>
                 <div className="opacity-70">{def.description}</div>
                 {!maxed && <div className="text-xs text-blue-300 mt-0.5">{getUpgradeValueDisplay(def.key, level)}</div>}
                 <div className="mt-0.5">
                   {maxed ? 'MAX' : formatMoney(cost)}
-                  {!maxed && level > 0 && <span className="ml-1 opacity-50">Lv.{level}</span>}
                 </div>
               </button>
             );

@@ -56,7 +56,7 @@ export type GameState = {
     propagationSpeed: number;
     costReduction: number;
     autoPubLevel: number;
-    batchFire: boolean;
+    batchFire: number;
     globalValueMultiplier: number;
   };
 
@@ -190,8 +190,15 @@ function migrateGlobalUpgradeLevels(upgrades: GameState['upgrades'] | undefined)
     levels.costReduction = Math.round(upgrades.costReduction / 0.1);
   }
   if (upgrades.autoPubLevel > 0) levels.autoPub = upgrades.autoPubLevel;
-  if (upgrades.batchFire) levels.batchFire = 1;
-  if (upgrades.globalValueMultiplier > 1) levels.globalValueMultiplier = 1;
+  if ((upgrades as any).batchFire === true || upgrades.batchFire > 0) levels.batchFire = 1;
+  if (upgrades.globalValueMultiplier > 1) {
+    // Derive level from old multiplier by iterating the new formula
+    let mult = 1; let lvl = 0;
+    while (mult < upgrades.globalValueMultiplier - 0.01 && lvl < 5) {
+      lvl++; mult *= (1.4 + lvl * 0.1);
+    }
+    levels.globalValueMultiplier = lvl;
+  }
   return levels;
 }
 
@@ -214,7 +221,7 @@ export const useGameStore = create<GameState>()(
         propagationSpeed: 1.0,
         costReduction: 0,
         autoPubLevel: 0,
-        batchFire: false,
+        batchFire: (saved?.upgrades as any)?.batchFire === true ? 2 : (saved?.upgrades?.batchFire ?? 0),
         globalValueMultiplier: 1.0,
       },
 
@@ -238,7 +245,8 @@ export const useGameStore = create<GameState>()(
           const lastFireTime = state.publisherCooldowns[publisherId] ?? 0;
           const publishSpeedLevel = pub.upgrades['publishSpeed'] ?? 0;
           const baseCooldown = 1000; // 1 second base cooldown
-          const cooldownDuration = baseCooldown * Math.pow(0.95, publishSpeedLevel); // Each level reduces by 5%
+          const publishBoostPct = publishSpeedLevel * (publishSpeedLevel + 9) / 2;
+          const cooldownDuration = baseCooldown * (1 - publishBoostPct / 100);
           if (Date.now() - lastFireTime < cooldownDuration) return;
         }
 
@@ -312,7 +320,7 @@ export const useGameStore = create<GameState>()(
           if (!skipCooldown) {
             draft.publisherCooldowns[publisherId] = Date.now();
           }
-          const fireCount = state.upgrades.batchFire ? 2 : 1;
+          const fireCount = state.upgrades.batchFire > 0 ? state.upgrades.batchFire : 1;
           for (let batch = 0; batch < fireCount; batch++) {
             for (const { waypoints, nodeIds } of selectedPaths) {
               const dotId = `dot-${++dotIdCounter}`;
@@ -497,7 +505,7 @@ export const useGameStore = create<GameState>()(
         if (from.type === 'broker' && to.type === 'queue') {
           const queueConns = state.connections.filter(
             c => c.fromId === drag.fromId &&
-            state.components.find(comp => comp.id === c.toId)?.type === 'queue'
+              state.components.find(comp => comp.id === c.toId)?.type === 'queue'
           ).length;
           const maxSlots = 1 + (from.upgrades['addQueueSlot'] ?? 0);
           if (queueConns >= maxSlots) {
@@ -513,7 +521,7 @@ export const useGameStore = create<GameState>()(
         if (from.type === 'queue' && to.type === 'subscriber') {
           const subConns = state.connections.filter(
             c => c.fromId === drag.fromId &&
-            state.components.find(comp => comp.id === c.toId)?.type === 'subscriber'
+              state.components.find(comp => comp.id === c.toId)?.type === 'subscriber'
           ).length;
           const maxSlots = 1 + (from.upgrades['addSubscriberSlot'] ?? 0);
           if (subConns >= maxSlots) {
@@ -559,9 +567,12 @@ export const useGameStore = create<GameState>()(
           draft.globalUpgradeLevels[upgradeKey] = level + 1;
 
           switch (upgradeKey) {
-            case 'propagationSpeed':
-              draft.upgrades.propagationSpeed *= 1.05;
+            case 'propagationSpeed': {
+              const newLevel = draft.globalUpgradeLevels[upgradeKey];
+              const boostPct = newLevel * (newLevel + 9) / 2;
+              draft.upgrades.propagationSpeed = 1 + boostPct / 100;
               break;
+            }
             case 'costReduction':
               draft.upgrades.costReduction = Math.min(0.3, draft.upgrades.costReduction + 0.1);
               break;
@@ -569,11 +580,15 @@ export const useGameStore = create<GameState>()(
               draft.upgrades.autoPubLevel = level + 1;
               break;
             case 'batchFire':
-              draft.upgrades.batchFire = true;
+              draft.upgrades.batchFire = level + 2; // level 0 → 2 events, level 1 → 3, etc.
               break;
-            case 'globalValueMultiplier':
-              draft.upgrades.globalValueMultiplier *= 1.5;
+            case 'globalValueMultiplier': {
+              const newLevel = draft.globalUpgradeLevels[upgradeKey];
+              let mult = 1;
+              for (let i = 1; i <= newLevel; i++) mult *= (1.4 + i * 0.1);
+              draft.upgrades.globalValueMultiplier = mult;
               break;
+            }
           }
         });
       },
@@ -642,7 +657,7 @@ export const useGameStore = create<GameState>()(
         const pub = state.components.find(c => c.id === publisherId);
         if (!pub) return 0.5;
         const valueLevel = pub.upgrades['eventValue'] ?? 0;
-        return 0.5 + valueLevel * 0.5;
+        return 0.5 + valueLevel * 0.45 + valueLevel * valueLevel * 0.05;
       },
     };
   })
