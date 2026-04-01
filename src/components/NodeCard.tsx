@@ -328,11 +328,11 @@ export function NodeCard({ component }: Props) {
         <button
           onClick={handleUpgradeClick}
           onPointerDown={(e) => e.stopPropagation()}
-          className="absolute top-1 right-1 w-4 h-4 flex items-center justify-center rounded hover:bg-gray-600 text-xs"
-          style={{ color: colors.border, fontSize: '10px' }}
+          className="absolute top-1 right-1 w-4 h-4 flex items-center justify-center rounded-md hover:bg-gray-600"
+          style={{ color: colors.border, fontSize: '11px', border: `1px solid ${colors.border}88` }}
           title="Upgrades"
         >
-          ⚙
+          ↑
         </button>
         <div>{component.label}</div>
         {isPublisher && (
@@ -356,7 +356,7 @@ export function NodeCard({ component }: Props) {
         )}
         {affordableUpgradeCount > 0 && (
           <div
-            className="absolute -top-2 -right-2 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center"
+            className="absolute -top-2 -left-2 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center"
           >
             {affordableUpgradeCount > 99 ? '99+' : affordableUpgradeCount}
           </div>

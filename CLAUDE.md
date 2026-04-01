@@ -85,8 +85,8 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 
 - **Mesh canvas**: SVG connection lines + HTML5 canvas for event dots + React nodes
 - **Output ports**: Small circle with right-arrow icon on right edge of nodes that can output (all except subscriber). Drag from port to create a new connection. Hover highlights port in the node's theme color.
-- **Upgrade modal**: Small floating panel anchored to the node, opened via the ⚙ gear icon in the node's top-right corner
-- **Upgrade badge**: Red circle on each node showing how many upgrades are currently affordable
+- **Upgrade modal**: Small floating panel anchored to the node, opened via the ↑ upgrade icon in the node's top-right corner (bordered rounded box)
+- **Upgrade badge**: Red circle on each node's **top-left** corner showing how many upgrades are currently affordable
 
 ---
 
@@ -207,7 +207,7 @@ type EventDot = {
 
 ## Per-Component Upgrade Modals
 
-Access by clicking the **⚙ icon** on any node. Modal is anchored to the node.
+Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 
 ### Publisher
 | Upgrade | Effect | Base Cost | Multiplier |
@@ -286,7 +286,7 @@ Global upgrades use the same `UpgradeDef` system as node upgrades — each is a 
 - Blockage at webhook (drops at left edge if occupied — detected in a 20px zone before the node's left edge via `isComponentOccupied()` which checks for traveling dots inside the bounding box)
 - Broker: instant relay (no slowdown, no blockage, no border animation)
 - Blockage at subscriber (drops at subscriber edge if consuming)
-- Per-node upgrade modal (gear icon), upgrade count badge
+- Per-node upgrade modal (↑ icon), upgrade count badge (top-left)
 - Publisher upgrades: Event Value, Publish Speed (both functional)
 - Webhook upgrades: Upgrade to Broker (functional — removes delay, changes type/color/label), Faster Routing (functional)
 - Broker upgrades: Add Queue Slot (UI only), Topic Filter Boost (UI only)
@@ -318,7 +318,7 @@ src/
     MeshCanvas.tsx      # SVG connections + EventCanvas + NodeCards + NodeModal + drag handling
     ConnectionLine.tsx  # Individual connection: SVG line + arrowhead + click-to-detach drag
     EventCanvas.tsx     # HTML5 canvas RAF loop, draws traveling/pausing/dropped dots
-    NodeCard.tsx        # Individual node: color, gear icon, upgrade badge, output port, click handlers
+    NodeCard.tsx        # Individual node: color, ↑ upgrade icon, upgrade badge, output port, click handlers
     NodeModal.tsx       # Floating upgrade modal anchored to selected node
     Sidebar.tsx         # Balance, stats, global upgrades, shop
   store/
