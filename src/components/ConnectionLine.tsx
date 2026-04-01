@@ -9,12 +9,17 @@ type Props = {
 export function ConnectionLine({ conn }: Props) {
   const components = useGameStore(s => s.components);
   const startDragConnection = useGameStore(s => s.startDragConnection);
-  const removeConnectionById = useGameStore(s => s.removeConnectionById);
+  const draggingConnection = useGameStore(s => s.draggingConnection);
   const [hovered, setHovered] = useState(false);
 
   const from = components.find(c => c.id === conn.fromId);
   const to = components.find(c => c.id === conn.toId);
   if (!from || !to) return null;
+
+  // Hide the original line while it's being dragged for reassignment
+  if (draggingConnection?.type === 'reassign' && draggingConnection.connectionId === conn.id) {
+    return null;
+  }
 
   // Output port center: node half-width + port offset
   const fromHalfW = from.type === 'queue' ? 70 : 60;
@@ -33,11 +38,7 @@ export function ConnectionLine({ conn }: Props) {
 
   const pathD = buildOrthogonalSvgPath(startX, startY, endX, endY);
 
-  // Midpoint for controls — center of the vertical segment
-  const midX = (startX + endX) / 2;
-  const midY = (startY + endY) / 2;
-
-  const handleDragFromMidpoint = (e: React.PointerEvent) => {
+  const handleClickLine = (e: React.PointerEvent) => {
     e.stopPropagation();
     e.preventDefault();
     const svg = (e.target as SVGElement).ownerSVGElement;
@@ -46,12 +47,6 @@ export function ConnectionLine({ conn }: Props) {
     const mx = rect ? e.clientX - rect.left : e.clientX;
     const my = rect ? e.clientY - rect.top : e.clientY;
     startDragConnection('reassign', conn.fromId, conn.id, mx, my);
-  };
-
-  const handleDelete = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-    removeConnectionById(conn.id);
   };
 
   return (
@@ -69,64 +64,15 @@ export function ConnectionLine({ conn }: Props) {
         markerEnd="url(#arrowhead)"
         style={{ transition: 'stroke 0.15s' }}
       />
-      {/* Invisible wider hit area */}
+      {/* Invisible wider hit area — click to detach and drag */}
       <path
         d={pathD}
         fill="none"
         stroke="transparent"
         strokeWidth={14}
         style={{ cursor: 'pointer' }}
+        onPointerDown={handleClickLine}
       />
-      {/* Midpoint controls — visible on hover */}
-      {hovered && (
-        <g>
-          {/* Drag handle (arrow icon) — drag to reassign target */}
-          <circle
-            cx={midX - 10}
-            cy={midY}
-            r={8}
-            fill="#1e293b"
-            stroke="#22d3ee"
-            strokeWidth={1}
-            style={{ cursor: 'grab' }}
-            onPointerDown={handleDragFromMidpoint}
-          />
-          <text
-            x={midX - 10}
-            y={midY + 1}
-            textAnchor="middle"
-            dominantBaseline="central"
-            fill="#22d3ee"
-            fontSize={10}
-            style={{ pointerEvents: 'none' }}
-          >
-            ↗
-          </text>
-          {/* Delete button */}
-          <circle
-            cx={midX + 10}
-            cy={midY}
-            r={8}
-            fill="#1e293b"
-            stroke="#ef4444"
-            strokeWidth={1}
-            style={{ cursor: 'pointer' }}
-            onClick={handleDelete}
-          />
-          <text
-            x={midX + 10}
-            y={midY + 1}
-            textAnchor="middle"
-            dominantBaseline="central"
-            fill="#ef4444"
-            fontSize={10}
-            fontWeight="bold"
-            style={{ pointerEvents: 'none' }}
-          >
-            ✕
-          </text>
-        </g>
-      )}
     </g>
   );
 }

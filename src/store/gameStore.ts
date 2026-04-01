@@ -393,7 +393,12 @@ export const useGameStore = create<GameState>()(
       },
 
       cancelDragConnection: () => {
+        const drag = get().draggingConnection;
         set(draft => {
+          // If reassigning and dropped on nothing, delete the connection
+          if (drag?.type === 'reassign' && drag.connectionId) {
+            draft.connections = draft.connections.filter(c => c.id !== drag.connectionId);
+          }
           draft.draggingConnection = null;
         });
       },
