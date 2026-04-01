@@ -282,6 +282,9 @@ export function useGameLoop() {
           const queueComp = state.components.find(c => c.id === queueId);
           if (queueComp?.type === 'dmq') continue;
 
+          // Skip release if this queue is being dragged
+          if (queueId === state.draggingNodeId) continue;
+
           // Only release the oldest queued dot in this queue (FIFO by pauseStartTime)
           let isOldest = true;
           for (let j = 0; j < updated.length; j++) {
@@ -372,29 +375,60 @@ export function useGameLoop() {
               dot = { ...dot, path: newPath, progress: oldLen > 0 ? (dot.progress * oldLen) / newLen : 0 } as typeof dot;
             }
             releasedQueues.add(queueId);
-            // Set progress past the queue's far edge so the dot won't re-collide.
-            // Since queued dots render at queue center (EventCanvas snaps them),
-            // and queue nodes render above the event canvas (z-26 vs z-25),
-            // the dot will appear to emerge from behind the queue.
+            // Rebuild the path from the queue onward using current positions.
+            // The queue may have been dragged, so old midpoints are stale.
             const queue = state.components.find(c => c.id === queueId);
             let releaseProgress = dot.progress;
             if (queue) {
-              const totalSegments = dot.path.length - 1;
-              // Find the queue's waypoint index in the path
+              // Find the queue's waypoint index in the baked path
               let bestIdx = 0;
               let bestDist = Infinity;
               for (let pi = 0; pi < dot.path.length; pi++) {
                 const d = Math.hypot(dot.path[pi].x - queue.x, dot.path[pi].y - queue.y);
                 if (d < bestDist) { bestDist = d; bestIdx = pi; }
               }
-              // Calculate how far past the queue waypoint we need to go to clear dotTouchesNode
-              if (bestIdx < totalSegments) {
-                const from = dot.path[bestIdx];
-                const to = dot.path[bestIdx + 1];
-                const segLen = Math.hypot(to.x - from.x, to.y - from.y);
-                // Need to clear NODE_HALF_W + DOT_RADIUS to exit the bounding box
-                const clearanceFraction = segLen > 0 ? (NODE_HALF_W + DOT_RADIUS + 2) / segLen : 1;
-                releaseProgress = Math.min((bestIdx + clearanceFraction) / totalSegments, 1);
+              // Truncate path at the queue and rebuild queue→subscriber with current positions
+              const pathBeforeQueue = dot.path.slice(0, bestIdx);
+              const queuePoint = { x: queue.x, y: queue.y };
+              // Find the subscriber target from current connections
+              const subConn = state.connections.find(c => c.fromId === queueId);
+              const subComp = subConn ? state.components.find(c => c.id === subConn.toId && c.type === 'subscriber') : null;
+              const subTarget = subComp ?? (targetSub ? { x: targetSub.x, y: targetSub.y } : null);
+
+              if (subTarget) {
+                const extension: { x: number; y: number }[] = [];
+                if (Math.abs(queue.y - subTarget.y) >= 1) {
+                  const midX = (queue.x + subTarget.x) / 2;
+                  extension.push({ x: midX, y: queue.y });
+                  extension.push({ x: midX, y: subTarget.y });
+                }
+                extension.push({ x: subTarget.x, y: subTarget.y });
+                const newPath = [...pathBeforeQueue, queuePoint, ...extension];
+                // Find the new queue index and recalculate progress
+                const newQueueIdx = pathBeforeQueue.length;
+                const totalSegments = newPath.length - 1;
+                dot = { ...dot, path: newPath } as typeof dot;
+                // Set progress past the queue's far edge so the dot won't re-collide
+                if (newQueueIdx < totalSegments) {
+                  const from = newPath[newQueueIdx];
+                  const to = newPath[newQueueIdx + 1];
+                  const segLen = Math.hypot(to.x - from.x, to.y - from.y);
+                  const clearanceFraction = segLen > 0 ? (NODE_HALF_W + DOT_RADIUS + 2) / segLen : 1;
+                  releaseProgress = Math.min((newQueueIdx + clearanceFraction) / totalSegments, 1);
+                }
+              } else {
+                // No subscriber — just snap queue waypoint and use old clearance logic
+                const newPath = [...dot.path];
+                newPath[bestIdx] = queuePoint;
+                dot = { ...dot, path: newPath } as typeof dot;
+                const totalSegments = dot.path.length - 1;
+                if (bestIdx < totalSegments) {
+                  const from = dot.path[bestIdx];
+                  const to = dot.path[bestIdx + 1];
+                  const segLen = Math.hypot(to.x - from.x, to.y - from.y);
+                  const clearanceFraction = segLen > 0 ? (NODE_HALF_W + DOT_RADIUS + 2) / segLen : 1;
+                  releaseProgress = Math.min((bestIdx + clearanceFraction) / totalSegments, 1);
+                }
               }
             }
             updated[i] = { ...dot, status: 'traveling', progress: releaseProgress, pauseStartTime: undefined, queuedAtNodeId: undefined } as Dot;
@@ -403,7 +437,7 @@ export function useGameLoop() {
 
         // --- Pass 3: auto-release ONE queued dot from DMQ if broker connection exists ---
         const dmqComp = state.components.find(c => c.type === 'dmq');
-        if (dmqComp) {
+        if (dmqComp && dmqComp.id !== state.draggingNodeId) {
           const dmqConn = state.connections.find(c => c.fromId === dmqComp.id);
           const brokerTarget = dmqConn
             ? state.components.find(c => c.id === dmqConn.toId && c.type === 'broker')

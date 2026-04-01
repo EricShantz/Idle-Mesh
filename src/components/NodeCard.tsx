@@ -48,6 +48,7 @@ export function NodeCard({ component }: Props) {
   const eventDots = useGameStore(s => s.eventDots);
   const draggingConnection = useGameStore(s => s.draggingConnection);
   const startDragConnection = useGameStore(s => s.startDragConnection);
+  const setDraggingNodeId = useGameStore(s => s.setDraggingNodeId);
 
   const colors = typeColors[component.type] ?? typeColors.publisher;
   const isSelected = selectedNodeId === component.id;
@@ -233,6 +234,7 @@ export function NodeCard({ component }: Props) {
     if (!hasMoved.current) {
       if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
       hasMoved.current = true;
+      setDraggingNodeId(component.id);
     }
 
     moveComponent(
@@ -246,6 +248,7 @@ export function NodeCard({ component }: Props) {
     if (!isDragging.current) return;
     isDragging.current = false;
     setCursorGrabbing(false);
+    setDraggingNodeId(null);
 
     // Fire event if this was just a click (no drag)
     const wasClick = !hasMoved.current;

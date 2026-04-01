@@ -75,6 +75,8 @@ export type GameState = {
     mouseY: number;
   } | null;
 
+  draggingNodeId: string | null;
+
   // Actions
   fireEvent: (publisherId: string, skipCooldown?: boolean) => void;
   consumeEvent: (dotId: string, value: number, subscriberId: string) => void;
@@ -101,6 +103,7 @@ export type GameState = {
   updateDragPosition: (mouseX: number, mouseY: number) => void;
   completeDragConnection: (targetId: string) => void;
   cancelDragConnection: () => void;
+  setDraggingNodeId: (id: string | null) => void;
 };
 
 let dotIdCounter = 0;
@@ -197,7 +200,7 @@ export const useGameStore = create<GameState>()(
     initCountersFromSaved(saved);
 
     return {
-      balance: saved?.balance ?? 5000000,
+      balance: saved?.balance ?? 50000000,
       totalEarned: saved?.totalEarned ?? 0,
       eventsConsumed: saved?.eventsConsumed ?? 0,
       eventsDropped: saved?.eventsDropped ?? 0,
@@ -221,6 +224,7 @@ export const useGameStore = create<GameState>()(
       selectedNodeId: null,
       publisherCooldowns: {},
       draggingConnection: null,
+      draggingNodeId: null,
 
       fireEvent: (publisherId: string, skipCooldown?: boolean) => {
         const state = get();
@@ -508,6 +512,10 @@ export const useGameStore = create<GameState>()(
         });
       },
 
+      setDraggingNodeId: (id: string | null) => {
+        set(draft => { draft.draggingNodeId = id; });
+      },
+
       purchaseGlobalUpgrade: (upgradeKey: string) => {
         set(draft => {
           const level = draft.globalUpgradeLevels[upgradeKey] ?? 0;
@@ -608,7 +616,7 @@ let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 let lastSaveSnapshot = '';
 useGameStore.subscribe((state) => {
   // Build save data
-  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, ...toSave } = state;
+  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, ...toSave } = state;
   const data: Record<string, any> = {};
   for (const [key, val] of Object.entries(toSave)) {
     if (typeof val !== 'function') {
