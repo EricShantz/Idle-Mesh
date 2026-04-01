@@ -58,12 +58,14 @@ export type GameState = {
   };
 
   recentEarnings: { time: number; amount: number }[];
+  coinPops: { id: string; x: number; y: number; amount: number }[];
   selectedNodeId: string | null;
   publisherCooldowns: Record<string, number>; // publisherId -> last fire timestamp
 
   // Actions
   fireEvent: (publisherId: string) => void;
-  consumeEvent: (dotId: string, value: number) => void;
+  consumeEvent: (dotId: string, value: number, subscriberId: string) => void;
+  removeCoinPop: (id: string) => void;
   dropEvent: (dotId: string) => void;
   updateDots: (updateFn: (dots: EventDot[]) => EventDot[]) => void;
   removeDot: (dotId: string) => void;
@@ -141,7 +143,7 @@ export const useGameStore = create<GameState>()(
     const saved = loadSavedState();
 
     return {
-      balance: saved?.balance ?? 500000,
+      balance: saved?.balance ?? 5000000,
       totalEarned: saved?.totalEarned ?? 0,
       eventsConsumed: saved?.eventsConsumed ?? 0,
       eventsDropped: saved?.eventsDropped ?? 0,
@@ -161,6 +163,7 @@ export const useGameStore = create<GameState>()(
       },
 
       recentEarnings: [],
+      coinPops: [],
       selectedNodeId: null,
       publisherCooldowns: {},
 
@@ -199,13 +202,23 @@ export const useGameStore = create<GameState>()(
         });
       },
 
-      consumeEvent: (_dotId: string, value: number) => {
+      consumeEvent: (_dotId: string, value: number, subscriberId: string) => {
         set(draft => {
           const earned = value * draft.upgrades.globalValueMultiplier;
           draft.balance += earned;
           draft.totalEarned += earned;
           draft.eventsConsumed += 1;
           draft.recentEarnings.push({ time: Date.now(), amount: earned });
+          const sub = draft.components.find(c => c.id === subscriberId);
+          if (sub) {
+            draft.coinPops.push({ id: `coin-${++dotIdCounter}`, x: sub.x, y: sub.y, amount: earned });
+          }
+        });
+      },
+
+      removeCoinPop: (id: string) => {
+        set(draft => {
+          draft.coinPops = draft.coinPops.filter(c => c.id !== id);
         });
       },
 
@@ -378,7 +391,7 @@ let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 let lastSaveSnapshot = '';
 useGameStore.subscribe((state) => {
   // Build save data
-  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, ...toSave } = state;
+  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, ...toSave } = state;
   const data: Record<string, any> = {};
   for (const [key, val] of Object.entries(toSave)) {
     if (typeof val !== 'function') {
