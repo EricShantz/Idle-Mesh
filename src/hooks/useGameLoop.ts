@@ -25,15 +25,6 @@ function dotTouchesNode(px: number, py: number, nodeX: number, nodeY: number): b
   return dist <= DOT_RADIUS;
 }
 
-function getWebhookThresholds(path: { x: number; y: number }[]) {
-  if (path.length < 2) return { webhookSlowStart: 0, webhookSlowEnd: 0 };
-  const segmentCount = path.length - 1;
-  const progressPerSegment = 1 / segmentCount;
-  return {
-    webhookSlowStart: progressPerSegment,
-    webhookSlowEnd: 2 * progressPerSegment,
-  };
-}
 
 export function useGameLoop() {
   const rafRef = useRef<number>(0);
@@ -72,18 +63,14 @@ export function useGameLoop() {
           if (dot.status === 'traveling') {
             let actualSpeed = dot.speed * state.upgrades.propagationSpeed;
 
-            const thresholds = getWebhookThresholds(dot.path);
-
-            if (dot.progress >= thresholds.webhookSlowStart && dot.progress < thresholds.webhookSlowEnd) {
-              const webhookComponent = state.components.find(c => c.type === 'webhook');
-              if (webhookComponent) {
-                const fasterRoutingLevel = webhookComponent.upgrades['fasterRouting'] ?? 0;
-                const slowFactor = Math.min(1.0, 0.4 + fasterRoutingLevel * 0.2);
-                actualSpeed *= slowFactor;
-              }
-            }
-
             const eventPos = interpolatePath(dot.path, dot.progress);
+
+            const webhookComponent = state.components.find(c => c.type === 'webhook');
+            if (webhookComponent && dotTouchesNode(eventPos.x, eventPos.y, webhookComponent.x, webhookComponent.y)) {
+              const fasterRoutingLevel = webhookComponent.upgrades['fasterRouting'] ?? 0;
+              const slowFactor = Math.min(1.0, 0.4 + fasterRoutingLevel * 0.2);
+              actualSpeed *= slowFactor;
+            }
             const blockRadius = 30;
 
             let blocked = false;
