@@ -273,6 +273,7 @@ export const useGameStore = create<GameState>()(
             d.status = 'dropped';
             d.color = '#ff4444';
             d.dropVY = 0;
+            draft.eventsDropped += 1;
           }
         });
       },

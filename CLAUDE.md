@@ -197,10 +197,11 @@ type EventDot = {
 - `traveling` → on collision with subscriber node, transitions to `pausing` if subscriber is free, otherwise drops
 - `queued` → auto-released one per queue per frame when subscriber is free AND no traveling dots ahead in path (past queue's progress)
 - `pausing` → at 50% of consume duration, value is passed directly to `consumeEvent(id, value)` and dot is removed from array
-- `dropped` → gravity fall + fade over 600ms; position is where the blockage occurred
+- `dropped` → gravity fall + fade over 600ms; position is where the blockage occurred. `eventsDropped` counter incremented via batch `setState` after the dot loop (counted during loop, applied once per frame).
 
 **Game loop pattern:**
 - Dots are processed sequentially in a `for` loop (not `.map()`) building a mutable `updated` array, so each dot sees the results of earlier dots in the same frame. This prevents race conditions like two dots both seeing a queue as empty.
+- Side-effect counters (`droppedCount`) are accumulated during the dot loop and applied to the store in a single `setState` call after `updateDots` completes, alongside `consumeEvent` calls.
 
 ---
 

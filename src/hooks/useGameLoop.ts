@@ -40,6 +40,7 @@ export function useGameLoop() {
       const toConsume: { id: string; value: number; subscriberId: string }[] = [];
       const toFinish: string[] = [];
       const toRemove: string[] = [];
+      let droppedCount = 0;
 
       state.updateDots(dots => {
         type Dot = import('../store/gameStore').EventDot;
@@ -91,6 +92,7 @@ export function useGameLoop() {
                 if (eventPos.x >= leftEdge) continue; // already at or past the edge
                 if (eventPos.x < leftEdge - 20) continue; // too far away to block
                 if (isComponentOccupied(comp.id)) {
+                  droppedCount++;
                   updated.push({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: '#ff4444' } as Dot);
                   blocked = true;
                   break;
@@ -120,6 +122,7 @@ export function useGameLoop() {
                 if (queuedCount < bufferSize) {
                   updated.push({ ...dot, status: 'queued', pauseStartTime: Date.now(), queuedAtNodeId: queue.id, progress: newProgress } as Dot);
                 } else {
+                  droppedCount++;
                   updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: '#ff4444' } as Dot);
                 }
                 queued = true;
@@ -145,6 +148,7 @@ export function useGameLoop() {
               if (!isSubscriberOccupied) {
                 updated.push({ ...dot, status: 'pausing', pauseStartTime: Date.now(), progress: newProgress } as Dot);
               } else {
+                droppedCount++;
                 updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: '#ff4444' } as Dot);
               }
               continue;
@@ -152,6 +156,7 @@ export function useGameLoop() {
 
             if (newProgress >= 1) {
               const endPos = dot.path[dot.path.length - 1];
+              droppedCount++;
               updated.push({ ...dot, status: 'dropped', dropX: endPos.x, dropY: endPos.y, dropVY: 0, color: '#ff4444' } as Dot);
               continue;
             }
@@ -256,6 +261,14 @@ export function useGameLoop() {
 
         return updated;
       });
+
+      // Increment dropped counter
+      if (droppedCount > 0) {
+        useGameStore.setState(state => ({
+          ...state,
+          eventsDropped: state.eventsDropped + droppedCount,
+        }));
+      }
 
       // Add money for dots that reached 50% of animation
       for (const { id, value, subscriberId } of toConsume) {
