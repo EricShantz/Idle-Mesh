@@ -1,0 +1,116 @@
+# Development Notes
+
+## Testing & Debugging
+- **Starting balance for testing**: change `balance: saved?.balance ?? 5000000` in `gameStore.ts`. Clear localStorage **then hard-refresh the page** (Ctrl+Shift+R) to reset — the auto-save subscriber will re-persist in-memory state if the tab stays open.
+- **Component IDs**: initial components use fixed IDs (`pub-1`, `webhook-1`, `sub-1`, `conn-1`, `conn-2`). Dynamically added components use counter-based IDs starting at 10 (`comp-10+`, `conn-10+`). Counters are initialized from saved state on load via `initCountersFromSaved()` to prevent duplicate IDs.
+
+## Collision & Thresholds
+- `useGameLoop.ts` uses `dotTouchesNode()` bounding-box collision for all node interactions: webhook slowdown, queue capture, subscriber pause/drop.
+- Webhook blockage uses a 20px approach zone before the node's left edge; `isComponentOccupied()` detects traveling dots inside the webhook via `dotTouchesNode()`. Brokers skip blockage entirely.
+
+## Viewport (Pan/Zoom)
+- Managed by `useViewport.ts` — a React context holding a mutable ref `{ panX, panY, zoom }` with lightweight pub/sub (not Zustand, to avoid mass re-renders).
+- All component positions in the store remain "world" coordinates. Transform: `screenX = worldX * zoom + panX`.
+- Each rendering layer applies this independently: SVG uses `<g transform>`, canvases use `ctx.setTransform()` (with DPR scaling), HTML nodes use `worldToScreen()` for `left`/`top` + CSS `transform: scale(zoom)`.
+- All pointer events reverse-transformed via `screenToWorld()`. Node drag deltas divided by zoom.
+
+## Drag-to-Move
+- Implemented in `NodeCard.tsx` using pointer capture + ref-based drag state. RAF-throttled state updates. Final position flushed synchronously on pointer up.
+- `draggingNodeId` (transient, in store) is set when drag movement begins and cleared on pointer up.
+
+## Live Path Rebuilding During Drag
+- When a component is being dragged, all in-flight dots whose `originalNodeIds` include the dragged component have their paths rebuilt every frame via `rebuildPathFromNodeIds()`.
+- Dot progress recalculated via `projectOntoPath()` for visual continuity.
+- Connection validation is bypassed while `draggingNodeId` is set.
+
+## Draggable Connections
+- `draggingConnection` transient state tracks active drag (type, fromId, connectionId, mouseX, mouseY).
+- `MeshCanvas.tsx` handles pointer move/up for drop detection (bounding-box: 70px × 38px).
+- `ConnectionLine.tsx` hides itself during reassign drag and initiates detach on click.
+- `cancelDragConnection` deletes the connection when a reassign drag is dropped on nothing. Validation via `connectionRules.ts`.
+
+## Connection Line Geometry
+- Orthogonal (Boomi-style) lines routed horizontal → vertical → horizontal with rounded 12px corners.
+- Port position = `from.x + halfW + 16` where halfW is 60 (120px nodes) or 70 (140px queue nodes).
+- DMQ uses top-center port (`from.x, from.y - 28 - 16`) with vertical-first routing, terminating at broker's bottom edge (`to.x, to.y + 30`).
+- All nodes use `minHeight: 56` and fixed `width` for consistent port alignment (DMQ width is dynamic: 120 + 40 * dmqWidthLevel).
+
+## Dot Path Waypoint Expansion
+- `_getAllPathsWithNodes()` walks node centers, then expands non-horizontal segments into orthogonal waypoints.
+- Vertical `midX` is port-adjusted: `midX = (from.x + fromHalfW + 24 + to.x - toHalfW - 2) / 2` where halfW is 60 (standard) or 70 (queue). Same formula used in `rebuildPathFromNodeIds()` and all queue release / DMQ retry path rebuilds.
+
+## Smart Routing & Fan-out
+- `_getAllPathsWithNodes()` does DFS returning paths with both waypoints and node IDs. Bridge connections traversed bidirectionally.
+- `fireEvent()` groups paths by broker, deduplicates by queue. Without fan-out: picks queue with most free space. With fan-out on all queues: one dot per unique queue.
+- Queue-level fan-out (Persistent Delivery) handled at release time in Pass 2. Broker never duplicates per-subscriber; only per-queue.
+
+## Path Deduplication
+- `dedupeConsecutiveWaypoints()` removes consecutive duplicate waypoints (within 1px) from rebuilt paths in Pass 2 queue release. Without this, when queue and subscriber share the same x-coordinate, `isPastAllQueues` fails and queues drain buffers at ~60×/s.
+
+## Connection-Aware Dot Lifecycle
+- Traveling dots validate their remaining path against the current connection graph each frame — if a connection was removed, the dot drops immediately.
+- Queued dots only release when the queue has an active connection to a subscriber (checked via `state.connections`, not baked path).
+- Queue collision check skips waypoints the dot has already passed to prevent re-capture after release.
+
+## ID Counters & Clock
+- `componentIdCounter` and `connectionIdCounter` initialized from saved state on load via `initCountersFromSaved()`.
+- `nextDotId()` exported from `gameStore.ts` for use in `useGameLoop.ts` when spawning fork dots.
+- `pauseStartTime` uses `Date.now()` (Unix epoch). The RAF `time` argument is a different clock — don't mix them.
+
+## Upgrade Implementation
+- Most per-component upgrade effects are read in `useGameLoop.ts` by looking up the component by position from the dot's path array. Global upgrade effects applied in `purchaseGlobalUpgrade` in `gameStore.ts`.
+- `getUpgradesForType` is duplicated in `NodeModal.tsx` and `NodeCard.tsx` — keep both in sync when adding new component types.
+- `UpgradeDef` has optional `hidden?: boolean`. Used for `topicFilterBoost`. `subscriptionBroaden` is conditionally hidden when queue has no `subscriptionTopic`.
+
+## DMQ Mechanics
+- DMQ catch detection runs inside the `dropped` dot branch of Pass 1 — checks `!dot.isRetry` to prevent infinite loops.
+- DMQ release (Pass 3) gates on `dmqLineBusy`. Retry paths rebuilt at release time from `dot.originalNodeIds` using current positions.
+- DMQ width for collision = `(120 + dmqWidthLevel * 40) / 2` as half-width.
+
+## Adaptive Coin Pop Throttling
+- `consumeEvent()` tracks per-subscriber pop rate via module-level `coinPopTracking`. Smoothed FPS via `getSmoothedFps()` using low-pass filter.
+- Three tiers: ≥50 FPS (5 pops/sec, 12 max), 35–49 FPS (2 pops/sec, 6 max), <35 FPS (1 pop/sec, 3 max). Skipped pops aggregate amounts.
+
+## Adding New Shop Items
+- Add action logic to `gameStore.ts`, add UI to `Sidebar.tsx` shop section. New components placed unconnected; user wires via drag-to-connect.
+
+## Connection Slot Limits
+- Enforced in both `getValidTargets()` and `completeDragConnection()`. Broker→queue limited by `addQueueSlot` level, queue→subscriber by `addSubscriberSlot` level, broker→broker by `addBridgeSlot` level, publisher limited to 1 broker.
+- All slot checks exclude the connection being reassigned. Existing saves with more connections than upgrade levels are grandfathered.
+
+## Event Batching
+- `batchFire` number in `upgrades` state. `fireEvent` creates `batchFire` dots per path — each starts at `progress: batch * -0.04`.
+- `interpolatePath()` clamps negative progress to path start. Old boolean saves migrated to level 1.
+
+## Topic Subscription Picker
+- `getAvailableTopics(queueId)` walks broker connections (including bridges) to find all reachable publishers, broadened to queue's current `subscriptionBroaden` level. Deduplicates by broadened topic string.
+- `setQueueSubscription(queueId, topic, segments, broadenLevel)` updates atomically. UI in `NodeModal.tsx`. Picker state resets on node switch via `key={node.id}`.
+
+## Tutorial System
+- `tutorialsSeen: Record<string, boolean>` persists which tutorials dismissed. `activeTutorial: string | null` (transient).
+- Triggers: `intro` on first mount via `App.tsx`, `brokerUpgrade` inside `upgradeComponent`, component-type tutorials inside `addComponent`. Publisher/subscriber tutorials trigger on 2nd instance.
+- Content in `tutorialConfig.ts`; UI in `TutorialModal.tsx` (z-index 60).
+
+## Prestige System ("Schema Registry")
+- `prestige` state holds `points`, `totalPoints`, `count`, `permanentUpgradeLevels: Record<string, number>`.
+- Prestige requires $1M `totalEarned`; awards `Math.floor(totalEarned / 1_000_000)` points.
+- `performPrestige()` resets all run state while preserving `prestige` and `tutorialsSeen`. Post-reset applies permanent node effects.
+- `showPrestigeTree` (transient, excluded from save) controls full-page tree view.
+
+## Prestige Tree
+- `prestigeUpgradeConfig.ts` defines 16 `PrestigeNode` entries with `key`, `cost`, `requires`, and grid `position`.
+- Radial layout: center Income Boost with 4 arms. `isNodePurchased()` and `isNodeAvailable()` helpers check `permanentUpgradeLevels`.
+- `PrestigeTreePage.tsx` uses same `useViewportApi()` + `ViewportContext.Provider` pattern as `MeshCanvas`.
+
+## Permanent Buff Integration
+- Income multiplier (`income` node) applied in `consumeEvent`.
+- Speed (`speed1/2/3` nodes) applied via `getPermanentSpeedMult()`.
+- Cost reduction (`costRed1/2` nodes) added to selectors in NodeCard, NodeModal, Sidebar.
+- Value boost (`value1/2` nodes) added to `getEventValue()` via `getPermanentValueBoost()`.
+- Shop discount (`shopDiscount` node) applied via `getPermanentShopDiscount()`.
+
+## Misc
+- **Mesh error toast**: `meshError` transient state, red toast in top-left via Framer Motion. Auto-clears after 2.5s.
+- **Sidebar sections**: `CollapsibleSection` wraps Schema Registry, Mesh Upgrades, and Mesh Components.
+- Keep game logic (store, hooks) decoupled from rendering components.
+- All upgrade costs/effects in `upgradeConfig.ts` (per-run) and `prestigeUpgradeConfig.ts` (permanent) — avoid hardcoding in components.
