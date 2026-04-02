@@ -100,7 +100,7 @@ export function NodeCard({ component }: Props) {
   }, [isPublisher, publisherCooldowns[component.id], component.upgrades]);
 
   // Count affordable upgrades
-  const upgrades = getUpgradesForType(component.type).filter(d => !d.hidden);
+  const upgrades = getUpgradesForType(component.type).filter(d => !d.hidden && !(d.key === 'subscriptionBroaden' && !component.subscriptionTopic));
   const affordableUpgradeCount = upgrades.filter(def => {
     const level = component.upgrades[def.key] ?? 0;
     const effectiveMax = def.key === 'dmqBufferSize'

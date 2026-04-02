@@ -126,7 +126,7 @@ export function NodeModal() {
   const node = components.find(c => c.id === selectedNodeId);
   if (!node) return null;
 
-  const upgrades = getUpgradesForType(node.type).filter(d => !d.hidden);
+  const upgrades = getUpgradesForType(node.type).filter(d => !d.hidden && !(d.key === 'subscriptionBroaden' && !node.subscriptionTopic));
   if (upgrades.length === 0) return null;
 
   const zoom = viewport.ref.current.zoom;

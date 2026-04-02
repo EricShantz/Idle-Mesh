@@ -402,9 +402,50 @@ export const useGameStore = create<GameState>()(
           groupedByBroker.get(brokerId)!.push(p);
         }
 
-        // Broker fan-out: always send to all matching queues (true pub/sub behavior)
+        // For each broker group: deduplicate by queue (one path per unique queue).
+        // Queue-level fan-out (Persistent Delivery) is handled at release time in Pass 2,
+        // so the broker only needs to send one dot per queue.
+        // Without fan-out on all queues, pick the queue with most free buffer space.
         for (const [, group] of groupedByBroker) {
-          selectedPaths.push(...group);
+          // Deduplicate: keep one path per unique queue
+          const byQueue = new Map<string, typeof group>();
+          const noQueuePaths: typeof group = [];
+          for (const p of group) {
+            const queueId = p.nodeIds.find(id => state.components.find(c => c.id === id)?.type === 'queue');
+            if (!queueId) { noQueuePaths.push(p); continue; }
+            if (!byQueue.has(queueId)) byQueue.set(queueId, []);
+            byQueue.get(queueId)!.push(p);
+          }
+          selectedPaths.push(...noQueuePaths);
+
+          // One representative path per queue
+          const queuePaths = [...byQueue.values()].map(paths => paths[0]);
+
+          const allHaveFanOut = queuePaths.every(p => {
+            const queueId = p.nodeIds.find(id => state.components.find(c => c.id === id)?.type === 'queue');
+            if (!queueId) return true;
+            const queue = state.components.find(c => c.id === queueId);
+            return queue && (queue.upgrades['fanOut'] ?? 0) > 0;
+          });
+          if (allHaveFanOut) {
+            selectedPaths.push(...queuePaths);
+          } else {
+            // Smart routing: pick queue with most free buffer space
+            let bestPath = queuePaths[0];
+            let bestFree = -1;
+            for (const p of queuePaths) {
+              const queueId = p.nodeIds.find(id => state.components.find(c => c.id === id)?.type === 'queue');
+              if (!queueId) { bestPath = p; break; }
+              const queue = state.components.find(c => c.id === queueId);
+              if (!queue) continue;
+              const bufferCap = 3 + (queue.upgrades['bufferSize'] ?? 0);
+              const queued = state.eventDots.filter(d => d.queuedAtNodeId === queueId).length;
+              const inFlight = state.eventDots.filter(d => d.status === 'traveling' && d.originalNodeIds?.includes(queueId)).length;
+              const free = bufferCap - queued - inFlight;
+              if (free > bestFree) { bestFree = free; bestPath = p; }
+            }
+            selectedPaths.push(bestPath);
+          }
         }
 
         const value = state.getEventValue(publisherId);
@@ -643,7 +684,7 @@ export const useGameStore = create<GameState>()(
         // Slot limit: broker → queue
         if (from.type === 'broker' && to.type === 'queue') {
           const queueConns = state.connections.filter(
-            c => c.fromId === drag.fromId &&
+            c => c.fromId === drag.fromId && c.id !== drag.connectionId &&
               state.components.find(comp => comp.id === c.toId)?.type === 'queue'
           ).length;
           const maxSlots = 1 + (from.upgrades['addQueueSlot'] ?? 0);
@@ -659,7 +700,7 @@ export const useGameStore = create<GameState>()(
         // Slot limit: queue → subscriber
         if (from.type === 'queue' && to.type === 'subscriber') {
           const subConns = state.connections.filter(
-            c => c.fromId === drag.fromId &&
+            c => c.fromId === drag.fromId && c.id !== drag.connectionId &&
               state.components.find(comp => comp.id === c.toId)?.type === 'subscriber'
           ).length;
           const maxSlots = 1 + (from.upgrades['addSubscriberSlot'] ?? 0);
@@ -675,7 +716,7 @@ export const useGameStore = create<GameState>()(
         // Slot limit: broker → broker bridge (starts at 0)
         if (from.type === 'broker' && to.type === 'broker') {
           const bridgeConns = state.connections.filter(
-            c => c.fromId === drag.fromId &&
+            c => c.fromId === drag.fromId && c.id !== drag.connectionId &&
               state.components.find(comp => comp.id === c.toId)?.type === 'broker'
           ).length;
           const maxSlots = from.upgrades['addBridgeSlot'] ?? 0;
@@ -692,7 +733,7 @@ export const useGameStore = create<GameState>()(
 
         // Publisher → single broker limit
         if (from.type === 'publisher') {
-          const existingConns = state.connections.filter(c => c.fromId === drag.fromId).length;
+          const existingConns = state.connections.filter(c => c.fromId === drag.fromId && c.id !== drag.connectionId).length;
           if (existingConns >= 1) {
             set(draft => {
               draft.draggingConnection = null;
