@@ -12,8 +12,8 @@ export const tutorials: TutorialDef[] = [
   {
     key: 'intro',
     slides: [
-      { title: 'Welcome to Idle Mesh!', body: 'Build and scale a distributed event mesh. Click the Publisher to fire events into the system.' },
-      { title: 'Events Flow Through the Mesh', body: 'Events travel through webhooks and brokers toward subscribers. Watch them move along the connection lines.' },
+      { title: 'Welcome to Idle Mesh!', body: 'Build and scale a distributed event mesh. Click the "Publisher" to send events into the system.' },
+      { title: 'Events Flow Through the Mesh', body: 'Events travel publishers to subscribers. Watch them move along the connection lines.' },
       { title: 'Earn Money', body: 'When a subscriber consumes an event, you earn money. The amount depends on your publisher and subscriber upgrade levels.' },
       { title: 'Upgrade & Expand', body: 'Click the ↑ icon on any component to upgrade it. Buy new components from the sidebar shop to grow your mesh.' },
     ],

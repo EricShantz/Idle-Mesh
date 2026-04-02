@@ -106,16 +106,20 @@ Long-term vision for deep progression and endless scaling fantasy.
   - Full constraint validation: publishers → broker/webhook, subscribers from queue/broker, DMQ → broker, etc.
   - Connection slot limits enforced per component type
 
-- [ ] **Schema Registry: Prestige System**
-  - Cost: $1,000,000 per prestige
-  - Earn prestige points based on total money earned that run (e.g., 1 prestige point per $1M earned)
+- [x] **Schema Registry: Prestige System**
+  - Cost: $1,000,000 total earned per prestige
+  - Earn 1 prestige point per $1M earned in current run
   - After prestiging, player reset to fresh mesh with no upgrades/money
-  - **Permanent Upgrade Tree**: spend prestige points on permanent buffs that persist across runs
-    - Permanent global value multiplier (1.1x, 1.2x, 1.5x)
-    - Permanent propagation speed boost
-    - Permanent cost reduction
-    - Permanent auto-publisher unlock
-  - Creates deep progression fantasy and replayability
+  - Auto-navigates to full-page prestige skill tree after reset
+  - **Permanent Upgrade Tree** (16 nodes, radial layout with branching arms):
+    - Center: Income Boost (×1.1 multiplier)
+    - Up branch: Event Speed I/II/III → Batch Start; sub-branch: Quick Consume
+    - Right branch: Auto-Publisher I/II; sub-branch: Quick Publish
+    - Left branch: Discount I/II; sub-branch: Cheaper Components (-15% shop)
+    - Down branch: Value Boost I/II → Queue Head Start; sub-branch: Sub Value Boost
+  - Tree page has pan/zoom (same viewport system as mesh canvas)
+  - "View Skill Tree" button in sidebar after first prestige
+  - Sidebar sections (Schema Registry, Mesh Upgrades, Mesh Components) are collapsible
 
 ---
 
@@ -139,6 +143,8 @@ Long-term vision for deep progression and endless scaling fantasy.
 - [x] Dynamic connection rewiring: click-to-detach, drag-to-connect, output port creation
 - [x] Upgrade value display: current → next (+delta) format on all upgrade cards
 - [x] Tutorial system: intro slides on first load + contextual popups on first component purchase/unlock
+- [x] Prestige system (Schema Registry): full reset with prestige points, 16-node radial skill tree page with pan/zoom, permanent upgrades persist across runs
+- [x] Collapsible sidebar sections: Schema Registry, Mesh Upgrades, Mesh Components
 
 ### ❓ Clarification Needed
 - **Micro-Integrations / Gateways**: What should these do? Examples?
@@ -150,8 +156,8 @@ Long-term vision for deep progression and endless scaling fantasy.
 
 ## Nice-to-Have / Polish
 
-- [ ] Keyboard shortcuts for common actions (click publisher, expand modal)
 - [ ] Replay/undo button for failed topology experiments
-- [ ] Persistent DMQ: events visible across sessions (or reset on new game)
-- [ ] Steam integration: achievements for Solace milestones
 - [x] Tutorial: intro slides + contextual popups on first component unlock
+- [ ] Tutorial: when the prestige option becomes available for the first time display a tutorial modal explaining that they can now prestige
+- [ ] Tutorial: when the user clicks the prestige button for the first time and gets navigated to the prestige upgrade tree view, show a tutorial modal explaining how the permanent upgrade tree works
+- [ ] put upgrades in the right hand side bar into dropdown menus (e.g. a drop down menu for global upgrades, another dropdown for Broker upgrades). Eventually im going to add more content and this will make it easier so the user doesnt have to scroll so much

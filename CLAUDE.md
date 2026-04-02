@@ -30,7 +30,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - **Styling**: Tailwind CSS v4 (`@tailwindcss/vite` plugin)
 - **Animation**: Framer Motion (component transitions) + raw Canvas API (event dot animation on the mesh)
 - **State Management**: Zustand with `immer` middleware
-- **Persistence**: localStorage auto-save with snapshot comparison (only persists when non-transient state changes), 500ms debounce. Excluded from save: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`, `draggingConnection`, `draggingNodeId`, `meshError`, `activeTutorial`. Key: `idle-mesh-save`
+- **Persistence**: localStorage auto-save with snapshot comparison (only persists when non-transient state changes), 500ms debounce. Excluded from save: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`, `draggingConnection`, `draggingNodeId`, `meshError`, `activeTutorial`, `showPrestigeTree`. Key: `idle-mesh-save`
 - **Target Platforms**:
   - Browser (primary)
   - Android via Capacitor
@@ -337,11 +337,14 @@ src/
     EventCanvas.tsx     # HTML5 canvas RAF loop, draws traveling/pausing/dropped dots
     NodeCard.tsx        # Individual node: color, ↑ upgrade icon, upgrade badge, output port, click handlers
     NodeModal.tsx       # Floating upgrade modal anchored to selected node
-    Sidebar.tsx         # Balance, stats, global upgrades, shop
+    Sidebar.tsx         # Balance, stats, collapsible sections (Schema Registry, Mesh Upgrades, Mesh Components)
+    PrestigePanel.tsx   # Prestige stats, "Register Schema" button, confirmation dialog, "View Skill Tree" button
+    PrestigeTreePage.tsx # Full-page prestige skill tree with pan/zoom (uses useViewportApi), SVG lines + node cards
     TutorialModal.tsx   # Centered overlay modal for tutorial slides (intro + component unlocks)
   store/
     gameStore.ts        # All Zustand state + actions, auto-save subscription
     upgradeConfig.ts    # All upgrade defs (cost, multiplier, maxLevel, label, description)
+    prestigeUpgradeConfig.ts # Prestige tree node definitions (16 nodes, positions, costs, parent refs, helpers)
     topicPool.ts        # Predefined topic pool for publisher/queue assignment
     tutorialConfig.ts   # Tutorial slide definitions (intro + per-component tutorials)
   hooks/
@@ -388,5 +391,9 @@ src/
 - **Hidden upgrades**: `UpgradeDef` has optional `hidden?: boolean`. Hidden upgrades are filtered out of `NodeModal` and `NodeCard` badge counts. Used for `topicFilterBoost` until the topic system is implemented. `subscriptionBroaden` is conditionally hidden when the queue has no `subscriptionTopic` (only visible after connecting to a broker).
 - **Topic subscription picker**: `getAvailableTopics(queueId)` in `gameStore.ts` walks broker connections (including bridges) to find all reachable publishers, then generates one entry per publisher broadened to the queue's current `subscriptionBroaden` level. Deduplicates by broadened topic string — at high broaden levels, multiple publishers collapse into the same pattern. `setQueueSubscription(queueId, topic, segments, broadenLevel)` updates the queue's `subscriptionSegments`, `subscriptionTopic`, and `subscriptionBroaden` level atomically. UI lives in `NodeModal.tsx`: the subscription section renders whenever `getAvailableTopics()` returns results (regardless of whether the queue already has a `subscriptionTopic`), showing the current topic if set and a "Change Topic" picker when multiple options exist. Current topic highlighted in amber. Picker state resets on node switch via `key={node.id}` on the modal's motion.div.
 - **Tutorial system**: `tutorialsSeen: Record<string, boolean>` persists which tutorials the player has dismissed. `activeTutorial: string | null` (transient) controls the currently displayed modal. Tutorials trigger automatically: `intro` on first mount via `App.tsx`, `brokerUpgrade` inside `upgradeComponent`, component-type tutorials (`firstQueue`, `firstDmq`, `firstPublisher`, `firstSubscriber`, `firstBroker`) inside `addComponent`. Publisher/subscriber tutorials trigger on the 2nd instance (1st is in starting layout). Tutorial content defined in `tutorialConfig.ts`; UI in `TutorialModal.tsx` (z-index 60, centered overlay with slide navigation).
+- **Prestige system ("Schema Registry")**: `prestige` state in store holds `points`, `totalPoints`, `count`, `permanentUpgradeLevels: Record<string, number>`. Prestige requires $1M `totalEarned`; awards `Math.floor(totalEarned / 1_000_000)` points. `performPrestige()` resets all run state (balance, components, connections, upgrades, globalUpgradeLevels, ID counters) while preserving `prestige` and `tutorialsSeen`. Post-reset applies permanent node effects (auto-pub level, publish speed, batch start, consume speed, subscriber value, queue head start). `showPrestigeTree` (transient, excluded from save) controls full-page tree view.
+- **Prestige tree**: `prestigeUpgradeConfig.ts` defines 16 `PrestigeNode` entries with `key`, `cost`, `requires` (parent key or null for root), and grid `position`. Radial layout: center Income Boost with 4 arms (Speed up, Auto-Pub right, Cost Reduction left, Value down), each arm has sub-branches. Nodes are purchased individually (not multi-level). `isNodePurchased()` and `isNodeAvailable()` helpers check `permanentUpgradeLevels` record. `PrestigeTreePage.tsx` uses the same `useViewportApi()` + `ViewportContext.Provider` pattern as `MeshCanvas` for pan/zoom. SVG lines in a `<g transform>` group, node cards positioned via `worldToScreen()` + CSS `transform: scale(zoom)`.
+- **Permanent buff integration**: Income multiplier (`income` node) applied in `consumeEvent`. Speed (`speed1/2/3` nodes) applied at 3 propagation speed callsites via `getPermanentSpeedMult()`. Cost reduction (`costRed1/2` nodes) added to selectors in NodeCard, NodeModal, Sidebar. Value boost (`value1/2` nodes) added to `getEventValue()` via `getPermanentValueBoost()`. Shop discount (`shopDiscount` node) applied to component costs in Sidebar via `getPermanentShopDiscount()`.
+- **Sidebar sections**: `CollapsibleSection` component wraps Schema Registry, Mesh Upgrades (renamed from Global Upgrades), and Mesh Components (renamed from Shop) with clickable toggle headers.
 - Keep game logic (store, hooks) decoupled from rendering components.
-- All upgrade costs/effects in `upgradeConfig.ts` — avoid hardcoding in components.
+- All upgrade costs/effects in `upgradeConfig.ts` (per-run) and `prestigeUpgradeConfig.ts` (permanent) — avoid hardcoding in components.

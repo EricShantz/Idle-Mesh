@@ -6,6 +6,7 @@ import { getNextTopic } from './topicPool';
 import { topicMatches, computeBroadenedTopic } from '../utils/topicMatching';
 import { normalizedSpeed } from '../utils/pathUtils';
 import { getSmoothedFps } from '../hooks/useGameLoop';
+import { prestigeNodes, isNodeAvailable, isNodePurchased, type PrestigeNode } from './prestigeUpgradeConfig';
 
 export type ComponentType = 'publisher' | 'webhook' | 'broker' | 'queue' | 'subscriber' | 'dmq';
 
@@ -77,6 +78,13 @@ export type GameState = {
 
   globalUpgradeLevels: Record<string, number>;
 
+  prestige: {
+    points: number;
+    totalPoints: number;
+    count: number;
+    permanentUpgradeLevels: Record<string, number>;
+  };
+
   tutorialsSeen: Record<string, boolean>;
   activeTutorial: string | null;
 
@@ -89,6 +97,7 @@ export type GameState = {
   } | null;
 
   draggingNodeId: string | null;
+  showPrestigeTree: boolean;
 
   // Actions
   fireEvent: (publisherId: string, skipCooldown?: boolean) => void;
@@ -122,7 +131,36 @@ export type GameState = {
   setQueueSubscription: (queueId: string, topic: string, segments: string[], broadenLevel: number) => void;
   showTutorial: (key: string) => void;
   dismissTutorial: (key: string) => void;
+  performPrestige: () => boolean;
+  purchasePrestigeUpgrade: (upgradeKey: string) => boolean;
+  setShowPrestigeTree: (show: boolean) => void;
 };
+
+// Permanent prestige speed multiplier (count of purchased speed nodes)
+function getPermanentSpeedMult(state: Pick<GameState, 'prestige'>): number {
+  const p = state.prestige.permanentUpgradeLevels;
+  const speedNodes = ['speed1', 'speed2', 'speed3'].filter(k => (p[k] ?? 0) > 0).length;
+  return 1 + speedNodes * 0.15;
+}
+
+// Permanent prestige cost reduction (count of purchased cost reduction nodes)
+function getPermanentCostReduction(state: Pick<GameState, 'prestige'>): number {
+  const p = state.prestige.permanentUpgradeLevels;
+  const costNodes = ['costRed1', 'costRed2'].filter(k => (p[k] ?? 0) > 0).length;
+  return costNodes * 0.05;
+}
+
+// Permanent shop discount
+export function getPermanentShopDiscount(state: Pick<GameState, 'prestige'>): number {
+  return (state.prestige.permanentUpgradeLevels['shopDiscount'] ?? 0) > 0 ? 0.15 : 0;
+}
+
+// Permanent value boost (count of purchased value nodes × $0.50)
+export function getPermanentValueBoost(state: Pick<GameState, 'prestige'>): number {
+  const p = state.prestige.permanentUpgradeLevels;
+  const valueNodes = ['value1', 'value2'].filter(k => (p[k] ?? 0) > 0).length;
+  return valueNodes * 0.50;
+}
 
 let dotIdCounter = 0;
 const coinPopTracking: Record<string, { count: number; windowStart: number; pendingAmount: number }> = {};
@@ -233,7 +271,7 @@ export const useGameStore = create<GameState>()(
 
     return {
       balance: saved?.balance ?? 999999999999,
-      totalEarned: saved?.totalEarned ?? 0,
+      totalEarned: saved?.totalEarned ?? 1000000,
       eventsConsumed: saved?.eventsConsumed ?? 0,
       eventsDropped: saved?.eventsDropped ?? 0,
 
@@ -274,6 +312,9 @@ export const useGameStore = create<GameState>()(
       publisherCooldowns: {},
       draggingConnection: null,
       draggingNodeId: null,
+      showPrestigeTree: false,
+
+      prestige: saved?.prestige ?? { points: 0, totalPoints: 0, count: 0, permanentUpgradeLevels: {} },
 
       tutorialsSeen: saved?.tutorialsSeen ?? {},
       activeTutorial: null,
@@ -313,7 +354,7 @@ export const useGameStore = create<GameState>()(
           }
           truncatedWaypoints.push(nodePath[1]);
           const value = state.getEventValue(publisherId);
-          const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, truncatedWaypoints);
+          const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state), truncatedWaypoints);
           set(draft => {
             if (!skipCooldown) {
               draft.publisherCooldowns[publisherId] = Date.now();
@@ -342,12 +383,12 @@ export const useGameStore = create<GameState>()(
         const pubTopic = pub.topic;
         const validPaths = pubTopic
           ? allValidPaths.filter(p => {
-              const queueId = p.nodeIds.find(id =>
-                state.components.find(c => c.id === id)?.type === 'queue');
-              if (!queueId) return true; // no queue in path, allow
-              const queue = state.components.find(c => c.id === queueId);
-              return !queue?.subscriptionTopic || topicMatches(pubTopic, queue.subscriptionTopic);
-            })
+            const queueId = p.nodeIds.find(id =>
+              state.components.find(c => c.id === id)?.type === 'queue');
+            if (!queueId) return true; // no queue in path, allow
+            const queue = state.components.find(c => c.id === queueId);
+            return !queue?.subscriptionTopic || topicMatches(pubTopic, queue.subscriptionTopic);
+          })
           : allValidPaths;
         if (validPaths.length === 0) {
           // No matching queues — create a dot that travels to the broker and drops there
@@ -370,7 +411,7 @@ export const useGameStore = create<GameState>()(
               const truncatedNodeIds = anyPath.nodeIds.slice(0, brokerIdx + 1);
 
               const value = state.getEventValue(publisherId);
-              const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, truncatedWaypoints);
+              const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state), truncatedWaypoints);
               set(draft => {
                 if (!skipCooldown) {
                   draft.publisherCooldowns[publisherId] = Date.now();
@@ -463,7 +504,7 @@ export const useGameStore = create<GameState>()(
         }
 
         const value = state.getEventValue(publisherId);
-        const baseSpeed = 0.0007 * state.upgrades.propagationSpeed;
+        const baseSpeed = 0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state);
 
         // Group selected paths by their first broker so we create one dot per broker fork point
         const forkGroups = new Map<string, typeof selectedPaths>();
@@ -506,7 +547,9 @@ export const useGameStore = create<GameState>()(
 
       consumeEvent: (_dotId: string, value: number, subscriberId: string) => {
         set(draft => {
-          const earned = value * draft.upgrades.globalValueMultiplier;
+          const hasIncome = (draft.prestige.permanentUpgradeLevels['income'] ?? 0) > 0;
+          const permMult = hasIncome ? 1.1 : 1.0;
+          const earned = value * draft.upgrades.globalValueMultiplier * permMult;
           draft.balance += earned;
           draft.totalEarned += earned;
           draft.eventsConsumed += 1;
@@ -1000,7 +1043,7 @@ export const useGameStore = create<GameState>()(
           const nextConns = state.connections.filter(c => c.fromId === nodeId);
           const reverseBridgeConns = node.type === 'broker'
             ? state.connections.filter(c => c.toId === nodeId &&
-                state.components.find(comp => comp.id === c.fromId)?.type === 'broker')
+              state.components.find(comp => comp.id === c.fromId)?.type === 'broker')
             : [];
           const allNext = [
             ...nextConns.map(c => c.toId),
@@ -1058,7 +1101,130 @@ export const useGameStore = create<GameState>()(
         const pub = state.components.find(c => c.id === publisherId);
         if (!pub) return 0.5;
         const valueLevel = pub.upgrades['eventValue'] ?? 0;
-        return 0.5 + valueLevel * 0.45 + valueLevel * valueLevel * 0.05;
+        return 0.5 + valueLevel * 0.45 + valueLevel * valueLevel * 0.05 + getPermanentValueBoost(state);
+      },
+
+      performPrestige: () => {
+        const state = get();
+        if (state.totalEarned < 1_000_000) return false;
+
+        const pointsEarned = Math.floor(state.totalEarned / 1_000_000);
+
+        set(draft => {
+          // Award prestige points
+          draft.prestige.points += pointsEarned;
+          draft.prestige.totalPoints += pointsEarned;
+          draft.prestige.count += 1;
+
+          // Reset run state
+          draft.balance = 0;
+          draft.totalEarned = 0;
+          draft.eventsConsumed = 0;
+          draft.eventsDropped = 0;
+          draft.components = createInitialComponents();
+          draft.connections = createInitialConnections();
+          draft.eventDots = [];
+          draft.upgrades = {
+            propagationSpeed: 1.0,
+            costReduction: 0,
+            batchFire: 0,
+            globalValueMultiplier: 1.0,
+          };
+          draft.globalUpgradeLevels = {};
+          draft.recentEarnings = [];
+          draft.coinPops = [];
+          draft.selectedNodeId = null;
+          draft.meshError = null;
+          draft.publisherCooldowns = {};
+          draft.draggingConnection = null;
+          draft.draggingNodeId = null;
+          draft.activeTutorial = null;
+
+          // Apply permanent node effects
+          const p = draft.prestige.permanentUpgradeLevels;
+
+          // Auto-publisher + publish speed
+          const pub = draft.components.find(c => c.type === 'publisher');
+          if (pub) {
+            if ((p['autoPub2'] ?? 0) > 0) pub.upgrades['autoPub'] = 2;
+            else if ((p['autoPub1'] ?? 0) > 0) pub.upgrades['autoPub'] = 1;
+            if ((p['pubSpeed'] ?? 0) > 0) pub.upgrades['publishSpeed'] = 1;
+          }
+
+          // Batch start
+          if ((p['batchStart'] ?? 0) > 0) {
+            draft.upgrades.batchFire = 2; // level 1 = 2 events/click
+            draft.globalUpgradeLevels['batchFire'] = 1;
+          }
+
+          // Faster consumption head start
+          if ((p['consumeSpeed'] ?? 0) > 0) {
+            const sub = draft.components.find(c => c.type === 'subscriber');
+            if (sub) sub.upgrades['fasterConsumption'] = 1;
+          }
+
+          // Subscriber value head start
+          if ((p['subValue'] ?? 0) > 0) {
+            const sub = draft.components.find(c => c.type === 'subscriber');
+            if (sub) sub.upgrades['consumptionValue'] = 1;
+          }
+
+          // Queue head start — add a free queue connected to the webhook/broker
+          if ((p['queueStart'] ?? 0) > 0) {
+            const broker = draft.components.find(c => c.type === 'broker' || c.type === 'webhook');
+            if (broker) {
+              const qx = Math.round(broker.x + 150);
+              const qy = 300 + 140;
+              draft.components.push({
+                id: 'comp-10',
+                type: 'queue',
+                x: qx,
+                y: qy,
+                label: 'Queue',
+                tags: {},
+                upgrades: {},
+              });
+              draft.connections.push({
+                id: 'conn-10',
+                fromId: broker.id,
+                toId: 'comp-10',
+              });
+              componentIdCounter = 11;
+              connectionIdCounter = 11;
+            }
+          }
+
+          // Show prestige tree
+          draft.showPrestigeTree = true;
+        });
+
+        // Reset ID counters (unless queueStart bumped them)
+        if (!((get().prestige.permanentUpgradeLevels['queueStart'] ?? 0) > 0)) {
+          componentIdCounter = 10;
+          connectionIdCounter = 10;
+        }
+        dotIdCounter = 0;
+
+        return true;
+      },
+
+      purchasePrestigeUpgrade: (upgradeKey: string) => {
+        const state = get();
+        const node = prestigeNodes.find((n: PrestigeNode) => n.key === upgradeKey);
+        if (!node) return false;
+        if (isNodePurchased(node.key, state.prestige.permanentUpgradeLevels)) return false;
+        if (!isNodeAvailable(node, state.prestige.permanentUpgradeLevels)) return false;
+        if (state.prestige.points < node.cost) return false;
+
+        set(draft => {
+          draft.prestige.points -= node.cost;
+          draft.prestige.permanentUpgradeLevels[upgradeKey] = 1;
+        });
+        return true;
+      },
+
+      setShowPrestigeTree: (show: boolean) => {
+        set(draft => { draft.showPrestigeTree = show; });
       },
     };
   })
@@ -1069,7 +1235,7 @@ let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 let lastSaveSnapshot = '';
 useGameStore.subscribe((state) => {
   // Build save data
-  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, activeTutorial: ________, ...toSave } = state;
+  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, activeTutorial: ________, showPrestigeTree: _________, ...toSave } = state;
   const data: Record<string, any> = {};
   for (const [key, val] of Object.entries(toSave)) {
     if (typeof val !== 'function') {

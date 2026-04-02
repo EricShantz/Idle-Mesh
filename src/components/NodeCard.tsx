@@ -47,7 +47,11 @@ export function NodeCard({ component }: Props) {
   const selectNode = useGameStore(s => s.selectNode);
   const selectedNodeId = useGameStore(s => s.selectedNodeId);
   const balance = useGameStore(s => s.balance);
-  const costReduction = useGameStore(s => s.upgrades.costReduction);
+  const costReduction = useGameStore(s => {
+    const p = s.prestige.permanentUpgradeLevels;
+    const permCost = (['costRed1', 'costRed2'] as const).filter(k => (p[k] ?? 0) > 0).length * 0.05;
+    return s.upgrades.costReduction + permCost;
+  });
   const moveComponent = useGameStore(s => s.moveComponent);
   const eventDots = useGameStore(s => s.eventDots);
   const draggingConnection = useGameStore(s => s.draggingConnection);

@@ -117,7 +117,11 @@ export function NodeModal() {
   const selectedNodeId = useGameStore(s => s.selectedNodeId);
   const components = useGameStore(s => s.components);
   const balance = useGameStore(s => s.balance);
-  const costReduction = useGameStore(s => s.upgrades.costReduction);
+  const costReduction = useGameStore(s => {
+    const p = s.prestige.permanentUpgradeLevels;
+    const permCost = (['costRed1', 'costRed2'] as const).filter(k => (p[k] ?? 0) > 0).length * 0.05;
+    return s.upgrades.costReduction + permCost;
+  });
   const spend = useGameStore(s => s.spend);
   const upgradeComponent = useGameStore(s => s.upgradeComponent);
   const selectNode = useGameStore(s => s.selectNode);

@@ -1,6 +1,24 @@
-import { useGameStore } from '../store/gameStore';
+import { useState } from 'react';
+import { useGameStore, getPermanentShopDiscount } from '../store/gameStore';
 import { globalUpgrades, getUpgradeCost } from '../store/upgradeConfig';
 import { formatMoney } from '../utils/formatMoney';
+import { PrestigePanel } from './PrestigePanel';
+
+function CollapsibleSection({ title, defaultOpen = true, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="border-t border-gray-800 pt-3">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center justify-between w-full text-gray-500 text-xs uppercase tracking-wider mb-2 cursor-pointer hover:text-gray-400 transition-colors"
+      >
+        <span>{title}</span>
+        <span className="text-[10px]">{open ? '\u25B2' : '\u25BC'}</span>
+      </button>
+      {open && children}
+    </div>
+  );
+}
 
 const QUEUE_COST = 60;
 const DMQ_COST = 80;
@@ -41,6 +59,8 @@ export function Sidebar() {
   const recentEarnings = useGameStore(s => s.recentEarnings);
   const components = useGameStore(s => s.components);
   const upgrades = useGameStore(s => s.upgrades);
+  const prestige = useGameStore(s => s.prestige);
+  const effectiveCostReduction = upgrades.costReduction + (['costRed1', 'costRed2'] as const).filter(k => (prestige.permanentUpgradeLevels[k] ?? 0) > 0).length * 0.05;
   const globalUpgradeLevels = useGameStore(s => s.globalUpgradeLevels);
   const spend = useGameStore(s => s.spend);
   const purchaseGlobalUpgrade = useGameStore(s => s.purchaseGlobalUpgrade);
@@ -63,7 +83,7 @@ export function Sidebar() {
   const handleBuyQueue = () => {
     const broker = components.find(c => c.type === 'broker');
     if (!broker) return;
-    if (!spend(QUEUE_COST)) return;
+    if (!spend(queueCost)) return;
 
     // Place queue below existing components, stacked vertically
     const queueCount = components.filter(c => c.type === 'queue').length;
@@ -73,25 +93,27 @@ export function Sidebar() {
     addComponent('queue', qx, qy, 'Queue');
   };
 
+  const shopDiscount = 1 - getPermanentShopDiscount({ prestige });
   const hasBroker = components.some(c => c.type === 'broker');
   const hasQueue = components.some(c => c.type === 'queue');
   const hasDmq = components.some(c => c.type === 'dmq');
-  const canAffordQueue = balance >= QUEUE_COST;
-  const canAffordDmq = balance >= DMQ_COST;
-
+  const queueCost = Math.floor(QUEUE_COST * shopDiscount);
+  const dmqCost = Math.floor(DMQ_COST * shopDiscount);
+  const canAffordQueue = balance >= queueCost;
+  const canAffordDmq = balance >= dmqCost;
   const pubCount = components.filter(c => c.type === 'publisher').length;
   const subCount = components.filter(c => c.type === 'subscriber').length;
   const brokerCount = components.filter(c => c.type === 'broker').length;
-  const publisherCost = Math.floor(PUBLISHER_BASE_COST * Math.pow(1.5, pubCount - 1));
-  const subscriberCost = Math.floor(SUBSCRIBER_BASE_COST * Math.pow(1.5, subCount - 1));
-  const brokerCost = Math.floor(BROKER_BASE_COST * Math.pow(2, brokerCount - 1));
+  const publisherCost = Math.floor(PUBLISHER_BASE_COST * Math.pow(1.5, pubCount - 1) * shopDiscount);
+  const subscriberCost = Math.floor(SUBSCRIBER_BASE_COST * Math.pow(1.5, subCount - 1) * shopDiscount);
+  const brokerCost = Math.floor(BROKER_BASE_COST * Math.pow(2, brokerCount - 1) * shopDiscount);
   const canAffordPublisher = balance >= publisherCost;
   const canAffordSubscriber = balance >= subscriberCost;
   const canAffordBroker = balance >= brokerCost;
 
   const handleBuyDmq = () => {
     if (hasDmq) return;
-    if (!spend(DMQ_COST)) return;
+    if (!spend(dmqCost)) return;
     const broker = components.find(c => c.type === 'broker');
     const dmqX = broker ? broker.x : 450;
     const dmqY = 550;
@@ -154,14 +176,20 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Global Upgrades */}
-      <div className="border-t border-gray-800 pt-3">
-        <div className="text-gray-500 text-xs uppercase tracking-wider mb-2">Global Upgrades</div>
+      {/* Prestige — Schema Registry */}
+      {(totalEarned >= 1_000_000 || prestige.count > 0) && (
+        <CollapsibleSection title="Schema Registry" defaultOpen={true}>
+          <PrestigePanel />
+        </CollapsibleSection>
+      )}
+
+      {/* Mesh Upgrades */}
+      <CollapsibleSection title="Mesh Upgrades" defaultOpen={true}>
         <div className="flex flex-col gap-1.5">
           {globalUpgrades.map(u => {
             const level = globalUpgradeLevels[u.key] ?? 0;
             const maxed = u.maxLevel != null && level >= u.maxLevel;
-            const cost = getUpgradeCost(u, level, upgrades.costReduction);
+            const cost = getUpgradeCost(u, level, effectiveCostReduction);
             const canAfford = balance >= cost;
 
             return (
@@ -194,11 +222,10 @@ export function Sidebar() {
             );
           })}
         </div>
-      </div>
-      {/* Shop */}
+      </CollapsibleSection>
+      {/* Mesh Components */}
       {hasBroker && (
-        <div className="border-t border-gray-800 pt-3">
-          <div className="text-gray-500 text-xs uppercase tracking-wider mb-2">Shop</div>
+        <CollapsibleSection title="Mesh Components" defaultOpen={true}>
           <div className="flex flex-col gap-1.5">
             <button
               onClick={handleBuyQueue}
@@ -212,7 +239,7 @@ export function Sidebar() {
             >
               <div className="font-bold">Buy Queue</div>
               <div className="opacity-60">Buffers events. Drag connections to wire it up.</div>
-              <div className="mt-0.5 font-mono">{formatMoney(QUEUE_COST)}</div>
+              <div className="mt-0.5 font-mono">{formatMoney(queueCost)}</div>
             </button>
             {!hasDmq && (
               <button
@@ -227,7 +254,7 @@ export function Sidebar() {
               >
                 <div className="font-bold">Buy Dead Message Queue</div>
                 <div className="opacity-60">Catches dropped events and retries them through the broker.</div>
-                <div className="mt-0.5 font-mono">{formatMoney(DMQ_COST)}</div>
+                <div className="mt-0.5 font-mono">{formatMoney(dmqCost)}</div>
               </button>
             )}
             <button
@@ -275,7 +302,7 @@ export function Sidebar() {
               <div className="mt-0.5 font-mono">{formatMoney(brokerCost)}</div>
             </button>
           </div>
-        </div>
+        </CollapsibleSection>
       )}
     </div>
   );
