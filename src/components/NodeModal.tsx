@@ -185,15 +185,19 @@ export function NodeModal() {
             x
           </button>
         </div>
-        {node.type === 'queue' && node.subscriptionTopic && (
+        {node.type === 'queue' && (() => {
+          const topics = getAvailableTopics(node.id);
+          if (topics.length === 0) return null;
+          return (
           <div className="mb-2">
             <div className="text-[10px] text-gray-400 mb-0.5">Subscription</div>
+            {node.subscriptionTopic && (
             <div className="text-xs font-mono text-amber-300 truncate" title={node.subscriptionTopic}>
               {node.subscriptionTopic}
             </div>
+            )}
             {(() => {
-              const topics = getAvailableTopics(node.id);
-              if (topics.length <= 1) return null;
+              if (topics.length <= 1 && node.subscriptionTopic) return null;
               return topicPickerOpen ? (
                 <div className="mt-1 flex flex-col gap-0.5 max-h-32 overflow-y-auto">
                   {topics.map(t => (
@@ -226,7 +230,8 @@ export function NodeModal() {
               );
             })()}
           </div>
-        )}
+          );
+        })()}
         <div className="flex flex-col gap-1.5">
           {upgrades.map(def => {
             const level = node.upgrades[def.key] ?? 0;

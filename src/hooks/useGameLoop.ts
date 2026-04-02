@@ -66,7 +66,12 @@ function rebuildPathFromNodeIds(
         path.push({ x: a.x, y: midY });
         path.push({ x: b.x, y: midY });
       } else {
-        const midX = (a.x + b.x) / 2;
+        // Match port-adjusted midX from ConnectionLine.tsx
+        const aHalfW = a.type === 'queue' ? 70 : 60;
+        const bHalfW = b.type === 'queue' ? 70 : 60;
+        const portStartX = a.x + aHalfW + 24;
+        const portEndX = b.x - bHalfW - 2;
+        const midX = (portStartX + portEndX) / 2;
         path.push({ x: midX, y: a.y });
         path.push({ x: midX, y: b.y });
       }
@@ -607,7 +612,9 @@ export function useGameLoop() {
 
                 const extension: { x: number; y: number }[] = [];
                 if (Math.abs(queue.y - subTarget.y) >= 1) {
-                  const midX = (queue.x + subTarget.x) / 2;
+                  const qHalfW = 70; // queues always 70
+                  const sHalfW = 60; // subscribers always 60
+                  const midX = (queue.x + qHalfW + 24 + subTarget.x - sHalfW - 2) / 2;
                   extension.push({ x: midX, y: queue.y });
                   extension.push({ x: midX, y: subTarget.y });
                 }
@@ -694,23 +701,25 @@ export function useGameLoop() {
                 const nodeIdsFromBroker = brokerIdx >= 0 ? origNodeIds.slice(brokerIdx) : [brokerTarget.id];
 
                 // Build fresh waypoints from current positions: broker → ... → subscriber
-                const nodeCenters: { x: number; y: number }[] = [];
+                const routeNodes: { x: number; y: number; type: string }[] = [];
                 for (const nid of nodeIdsFromBroker) {
                   const comp = state.components.find(c => c.id === nid);
-                  if (comp) nodeCenters.push({ x: comp.x, y: comp.y });
+                  if (comp) routeNodes.push({ x: comp.x, y: comp.y, type: comp.type });
                 }
 
                 // Expand to orthogonal waypoints
-                const pathFromBroker: { x: number; y: number }[] = nodeCenters.length > 0 ? [nodeCenters[0]] : [];
-                for (let ni = 0; ni < nodeCenters.length - 1; ni++) {
-                  const a = nodeCenters[ni];
-                  const b = nodeCenters[ni + 1];
+                const pathFromBroker: { x: number; y: number }[] = routeNodes.length > 0 ? [{ x: routeNodes[0].x, y: routeNodes[0].y }] : [];
+                for (let ni = 0; ni < routeNodes.length - 1; ni++) {
+                  const a = routeNodes[ni];
+                  const b = routeNodes[ni + 1];
                   if (Math.abs(a.y - b.y) >= 1) {
-                    const midX = (a.x + b.x) / 2;
+                    const aHalfW = a.type === 'queue' ? 70 : 60;
+                    const bHalfW = b.type === 'queue' ? 70 : 60;
+                    const midX = (a.x + aHalfW + 24 + b.x - bHalfW - 2) / 2;
                     pathFromBroker.push({ x: midX, y: a.y });
                     pathFromBroker.push({ x: midX, y: b.y });
                   }
-                  pathFromBroker.push(b);
+                  pathFromBroker.push({ x: b.x, y: b.y });
                 }
 
                 // Build DMQ → broker path (vertical first)

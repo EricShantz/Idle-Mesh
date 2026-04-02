@@ -297,7 +297,9 @@ export const useGameStore = create<GameState>()(
           const nodePath = [{ x: pub.x, y: pub.y }, { x: target.x, y: target.y }];
           const truncatedWaypoints: { x: number; y: number }[] = [nodePath[0]];
           if (Math.abs(nodePath[0].y - nodePath[1].y) >= 1) {
-            const midX = (nodePath[0].x + nodePath[1].x) / 2;
+            const pubHalfW = pub.type === 'queue' ? 70 : 60;
+            const tgtHalfW = target.type === 'queue' ? 70 : 60;
+            const midX = (pub.x + pubHalfW + 24 + target.x - tgtHalfW - 2) / 2;
             truncatedWaypoints.push({ x: midX, y: nodePath[0].y });
             truncatedWaypoints.push({ x: midX, y: nodePath[1].y });
           }
@@ -796,9 +798,9 @@ export const useGameStore = create<GameState>()(
                 if (visited.has(brokerId)) return undefined;
                 visited.add(brokerId);
                 // Check direct publisher connections
-                const pubConn = draft.connections.find(c => c.toId === brokerId);
-                if (pubConn) {
-                  const pub = draft.components.find(c => c.id === pubConn.fromId && c.type === 'publisher');
+                for (const conn of draft.connections) {
+                  if (conn.toId !== brokerId) continue;
+                  const pub = draft.components.find(c => c.id === conn.fromId && c.type === 'publisher');
                   if (pub?.topic) return pub;
                 }
                 // Check bridged brokers
@@ -978,6 +980,7 @@ export const useGameStore = create<GameState>()(
         walk(publisherId, [], [], new Set());
 
         // Expand node-center paths into orthogonal waypoints
+        // Use port-adjusted midX to match SVG connection line rendering
         return results.map(({ waypoints: nodePath, nodeIds }) => {
           if (nodePath.length < 2) return { waypoints: nodePath, nodeIds };
           const expanded: { x: number; y: number }[] = [nodePath[0]];
@@ -985,7 +988,16 @@ export const useGameStore = create<GameState>()(
             const a = nodePath[i];
             const b = nodePath[i + 1];
             if (Math.abs(a.y - b.y) >= 1) {
-              const midX = (a.x + b.x) / 2;
+              // Match ConnectionLine.tsx port positions:
+              // startX = from.x + fromHalfW + 16 (port center) + 8 (port radius)
+              // endX = to.x - toHalfW - 2
+              const aNode = state.components.find(c => c.id === nodeIds[i]);
+              const bNode = state.components.find(c => c.id === nodeIds[i + 1]);
+              const aHalfW = aNode?.type === 'queue' ? 70 : 60;
+              const bHalfW = bNode?.type === 'queue' ? 70 : 60;
+              const portStartX = a.x + aHalfW + 24; // port right edge
+              const portEndX = b.x - bHalfW - 2;    // target left edge
+              const midX = (portStartX + portEndX) / 2;
               expanded.push({ x: midX, y: a.y });
               expanded.push({ x: midX, y: b.y });
             }
