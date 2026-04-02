@@ -90,6 +90,8 @@
 - `tutorialsSeen: Record<string, boolean>` persists which tutorials dismissed. `activeTutorial: string | null` (transient).
 - Triggers: `intro` on first mount via `App.tsx`, `brokerUpgrade` inside `upgradeComponent`, component-type tutorials inside `addComponent`. Publisher/subscriber tutorials trigger on 2nd instance.
 - Content in `tutorialConfig.ts`; UI in `TutorialModal.tsx` (z-index 60).
+- `TutorialSlide` has an optional `graphic?: ComponentType` field. When present, `TutorialModal` renders the graphic between the slide title and body text.
+- Animated graphics live in `TutorialGraphics.tsx` — one SVG component per slide context (publisher, events flow, earn money, upgrade/expand, broker upgrade, queue, DMQ, multi-publisher, multi-subscriber, multi-broker). Each uses Framer Motion `motion.circle`/`motion.text`/`motion.rect` for traveling dots and highlights. Color tokens match the game's `typeColors` palette.
 
 ## Prestige System ("Schema Registry")
 - `prestige` state holds `points`, `totalPoints`, `count`, `permanentUpgradeLevels: Record<string, number>`.

@@ -24,12 +24,13 @@ src/
     PrestigePanel.tsx   # Prestige stats, "Register Schema" button, confirmation dialog
     PrestigeTreePage.tsx # Full-page prestige skill tree with pan/zoom
     TutorialModal.tsx   # Centered overlay modal for tutorial slides
+    TutorialGraphics.tsx # Animated SVG graphics for each tutorial slide (Framer Motion)
   store/
     gameStore.ts        # All Zustand state + actions, auto-save subscription
     upgradeConfig.ts    # All upgrade defs (cost, multiplier, maxLevel, label, description)
     prestigeUpgradeConfig.ts # Prestige tree node definitions (16 nodes)
     topicPool.ts        # Predefined topic pool for publisher/queue assignment
-    tutorialConfig.ts   # Tutorial slide definitions
+    tutorialConfig.ts   # Tutorial slide definitions (title, body, optional graphic component)
   hooks/
     useGameLoop.ts      # RAF game loop (dot movement, webhook slowdown, consume/drop logic) + useAutoPublisher
     useViewport.ts      # Pan/zoom viewport: context, ref-based state, screenToWorld/worldToScreen helpers

@@ -38,7 +38,12 @@ export function TutorialModal() {
           style={{ background: '#111827', maxWidth: 420, width: '90%' }}
           onClick={e => e.stopPropagation()}
         >
-          <h2 className="text-lg font-bold text-white mb-2">{slide.title}</h2>
+          <h2 className="text-lg font-bold text-white mb-3">{slide.title}</h2>
+          {slide.graphic && (
+            <div className="mb-3 rounded-lg overflow-hidden">
+              <slide.graphic />
+            </div>
+          )}
           <p className="text-sm text-gray-300 leading-relaxed mb-5">{slide.body}</p>
 
           <div className="flex items-center justify-between">
