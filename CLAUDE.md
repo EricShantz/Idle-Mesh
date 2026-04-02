@@ -149,7 +149,9 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - Same position as the webhook it replaced; label and color change on purchase
 - Unlocks the **Queue shop item** in the sidebar
 - **Queue slot limit**: broker starts with 1 queue connection slot, +1 per `addQueueSlot` upgrade level. Connection validation enforces this — excess connections are rejected with a mesh error toast.
-- Upgrades: Add Queue Slot (**functional**), Add Bridge Slot (**functional**), Topic Filter Boost (hidden in UI — effect not yet defined)
+- **Throughput cap (ingestion-only)**: each broker can ingest a limited number of events/sec from publishers. Base cap = 8 events/sec, increased by `increaseThroughput` upgrade (accelerating: `8 + level*(level+9)/2`). The cap only applies at the **first broker** a dot encounters (the publisher's directly-connected broker). Events relayed through bridges to downstream brokers do **not** count against those brokers' caps. Fan-out fork dots spawned at the ingestion broker DO count. When over capacity, events drop at the broker (gravity fall, catchable by DMQ). Tracked via a rolling 1-second window of `performance.now()` timestamps per broker in module-level state in `useGameLoop.ts` (not persisted).
+- **Throughput bar**: thin horizontal bar inside the broker node showing current utilization. Green → yellow (>70%) → red (>90%). Driven by `getBrokerUtilization()` exported from `useGameLoop.ts`.
+- Upgrades: Add Queue Slot (**functional**), Add Bridge Slot (**functional**), Increase Throughput (**functional**), Topic Filter Boost (hidden in UI — effect not yet defined)
 
 ### Queue
 - Purchased from the sidebar shop for $60 (requires broker)
@@ -264,6 +266,7 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 |---|---|---|---|
 | Add Queue Slot | **Functional**: max queue connections = 1 + level | $40 | ×2 |
 | Add Bridge Slot | **Functional**: max broker-to-broker connections = 0 + level | $80 | ×2.5 |
+| Increase Throughput | **Functional**: raises ingestion cap = `8 + level*(level+9)/2` events/sec. Ingestion-only — bridged events don't count. | $100 | ×2.2 |
 | Topic Filter Boost | Hidden in UI (effect not yet defined) | $60 | ×2 |
 
 ### Queue

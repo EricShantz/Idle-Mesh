@@ -69,6 +69,13 @@ export const brokerUpgrades: UpgradeDef[] = [
     costMultiplier: 2.5,
   },
   {
+    key: 'increaseThroughput',
+    label: 'Increase Throughput',
+    description: 'Raises the max events/sec this broker can relay',
+    baseCost: 100,
+    costMultiplier: 2.2,
+  },
+  {
     key: 'topicFilterBoost',
     label: 'Topic Filter Boost',
     description: 'Routes events to more subscriber queues',

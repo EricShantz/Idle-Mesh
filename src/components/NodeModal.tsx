@@ -95,6 +95,13 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number): strin
     case 'addBridgeSlot':
       return `${currentLevel} → ${nextLevel} bridge slots`;
 
+    // Broker throughput cap
+    case 'increaseThroughput': {
+      const curBonus = currentLevel * (currentLevel + 9) / 2;
+      const nxtBonus = nextLevel * (nextLevel + 9) / 2;
+      return `${8 + curBonus} → ${8 + nxtBonus} events/sec`;
+    }
+
     // One-time upgrades (no progression display)
     case 'upgradeToBroker':
     case 'fanOut':
@@ -248,6 +255,7 @@ export function NodeModal() {
                     {def.label}
                     {['fasterConsumption', 'publishSpeed', 'dmqReleaseSpeed'].includes(def.key) && level > 0 && ` (${level * (level + 9) / 2}%)`}
                     {['eventValue', 'consumptionValue'].includes(def.key) && level > 0 && ` ($${(0.5 + level * 0.45 + level * level * 0.05).toFixed(2)})`}
+                    {def.key === 'increaseThroughput' && ` (${8 + level * (level + 9) / 2}/sec)`}
                   </span>
                   {!maxed && <span className="text-[10px] opacity-50">Lv {level}</span>}
                 </div>

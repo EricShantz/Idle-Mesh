@@ -10,6 +10,36 @@ const NODE_BOTTOM_OFFSET = 28; // from center to bottom edge (generous to cover 
 
 const DOT_RADIUS = 6;
 
+const BROKER_BASE_THROUGHPUT = 8; // events/sec
+
+/** Rolling window of relay timestamps per broker for throughput cap */
+const brokerRelayTimestamps = new Map<string, number[]>();
+
+/** Try to relay an event through a broker. Returns true if under cap, false if over. */
+function tryBrokerRelay(brokerId: string, cap: number, now: number): boolean {
+  let ts = brokerRelayTimestamps.get(brokerId) ?? [];
+  ts = ts.filter(t => now - t < 1000);
+  if (ts.length >= cap) { brokerRelayTimestamps.set(brokerId, ts); return false; }
+  ts.push(now);
+  brokerRelayTimestamps.set(brokerId, ts);
+  return true;
+}
+
+/** Get broker throughput cap from upgrade level */
+function getBrokerCap(brokerComp: { upgrades: Record<string, number> }): number {
+  const level = brokerComp.upgrades['increaseThroughput'] ?? 0;
+  const bonus = level * (level + 9) / 2;
+  return BROKER_BASE_THROUGHPUT + bonus;
+}
+
+/** Get current utilization ratio (0-1+) for a broker */
+export function getBrokerUtilization(brokerId: string, cap: number): number {
+  const ts = brokerRelayTimestamps.get(brokerId) ?? [];
+  const now = performance.now();
+  const recent = ts.filter(t => now - t < 1000);
+  return recent.length / cap;
+}
+
 /** Rebuild orthogonal waypoints from node IDs using current component positions */
 function rebuildPathFromNodeIds(
   nodeIds: string[],
@@ -209,6 +239,24 @@ export function useGameLoop() {
             const newProgress = Math.min(dot.progress + actualSpeed * dt, 1);
             const newPos = interpolatePath(dot.path, newProgress);
 
+            // Broker throughput cap (ingestion only): only the FIRST broker on the path
+            // counts against throughput. Bridged events flow freely through subsequent brokers.
+            let brokerCapped = false;
+            const now = performance.now();
+            const firstBroker = pathComps.find(pc => pc.comp.type === 'broker');
+            if (firstBroker) {
+              const brokerProgress = firstBroker.idx / (dot.path.length - 1);
+              if (dot.progress < brokerProgress && newProgress >= brokerProgress) {
+                const cap = getBrokerCap(firstBroker.comp);
+                if (!tryBrokerRelay(firstBroker.comp.id, cap, now)) {
+                  droppedCount++;
+                  updated.push({ ...dot, status: 'dropped', dropX: firstBroker.comp.x, dropY: firstBroker.comp.y, dropVY: 0, color: dropColor } as Dot);
+                  brokerCapped = true;
+                }
+              }
+            }
+            if (brokerCapped) continue;
+
             // Fork spawning: when dot with forkPaths passes its fork broker, spawn fork dots
             if (dot.forkPaths && dot.forkNodeId) {
               const forkComp = state.components.find(c => c.id === dot.forkNodeId);
@@ -228,18 +276,40 @@ export function useGameLoop() {
                   }
                   const forkWaypoints = fork.waypoints.slice(brokerWpIdx);
                   if (forkWaypoints.length >= 2) {
-                    updated.push({
-                      id: forkDotId,
-                      path: forkWaypoints,
-                      progress: 0,
-                      speed: normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, forkWaypoints),
-                      status: 'traveling' as const,
-                      color: dot.color,
-                      opacity: 1,
-                      value: dot.value,
-                      originalValue: dot.originalValue,
-                      originalNodeIds: forkStartNodeIds,
-                    });
+                    // Fork dots spawn at the publisher's first broker (ingestion point),
+                    // so they count against that broker's throughput cap
+                    const forkCap = getBrokerCap(forkComp);
+                    if (!tryBrokerRelay(forkComp.id, forkCap, now)) {
+                      droppedCount++;
+                      updated.push({
+                        id: forkDotId,
+                        path: forkWaypoints,
+                        progress: 0,
+                        speed: 0,
+                        status: 'dropped' as const,
+                        dropX: forkComp.x,
+                        dropY: forkComp.y,
+                        dropVY: 0,
+                        color: dropColor,
+                        opacity: 1,
+                        value: dot.value,
+                        originalValue: dot.originalValue,
+                        originalNodeIds: forkStartNodeIds,
+                      });
+                    } else {
+                      updated.push({
+                        id: forkDotId,
+                        path: forkWaypoints,
+                        progress: 0,
+                        speed: normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, forkWaypoints),
+                        status: 'traveling' as const,
+                        color: dot.color,
+                        opacity: 1,
+                        value: dot.value,
+                        originalValue: dot.originalValue,
+                        originalNodeIds: forkStartNodeIds,
+                      });
+                    }
                   }
                 }
                 // Clear fork data from this dot

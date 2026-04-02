@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo, useSyncExternalStore } from 'reac
 import { motion } from 'framer-motion';
 import { type GameComponent, useGameStore } from '../store/gameStore';
 import { interpolatePath } from '../utils/pathUtils';
+import { getBrokerUtilization } from '../hooks/useGameLoop';
 import {
   publisherUpgrades,
   webhookUpgrades,
@@ -125,6 +126,11 @@ export function NodeCard({ component }: Props) {
         component.type
       ) && component.id !== draggingConnection.fromId
     : false;
+
+  // Broker throughput utilization (0-1)
+  const brokerUtilization = component.type === 'broker'
+    ? getBrokerUtilization(component.id, 8 + (component.upgrades['increaseThroughput'] ?? 0) * ((component.upgrades['increaseThroughput'] ?? 0) + 9) / 2)
+    : 0;
 
   // Compute dot's normalized x-position through this webhook/broker (0→1), or -1 if none
   const isWebhookOrBroker = component.type === 'webhook' || component.type === 'broker';
@@ -372,6 +378,17 @@ export function NodeCard({ component }: Props) {
           ↑
         </button>
         <div>{component.label}</div>
+        {component.type === 'broker' && (
+          <div className="w-full mt-1 h-1 rounded-full overflow-hidden" style={{ background: '#1e293b' }}>
+            <div
+              className="h-full rounded-full transition-all"
+              style={{
+                width: `${Math.min(brokerUtilization * 100, 100)}%`,
+                background: brokerUtilization > 0.9 ? '#ef4444' : brokerUtilization > 0.7 ? '#f59e0b' : '#22c55e',
+              }}
+            />
+          </div>
+        )}
         {isPublisher && (
           <div className="text-[10px] opacity-60">(click to fire)</div>
         )}
