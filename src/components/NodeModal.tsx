@@ -1,5 +1,7 @@
+import { useSyncExternalStore } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
+import { useViewport } from '../hooks/useViewport';
 import {
   publisherUpgrades,
   webhookUpgrades,
@@ -113,6 +115,13 @@ export function NodeModal() {
   const upgradeComponent = useGameStore(s => s.upgradeComponent);
   const selectNode = useGameStore(s => s.selectNode);
   const removeComponent = useGameStore(s => s.removeComponent);
+  const viewport = useViewport();
+
+  // Subscribe to viewport for screen-space anchoring
+  useSyncExternalStore(viewport.subscribe, () => {
+    const v = viewport.ref.current;
+    return `${v.panX},${v.panY},${v.zoom}`;
+  });
 
   const node = components.find(c => c.id === selectedNodeId);
   if (!node) return null;
@@ -120,8 +129,10 @@ export function NodeModal() {
   const upgrades = getUpgradesForType(node.type).filter(d => !d.hidden);
   if (upgrades.length === 0) return null;
 
-  const modalX = node.x + 80;
-  const modalY = node.y - 60;
+  const zoom = viewport.ref.current.zoom;
+  const screen = viewport.worldToScreen(node.x, node.y);
+  const modalX = screen.x + 80 * zoom;
+  const modalY = screen.y - 60 * zoom;
 
   const handleUpgrade = (def: UpgradeDef) => {
     const level = node.upgrades[def.key] ?? 0;
@@ -139,9 +150,9 @@ export function NodeModal() {
     <AnimatePresence>
       <motion.div
         key={node.id}
-        initial={{ opacity: 0, scale: 0.9 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.9 }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
         className="absolute rounded-lg border border-gray-700 p-3 shadow-xl"
         style={{
           left: modalX,
@@ -149,6 +160,8 @@ export function NodeModal() {
           zIndex: 30,
           background: '#111827',
           minWidth: 220,
+          transform: `scale(${zoom})`,
+          transformOrigin: 'top left',
         }}
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}

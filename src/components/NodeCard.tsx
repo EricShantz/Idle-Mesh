@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { motion } from 'framer-motion';
 import { type GameComponent, useGameStore } from '../store/gameStore';
 import { interpolatePath } from '../utils/pathUtils';
@@ -14,6 +14,7 @@ import {
   getDmqSlotsPerRow,
 } from '../store/upgradeConfig';
 import { canConnect } from '../utils/connectionRules';
+import { useViewport } from '../hooks/useViewport';
 
 function getUpgradesForType(type: string) {
   switch (type) {
@@ -51,6 +52,14 @@ export function NodeCard({ component }: Props) {
   const draggingConnection = useGameStore(s => s.draggingConnection);
   const startDragConnection = useGameStore(s => s.startDragConnection);
   const setDraggingNodeId = useGameStore(s => s.setDraggingNodeId);
+  const viewport = useViewport();
+
+  // Subscribe to viewport changes for screen-space positioning
+  const vpSnap = useSyncExternalStore(viewport.subscribe, () => {
+    const v = viewport.ref.current;
+    return `${v.panX},${v.panY},${v.zoom}`;
+  });
+  const zoom = viewport.ref.current.zoom;
 
   const colors = typeColors[component.type] ?? typeColors.publisher;
   const isSelected = selectedNodeId === component.id;
@@ -211,7 +220,8 @@ export function NodeCard({ component }: Props) {
     e.preventDefault();
     const rect = (e.target as HTMLElement).closest('[data-mesh-container]')?.getBoundingClientRect()
       ?? (e.target as HTMLElement).getBoundingClientRect();
-    startDragConnection('create', component.id, undefined, e.clientX - rect.left, e.clientY - rect.top);
+    const world = viewport.screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    startDragConnection('create', component.id, undefined, world.x, world.y);
   };
 
   const handleUpgradeClick = (e: React.MouseEvent) => {
@@ -244,7 +254,8 @@ export function NodeCard({ component }: Props) {
       setDraggingNodeId(component.id);
     }
 
-    pendingMove.current = { x: nodeStartPos.current.x + dx, y: nodeStartPos.current.y + dy };
+    const z = viewport.ref.current.zoom;
+    pendingMove.current = { x: nodeStartPos.current.x + dx / z, y: nodeStartPos.current.y + dy / z };
     if (!moveRaf.current) {
       moveRaf.current = requestAnimationFrame(() => {
         moveComponent(component.id, pendingMove.current.x, pendingMove.current.y);
@@ -276,20 +287,22 @@ export function NodeCard({ component }: Props) {
     }
   };
 
+  const screen = viewport.worldToScreen(component.x, component.y);
+  const halfW = isDmq ? dmqNodeWidth / 2 : 60;
+
   return (
-    <motion.div
-      layout={!cursorGrabbing}
-      initial={{ scale: 0, opacity: 0 }}
-      animate={{ scale: 1, opacity: 1 }}
+    <div
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       className="absolute flex flex-col items-center gap-1"
       style={{
-        left: component.x - (isDmq ? dmqNodeWidth / 2 : 60),
-        top: component.y - 28,
+        left: screen.x - halfW * zoom,
+        top: screen.y - 28 * zoom,
         zIndex: cursorGrabbing ? 50 : (isPublisher ? 30 : (component.type === 'subscriber' ? 20 : 26)),
         cursor: cursorGrabbing ? 'grabbing' : 'grab',
+        transform: `scale(${zoom})`,
+        transformOrigin: 'top left',
       }}
     >
       <motion.div
@@ -480,6 +493,6 @@ export function NodeCard({ component }: Props) {
           ))}
         </div>
       )}
-    </motion.div>
+    </div>
   );
 }

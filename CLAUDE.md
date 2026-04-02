@@ -85,7 +85,12 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 └─────────────────────────────────────┴──────────────────┘
 ```
 
-- **Mesh canvas**: SVG connection lines + HTML5 canvas for event dots + React nodes
+- **Mesh canvas**: SVG connection lines + HTML5 canvas for event dots + React nodes. Supports pan and zoom via a viewport transform system.
+- **Pan & Zoom**: the mesh canvas supports Adobe Illustrator-style navigation. All layers (HTML nodes, SVG connections, canvas dots, coin pops, modals) transform together seamlessly.
+  - **Trackpad**: two-finger drag to pan, pinch to zoom
+  - **Mouse**: scroll wheel to pan vertically, Ctrl/Cmd+scroll to zoom toward cursor, middle-click drag to pan
+  - **Universal**: left-click drag on empty canvas to pan, Space+left-drag to pan
+  - Zoom range: 0.15× – 4.0×. Zoom is always toward the cursor position.
 - **Output ports**: Small circle with right-arrow icon on right edge of nodes that can output (all except subscriber). Drag from port to create a new connection. Hover highlights port in the node's theme color.
 - **Upgrade modal**: Small floating panel anchored to the node, opened via the ↑ upgrade icon in the node's top-right corner (bordered rounded box). Queues and DMQ have a red "Delete" button at the bottom of the modal to remove the component (deleting DMQ makes it available again in the shop).
 - **Upgrade badge**: Red circle on each node's **top-left** corner showing how many upgrades are currently affordable
@@ -334,6 +339,7 @@ src/
     topicPool.ts        # Predefined topic pool for publisher/queue assignment
   hooks/
     useGameLoop.ts      # RAF game loop (dot movement, webhook slowdown, consume/drop logic) + useAutoPublisher
+    useViewport.ts      # Pan/zoom viewport: context, ref-based state, screenToWorld/worldToScreen helpers
   utils/
     connectionRules.ts  # canConnect(fromType, toType), getValidTargets() — connection validation + slot capacity enforcement
     topicMatching.ts    # Solace-style topic matching: wildcards (*, >) and subscription broadening
@@ -351,6 +357,7 @@ src/
 - **Starting balance for testing**: change `balance: saved?.balance ?? 5000000` in `gameStore.ts`. Clear localStorage **then hard-refresh the page** (Ctrl+Shift+R) to reset — the auto-save subscriber will re-persist in-memory state if the tab stays open.
 - **Component IDs**: initial components use fixed IDs (`pub-1`, `webhook-1`, `sub-1`, `conn-1`, `conn-2`). Dynamically added components use counter-based IDs starting at 10 (`comp-10+`, `conn-10+`). Counters are initialized from saved state on load via `initCountersFromSaved()` to prevent duplicate IDs.
 - **Collision & thresholds**: `useGameLoop.ts` uses `dotTouchesNode()` bounding-box collision for all node interactions: webhook slowdown (applied only while dot visually overlaps the webhook node), queue capture, and subscriber pause/drop. Webhook blockage uses a 20px approach zone before the node's left edge; `isComponentOccupied()` (defined inside the dot loop for frame-accurate state) detects traveling dots inside the webhook via `dotTouchesNode()`. Brokers skip blockage entirely.
+- **Viewport (pan/zoom)**: managed by `useViewport.ts` — a React context holding a mutable ref `{ panX, panY, zoom }` with lightweight pub/sub (not Zustand, to avoid mass re-renders on every pan frame). All component positions in the store remain "world" coordinates. The viewport transform maps world→screen: `screenX = worldX * zoom + panX`. Each rendering layer applies this independently: SVG uses a `<g transform>` wrapper, canvases use `ctx.setTransform()` (with DPR scaling for sharpness), HTML nodes use `worldToScreen()` for `left`/`top` + CSS `transform: scale(zoom)`. All pointer events are reverse-transformed via `screenToWorld()` so hit testing and drag logic operate in world coords. Wheel handler (passive:false via native `addEventListener`) distinguishes Ctrl/Cmd+scroll (zoom) from plain scroll (pan). Left-click drag on empty canvas pans (nodes call `stopPropagation` so their clicks don't trigger pan). Node drag deltas are divided by zoom for correct world-space movement.
 - **Drag-to-move**: implemented in `NodeCard.tsx` using pointer capture + ref-based drag state. State updates are RAF-throttled (pending position stored in a ref, flushed once per animation frame via `requestAnimationFrame`) to reduce Zustand churn during drag. Final position is flushed synchronously on pointer up. Gear button and output port have `onPointerDown` stopPropagation to prevent drag-start. `draggingNodeId` (transient, in store) is set when drag movement begins and cleared on pointer up.
 - **Live path rebuilding during drag**: when a component is being dragged, all in-flight dots (traveling or queued) whose `originalNodeIds` include the dragged component have their paths rebuilt every frame via `rebuildPathFromNodeIds()` using current component positions. The dot's progress is recalculated via `projectOntoPath()` (closest-point projection onto the new polyline) to maintain visual continuity. This means events follow moving components along connection lines in real-time — no events are dropped or blocked during drag. `rebuildPathFromNodeIds()` handles DMQ→broker vertical-first routing as a special case.
 - **Connection validation skipped during drag**: the position-based waypoint-to-component matching (`Math.abs(c.x - pt.x) < 1`) is unreliable when components are moving, so connection validation is bypassed while `draggingNodeId` is set. Connections can't be disconnected during a drag operation anyway.

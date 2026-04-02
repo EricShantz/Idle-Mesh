@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useGameStore, type Connection } from '../store/gameStore';
 import { buildOrthogonalSvgPath, buildVerticalFirstSvgPath } from '../utils/orthogonalPath';
+import { useViewport } from '../hooks/useViewport';
 
 type Props = {
   conn: Connection;
@@ -11,6 +12,7 @@ export function ConnectionLine({ conn }: Props) {
   const startDragConnection = useGameStore(s => s.startDragConnection);
   const draggingConnection = useGameStore(s => s.draggingConnection);
   const [hovered, setHovered] = useState(false);
+  const viewport = useViewport();
 
   const from = components.find(c => c.id === conn.fromId);
   const to = components.find(c => c.id === conn.toId);
@@ -62,9 +64,10 @@ export function ConnectionLine({ conn }: Props) {
     const svg = (e.target as SVGElement).ownerSVGElement;
     const container = svg?.parentElement;
     const rect = container?.getBoundingClientRect();
-    const mx = rect ? e.clientX - rect.left : e.clientX;
-    const my = rect ? e.clientY - rect.top : e.clientY;
-    startDragConnection('reassign', conn.fromId, conn.id, mx, my);
+    const sx = rect ? e.clientX - rect.left : e.clientX;
+    const sy = rect ? e.clientY - rect.top : e.clientY;
+    const world = viewport.screenToWorld(sx, sy);
+    startDragConnection('reassign', conn.fromId, conn.id, world.x, world.y);
   };
 
   return (
@@ -87,7 +90,7 @@ export function ConnectionLine({ conn }: Props) {
         d={pathD}
         fill="none"
         stroke="transparent"
-        strokeWidth={14}
+        strokeWidth={14 / viewport.ref.current.zoom}
         style={{ cursor: 'pointer' }}
         onPointerDown={handleClickLine}
       />

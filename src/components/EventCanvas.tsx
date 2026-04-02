@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { interpolatePath } from '../utils/pathUtils';
+import { useViewport } from '../hooks/useViewport';
 
 const CONSUME_DURATION = 2500; // ms — how long the dot pauses at subscriber
 
@@ -71,6 +72,7 @@ export function EventCanvas() {
   const backCanvasRef = useRef<HTMLCanvasElement>(null);
   const frontCanvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
+  const viewportApi = useViewport();
 
   useEffect(() => {
     const backCanvas = backCanvasRef.current;
@@ -82,13 +84,27 @@ export function EventCanvas() {
 
     const render = () => {
       const { width, height } = backCanvas.getBoundingClientRect();
-      backCanvas.width = width;
-      backCanvas.height = height;
-      frontCanvas.width = width;
-      frontCanvas.height = height;
+      const dpr = window.devicePixelRatio || 1;
 
-      backCtx.clearRect(0, 0, width, height);
-      frontCtx.clearRect(0, 0, width, height);
+      // Size canvases for sharp rendering at current DPR
+      backCanvas.width = width * dpr;
+      backCanvas.height = height * dpr;
+      frontCanvas.width = width * dpr;
+      frontCanvas.height = height * dpr;
+
+      // Clear
+      backCtx.setTransform(1, 0, 0, 1, 0, 0);
+      frontCtx.setTransform(1, 0, 0, 1, 0, 0);
+      backCtx.clearRect(0, 0, backCanvas.width, backCanvas.height);
+      frontCtx.clearRect(0, 0, frontCanvas.width, frontCanvas.height);
+
+      // Apply viewport transform: DPR scaling + pan + zoom
+      const vp = viewportApi.ref.current;
+      const tx = vp.panX * dpr;
+      const ty = vp.panY * dpr;
+      const s = vp.zoom * dpr;
+      backCtx.setTransform(s, 0, 0, s, tx, ty);
+      frontCtx.setTransform(s, 0, 0, s, tx, ty);
 
       const dots = useGameStore.getState().eventDots;
       const { components } = useGameStore.getState();
@@ -106,7 +122,7 @@ export function EventCanvas() {
 
     animRef.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animRef.current);
-  }, []);
+  }, [viewportApi]);
 
   return (
     <>
