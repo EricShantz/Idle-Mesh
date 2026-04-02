@@ -87,6 +87,45 @@ function TravelingDot({
   );
 }
 
+/** Dot that follows an orthogonal H→V→H path matching the Wire component */
+function OrthoTravelingDot({
+  x1, y1, x2, y2,
+  delay = 0,
+  duration = 1.4,
+  repeatDelay = 2.8,
+}: {
+  x1: number; y1: number; x2: number; y2: number;
+  delay?: number; duration?: number; repeatDelay?: number;
+}) {
+  const mx = (x1 + x2) / 2;
+  // Segment lengths for proportional timing
+  const hLen = Math.abs(mx - x1);
+  const vLen = Math.abs(y2 - y1);
+  const hLen2 = Math.abs(x2 - mx);
+  const total = hLen + vLen + hLen2;
+  const t1 = hLen / total * 0.85;
+  const t2 = (hLen + vLen) / total * 0.85;
+  return (
+    <motion.circle
+      fill={C.dot}
+      filter={`drop-shadow(0 0 4px ${C.dotGlow})`}
+      animate={{
+        cx: [x1, mx, mx, x2, x2],
+        cy: [y1, y1, y2, y2, y2],
+        r: [3, 3, 3, 3, 0],
+      }}
+      transition={{
+        duration,
+        delay,
+        repeat: Infinity,
+        repeatDelay,
+        ease: 'linear',
+        times: [0, t1, t2, 0.85, 1],
+      }}
+    />
+  );
+}
+
 // ── Slide Graphics ──────────────────────────────────────────────────────────
 
 export function PublisherGraphic() {
@@ -558,8 +597,8 @@ export function MultiPublisherGraphic() {
       <NodeBox x={pX} y={p1Y} type="publisher" label="Publisher" />
       <NodeBox x={pX} y={p2Y} type="publisher" label="Publisher" />
       <NodeBox x={bX} y={brokerY} type="broker" label="Broker" />
-      <TravelingDot x1={pX + 36} y1={p1Y} x2={bX - 36} y2={brokerY} duration={1.3} />
-      <TravelingDot x1={pX + 36} y1={p2Y} x2={bX - 36} y2={brokerY} delay={0.5} duration={1.3} />
+      <OrthoTravelingDot x1={pX + 36} y1={p1Y} x2={bX - 36} y2={brokerY} duration={1.3} />
+      <OrthoTravelingDot x1={pX + 36} y1={p2Y} x2={bX - 36} y2={brokerY} delay={0.5} duration={1.3} />
     </svg>
   );
 }
@@ -573,8 +612,8 @@ export function MultiSubscriberGraphic() {
       <NodeBox x={qX} y={qY} type="queue" label="Queue" />
       <NodeBox x={sX} y={s1Y} type="subscriber" label="Subscriber" />
       <NodeBox x={sX} y={s2Y} type="subscriber" label="Subscriber" />
-      <TravelingDot x1={qX + 36} y1={qY} x2={sX - 36} y2={s1Y} duration={1.3} />
-      <TravelingDot x1={qX + 36} y1={qY} x2={sX - 36} y2={s2Y} delay={0.5} duration={1.3} />
+      <OrthoTravelingDot x1={qX + 36} y1={qY} x2={sX - 36} y2={s1Y} duration={1.3} />
+      <OrthoTravelingDot x1={qX + 36} y1={qY} x2={sX - 36} y2={s2Y} delay={0.5} duration={1.3} />
     </svg>
   );
 }
