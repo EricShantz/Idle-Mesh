@@ -618,6 +618,61 @@ export function MultiSubscriberGraphic() {
   );
 }
 
+export function PaymentsPublisherGraphic() {
+  const cx = W / 2, cy = H / 2;
+  const nW = 72, nH = 40;
+  const payBlue = '#00aaff';
+  const payBg = '#0c2233';
+  const payGlow = 'rgba(0,170,255,0.4)';
+  const payDot = '#66ccff';
+  const payDotGlow = 'rgba(102,204,255,0.6)';
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderRadius: 8, background: C.bg }}>
+      <defs>
+        <clipPath id="pay-pub-clip">
+          <rect x={cx - nW / 2} y={cy - nH / 2} width={nW} height={nH} rx={6} />
+        </clipPath>
+      </defs>
+      <motion.g
+        animate={{ scale: [1, 0.93, 1, 1, 1] }}
+        transition={{ duration: 2, repeat: Infinity, times: [0, 0.05, 0.1, 0.95, 1], ease: 'easeInOut' }}
+        style={{ transformOrigin: `${cx}px ${cy}px` }}
+      >
+        <rect
+          x={cx - nW / 2} y={cy - nH / 2} width={nW} height={nH} rx={6}
+          fill={payBg} stroke={payBlue} strokeWidth={1.5}
+          filter={`drop-shadow(0 0 6px ${payGlow})`}
+        />
+        <text x={cx} y={cy + 4} textAnchor="middle" fill={payBlue} fontSize={11} fontWeight="600">Publisher</text>
+        <motion.rect
+          x={cx - nW / 2}
+          rx={6}
+          width={nW}
+          fill="rgba(0,0,0,0.38)"
+          clipPath="url(#pay-pub-clip)"
+          animate={{
+            y: [cy - nH / 2, cy - nH / 2, cy + nH / 2, cy + nH / 2, cy - nH / 2],
+            height: [nH, nH, 0, 0, nH],
+          }}
+          transition={{ duration: 2, repeat: Infinity, times: [0, 0.05, 0.8, 0.95, 1], ease: 'linear' }}
+        />
+      </motion.g>
+      <motion.circle
+        r={3}
+        fill={payDot}
+        filter={`drop-shadow(0 0 4px ${payDotGlow})`}
+        animate={{
+          cx: [cx + nW / 2, cx + nW / 2 + 100],
+          cy: [cy, cy],
+          opacity: [0, 1, 0.6, 0],
+          r: [0, 3, 3, 0],
+        }}
+        transition={{ duration: 0.9, delay: 0.1, repeat: Infinity, repeatDelay: 1.1, ease: 'easeOut', times: [0, 0.1, 0.8, 1] }}
+      />
+    </svg>
+  );
+}
+
 export function MultiBrokerGraphic() {
   const b1X = 90, b2X = W - 90, bY = H / 2;
   return (

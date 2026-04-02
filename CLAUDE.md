@@ -30,7 +30,7 @@ src/
     upgradeConfig.ts    # All upgrade defs (cost, multiplier, maxLevel, label, description)
     prestigeUpgradeConfig.ts # Prestige tree node definitions (16 nodes)
     topicPool.ts        # Predefined topic pool for publisher/queue assignment
-    tutorialConfig.ts   # Tutorial slide definitions (title, body, optional graphic component)
+    tutorialConfig.tsx  # Tutorial slide definitions (title: string, body: ReactNode, optional graphic component)
   hooks/
     useGameLoop.ts      # RAF game loop (dot movement, webhook slowdown, consume/drop logic) + useAutoPublisher
     useViewport.ts      # Pan/zoom viewport: context, ref-based state, screenToWorld/worldToScreen helpers

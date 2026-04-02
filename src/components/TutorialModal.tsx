@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
-import { tutorialMap } from '../store/tutorialConfig';
+import { tutorialMap } from '../store/tutorialConfig.tsx';
 
 export function TutorialModal() {
   const activeTutorial = useGameStore(s => s.activeTutorial);
@@ -44,7 +44,7 @@ export function TutorialModal() {
               <slide.graphic />
             </div>
           )}
-          <p className="text-sm text-gray-300 leading-relaxed mb-5">{slide.body}</p>
+          <p className="text-sm text-gray-300 leading-relaxed mb-5" style={{ whiteSpace: 'normal' }}>{slide.body}</p>
 
           <div className="flex items-center justify-between">
             <div className="flex gap-1.5">

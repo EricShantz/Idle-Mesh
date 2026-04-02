@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 import {
   PublisherGraphic,
   EventsFlowGraphic,
@@ -10,11 +10,12 @@ import {
   MultiPublisherGraphic,
   MultiSubscriberGraphic,
   MultiBrokerGraphic,
+  PaymentsPublisherGraphic,
 } from '../components/TutorialGraphics';
 
 export type TutorialSlide = {
   title: string;
-  body: string;
+  body: ReactNode;
   graphic?: ComponentType;
 };
 
@@ -72,7 +73,7 @@ export const tutorials: TutorialDef[] = [
   {
     key: 'firstPaymentsPublisher',
     slides: [
-      { title: 'Higher-Value Topic!', body: 'Not all events are worth the same. acme/payments/> events have a higher base value than acme/orders/> events' },
+      { title: 'Higher-Value Topic!', body: <>Not all events are worth the same. <span style={{ color: '#00aaff' }}>Payment</span> events have a higher base value than <span style={{ color: '#22d3ee' }}>Orders</span> events</>, graphic: PaymentsPublisherGraphic },
     ],
   },
 ];
