@@ -30,7 +30,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - **Styling**: Tailwind CSS v4 (`@tailwindcss/vite` plugin)
 - **Animation**: Framer Motion (component transitions) + raw Canvas API (event dot animation on the mesh)
 - **State Management**: Zustand with `immer` middleware
-- **Persistence**: localStorage auto-save with snapshot comparison (only persists when non-transient state changes), 500ms debounce. Excluded from save: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`, `draggingConnection`, `draggingNodeId`, `meshError`. Key: `idle-mesh-save`
+- **Persistence**: localStorage auto-save with snapshot comparison (only persists when non-transient state changes), 500ms debounce. Excluded from save: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`, `draggingConnection`, `draggingNodeId`, `meshError`, `activeTutorial`. Key: `idle-mesh-save`
 - **Target Platforms**:
   - Browser (primary)
   - Android via Capacitor
@@ -338,10 +338,12 @@ src/
     NodeCard.tsx        # Individual node: color, ↑ upgrade icon, upgrade badge, output port, click handlers
     NodeModal.tsx       # Floating upgrade modal anchored to selected node
     Sidebar.tsx         # Balance, stats, global upgrades, shop
+    TutorialModal.tsx   # Centered overlay modal for tutorial slides (intro + component unlocks)
   store/
     gameStore.ts        # All Zustand state + actions, auto-save subscription
     upgradeConfig.ts    # All upgrade defs (cost, multiplier, maxLevel, label, description)
     topicPool.ts        # Predefined topic pool for publisher/queue assignment
+    tutorialConfig.ts   # Tutorial slide definitions (intro + per-component tutorials)
   hooks/
     useGameLoop.ts      # RAF game loop (dot movement, webhook slowdown, consume/drop logic) + useAutoPublisher
     useViewport.ts      # Pan/zoom viewport: context, ref-based state, screenToWorld/worldToScreen helpers
@@ -385,5 +387,6 @@ src/
 - **Event batching**: `batchFire` number in `upgrades` state (0 = 1 event, N = N events per click). `fireEvent` creates `batchFire` dots per path — each starts at `progress: batch * -0.04` so they visually trail by ~57ms each. `interpolatePath()` clamps negative progress to the path start. Multi-level: base $200, ×2.5 cost scaling, max 5 levels (6 events/click). Old boolean saves migrated to level 1 (2 events).
 - **Hidden upgrades**: `UpgradeDef` has optional `hidden?: boolean`. Hidden upgrades are filtered out of `NodeModal` and `NodeCard` badge counts. Used for `topicFilterBoost` until the topic system is implemented. `subscriptionBroaden` is conditionally hidden when the queue has no `subscriptionTopic` (only visible after connecting to a broker).
 - **Topic subscription picker**: `getAvailableTopics(queueId)` in `gameStore.ts` walks broker connections (including bridges) to find all reachable publishers, then generates one entry per publisher broadened to the queue's current `subscriptionBroaden` level. Deduplicates by broadened topic string — at high broaden levels, multiple publishers collapse into the same pattern. `setQueueSubscription(queueId, topic, segments, broadenLevel)` updates the queue's `subscriptionSegments`, `subscriptionTopic`, and `subscriptionBroaden` level atomically. UI lives in `NodeModal.tsx`: the subscription section renders whenever `getAvailableTopics()` returns results (regardless of whether the queue already has a `subscriptionTopic`), showing the current topic if set and a "Change Topic" picker when multiple options exist. Current topic highlighted in amber. Picker state resets on node switch via `key={node.id}` on the modal's motion.div.
+- **Tutorial system**: `tutorialsSeen: Record<string, boolean>` persists which tutorials the player has dismissed. `activeTutorial: string | null` (transient) controls the currently displayed modal. Tutorials trigger automatically: `intro` on first mount via `App.tsx`, `brokerUpgrade` inside `upgradeComponent`, component-type tutorials (`firstQueue`, `firstDmq`, `firstPublisher`, `firstSubscriber`, `firstBroker`) inside `addComponent`. Publisher/subscriber tutorials trigger on the 2nd instance (1st is in starting layout). Tutorial content defined in `tutorialConfig.ts`; UI in `TutorialModal.tsx` (z-index 60, centered overlay with slide navigation).
 - Keep game logic (store, hooks) decoupled from rendering components.
 - All upgrade costs/effects in `upgradeConfig.ts` — avoid hardcoding in components.

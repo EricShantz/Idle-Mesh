@@ -77,6 +77,9 @@ export type GameState = {
 
   globalUpgradeLevels: Record<string, number>;
 
+  tutorialsSeen: Record<string, boolean>;
+  activeTutorial: string | null;
+
   draggingConnection: {
     type: 'reassign' | 'create';
     connectionId?: string;
@@ -117,6 +120,8 @@ export type GameState = {
   setDraggingNodeId: (id: string | null) => void;
   getAvailableTopics: (queueId: string) => { topic: string; segments: string[]; broadenLevel: number }[];
   setQueueSubscription: (queueId: string, topic: string, segments: string[], broadenLevel: number) => void;
+  showTutorial: (key: string) => void;
+  dismissTutorial: (key: string) => void;
 };
 
 let dotIdCounter = 0;
@@ -269,6 +274,9 @@ export const useGameStore = create<GameState>()(
       publisherCooldowns: {},
       draggingConnection: null,
       draggingNodeId: null,
+
+      tutorialsSeen: saved?.tutorialsSeen ?? {},
+      activeTutorial: null,
 
       fireEvent: (publisherId: string, skipCooldown?: boolean) => {
         const state = get();
@@ -602,6 +610,9 @@ export const useGameStore = create<GameState>()(
             if (upgradeKey === 'upgradeToBroker' && comp.type === 'webhook') {
               comp.type = 'broker';
               comp.label = 'Broker';
+              if (!draft.tutorialsSeen['brokerUpgrade']) {
+                draft.activeTutorial = 'brokerUpgrade';
+              }
             }
             // Broaden queue subscription topic
             if (upgradeKey === 'subscriptionBroaden' && comp.subscriptionSegments) {
@@ -623,6 +634,21 @@ export const useGameStore = create<GameState>()(
             comp.topicSegments = topic.split('/');
           }
           draft.components.push(comp);
+
+          // Tutorial triggers for first-time component purchases
+          const tutorialKeyMap: Partial<Record<ComponentType, string>> = {
+            queue: 'firstQueue', dmq: 'firstDmq', publisher: 'firstPublisher',
+            subscriber: 'firstSubscriber', broker: 'firstBroker',
+          };
+          const tKey = tutorialKeyMap[type];
+          if (tKey && !draft.tutorialsSeen[tKey]) {
+            // Publisher/subscriber: trigger on 2nd instance (1st is in starting layout)
+            const threshold = (type === 'publisher' || type === 'subscriber') ? 2 : 1;
+            const count = draft.components.filter(c => c.type === type).length;
+            if (count >= threshold) {
+              draft.activeTutorial = tKey;
+            }
+          }
         });
         return id;
       },
@@ -902,6 +928,21 @@ export const useGameStore = create<GameState>()(
         });
       },
 
+      showTutorial: (key: string) => {
+        set(draft => {
+          if (!draft.tutorialsSeen[key] && !draft.activeTutorial) {
+            draft.activeTutorial = key;
+          }
+        });
+      },
+
+      dismissTutorial: (key: string) => {
+        set(draft => {
+          draft.tutorialsSeen[key] = true;
+          draft.activeTutorial = null;
+        });
+      },
+
       purchaseGlobalUpgrade: (upgradeKey: string) => {
         set(draft => {
           const level = draft.globalUpgradeLevels[upgradeKey] ?? 0;
@@ -1028,7 +1069,7 @@ let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 let lastSaveSnapshot = '';
 useGameStore.subscribe((state) => {
   // Build save data
-  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, ...toSave } = state;
+  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, activeTutorial: ________, ...toSave } = state;
   const data: Record<string, any> = {};
   for (const [key, val] of Object.entries(toSave)) {
     if (typeof val !== 'function') {
