@@ -24,7 +24,7 @@
 ### Tier 3: Advanced / Idle Scaling
 - [ ] **Event Mesh Visualization** — color-code connection lines by topic
 - [ ] **Advanced Topic Patterns** — dynamic topic routing, topic pool expansion (pool cycles after 8th publisher)
-- [x] **Topic-Based Earnings** — value tiers by domain (orders→payments→inventory→shipping), specificity bonus for narrow subscriptions
+- [ ] ~~**Topic-Based Earnings**~~ — removed: value tiers and specificity bonus were too complex for users
 
 ---
 

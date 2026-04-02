@@ -45,7 +45,7 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 ### Subscriber
 | Upgrade | Effect | Base Cost | Multiplier | Max Level |
 |---|---|---|---|---|
-| Consumption Multiplier | Multiplies final payout: `1.0 + level * 0.5` (×1.5, ×2.0, ×2.5...) — applied after dot value, specificity, and all upstream multipliers | $10 | ×1.8 | unlimited |
+| Consumption Multiplier | Multiplies final payout: `1.0 + level * 0.5` (×1.5, ×2.0, ×2.5...) — applied after dot value and all upstream multipliers | $10 | ×1.8 | unlimited |
 | Faster Consumption | Accelerating: `min(level*(level+9)/2, 100)`% consume duration reduction | $8 | ×1.8 | 11 (100%) |
 
 ## Global Upgrades (Sidebar)
@@ -71,6 +71,6 @@ Global upgrades use the same `UpgradeDef` system as node upgrades — each is a 
 ## Accelerating Upgrade Curves
 - Most percentage-based upgrades use: `boostPct = level * (level + 9) / 2` (5%, 11%, 18%, 26%... 95% at level 10)
 - Publisher value upgrades use: `$1.00 + level * 0.45 + level² * 0.05` (each level adds $0.10 more than previous)
-- Subscriber consumption is a multiplier: `1.0 + level * 0.5` applied to the final dot value (after specificity)
+- Subscriber consumption is a multiplier: `1.0 + level * 0.5` applied to the final dot value
 - Income Multiplier uses compounding: `1.4 + level * 0.1` per level (×1.5, ×1.6, ×1.7...)
 - All upgrade cards show `current → next (+delta)` format via `getUpgradeValueDisplay()` / `getGlobalUpgradeValueDisplay()`

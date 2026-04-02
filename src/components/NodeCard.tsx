@@ -29,15 +29,8 @@ function getUpgradesForType(type: string) {
   }
 }
 
-const publisherTopicColors: Record<string, { border: string; bg: string; glow: string }> = {
-  orders:    { border: '#22d3ee', bg: '#0e3a3e', glow: '0 0 12px rgba(34,211,238,0.4)' },
-  payments:  { border: '#00aaff', bg: '#0c2233', glow: '0 0 12px rgba(0,170,255,0.5)' },
-  inventory: { border: '#1d4ed8', bg: '#0a1628', glow: '0 0 12px rgba(29,78,216,0.6)' },
-  shipping:  { border: '#ffffff', bg: '#1e2a3a', glow: '0 0 12px rgba(255,255,255,0.3)' },
-};
-
 const typeColors: Record<string, { border: string; bg: string; glow: string }> = {
-  publisher: publisherTopicColors.orders,
+  publisher: { border: '#22d3ee', bg: '#0e3a3e', glow: '0 0 12px rgba(34,211,238,0.4)' },
   webhook: { border: '#f59e0b', bg: '#3b2e0a', glow: '0 0 12px rgba(245,158,11,0.4)' },
   broker: { border: '#fb923c', bg: '#431407', glow: '0 0 12px rgba(251,146,60,0.5)' },
   queue: { border: '#a855f7', bg: '#2e1065', glow: '0 0 12px rgba(168,85,247,0.4)' },
@@ -73,10 +66,7 @@ export function NodeCard({ component }: Props) {
   });
   const zoom = viewport.ref.current.zoom;
 
-  const domain = component.topic?.split('/')[1];
-  const colors = component.type === 'publisher' && domain
-    ? (publisherTopicColors[domain] ?? typeColors.publisher)
-    : (typeColors[component.type] ?? typeColors.publisher);
+  const colors = typeColors[component.type] ?? typeColors.publisher;
   const isSelected = selectedNodeId === component.id;
   const isPublisher = component.type === 'publisher';
 

@@ -14,7 +14,7 @@ import {
   type UpgradeDef,
 } from '../store/upgradeConfig';
 import { formatMoney } from '../utils/formatMoney';
-import { computeBroadenedTopic, getTopicValueBonus } from '../utils/topicMatching';
+import { computeBroadenedTopic } from '../utils/topicMatching';
 
 function getUpgradesForType(type: string): UpgradeDef[] {
   switch (type) {
@@ -57,9 +57,8 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number, topic?
 
     // Value upgrades ($X.XX per unit)
     case 'eventValue': {
-      const base = 0.5 + getTopicValueBonus(topic);
-      const curVal = (base + currentLevel * 0.45 + currentLevel * currentLevel * 0.05).toFixed(2);
-      const nxtVal = (base + nextLevel * 0.45 + nextLevel * nextLevel * 0.05).toFixed(2);
+      const curVal = (1.0 + currentLevel * 0.45 + currentLevel * currentLevel * 0.05).toFixed(2);
+      const nxtVal = (1.0 + nextLevel * 0.45 + nextLevel * nextLevel * 0.05).toFixed(2);
       const increment = (nextLevel * 0.45 + nextLevel * nextLevel * 0.05 - currentLevel * 0.45 - currentLevel * currentLevel * 0.05).toFixed(2);
       return `$${curVal} → $${nxtVal} (+$${increment})`;
     }
@@ -263,7 +262,7 @@ export function NodeModal() {
                   <span className="font-bold">
                     {def.label}
                     {['fasterConsumption', 'publishSpeed', 'dmqReleaseSpeed'].includes(def.key) && level > 0 && ` (${level * (level + 9) / 2}%)`}
-                    {def.key === 'eventValue' && level > 0 && ` ($${(0.5 + getTopicValueBonus(node.topic) + level * 0.45 + level * level * 0.05).toFixed(2)})`}
+                    {def.key === 'eventValue' && level > 0 && ` ($${(1.0 + level * 0.45 + level * level * 0.05).toFixed(2)})`}
                     {def.key === 'consumptionValue' && level > 0 && ` ($${(0.5 + level * 0.45 + level * level * 0.05).toFixed(2)})`}
                     {def.key === 'increaseThroughput' && ` (${8 + level * (level + 9) / 2}/sec)`}
                   </span>

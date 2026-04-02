@@ -10,7 +10,6 @@ import {
   MultiPublisherGraphic,
   MultiSubscriberGraphic,
   MultiBrokerGraphic,
-  PaymentsPublisherGraphic,
 } from '../components/TutorialGraphics';
 
 export type TutorialSlide = {
@@ -68,12 +67,6 @@ export const tutorials: TutorialDef[] = [
     key: 'firstBroker',
     slides: [
       { title: 'Additional Broker!', body: 'Bridge brokers together to create a full event mesh. Use the bridge slot upgrade to connect brokers and route events across multiple paths.', graphic: MultiBrokerGraphic },
-    ],
-  },
-  {
-    key: 'firstPaymentsPublisher',
-    slides: [
-      { title: 'Higher-Value Topic!', body: <>Not all events are worth the same. <span style={{ color: '#00aaff' }}>Payment</span> events have a higher base value than <span style={{ color: '#22d3ee' }}>Orders</span> events</>, graphic: PaymentsPublisherGraphic },
     ],
   },
 ];

@@ -3,7 +3,7 @@
 ## Publisher
 - Click target. Fires one event per click (subject to cooldown).
 - **Cooldown**: 1 second base, reduced by accelerating curve: `boostPct = level * (level + 9) / 2`, `cooldown = 1000 * (1 - boostPct/100)`. Max level 10 (95% reduction).
-- **Base event value**: varies by topic domain (orders $0.50, payments $1.00, inventory $2.00, shipping $4.00), plus accelerating upgrade increments: `value = base + level * 0.45 + level² * 0.05`. No max level. A specificity bonus (1.0–1.5x) is applied at consume time based on how narrow the delivering queue's subscription is.
+- **Base event value**: $1.00, plus accelerating upgrade increments: `value = 1.0 + level * 0.45 + level² * 0.05`. No max level.
 - **Auto-Publisher** upgrade: per-publisher automation. Lv1: 5s, Lv2: 3s, Lv3: 1s, Lv4: 0.75s, Lv5: 0.5s, Lv6: 0.25s, Lv7: 0.1s. Bypasses manual cooldown (`skipCooldown`). Each publisher fires independently at its own interval.
 - Upgrades: Event Value (accelerating $), Publish Speed (accelerating % cooldown reduction), Auto-Publisher (per-publisher auto-fire)
 

@@ -3,7 +3,7 @@ import { immer } from 'zustand/middleware/immer';
 import { canConnect } from '../utils/connectionRules';
 import { globalUpgrades, getUpgradeCost } from './upgradeConfig';
 import { getNextTopic } from './topicPool';
-import { topicMatches, computeBroadenedTopic, getTopicValueBonus, getTopicDotColor } from '../utils/topicMatching';
+import { topicMatches, computeBroadenedTopic } from '../utils/topicMatching';
 import { normalizedSpeed } from '../utils/pathUtils';
 import { getSmoothedFps } from '../hooks/useGameLoop';
 import { prestigeNodes, isNodeAvailable, isNodePurchased, type PrestigeNode } from './prestigeUpgradeConfig';
@@ -368,7 +368,7 @@ export const useGameStore = create<GameState>()(
                 progress: batch * -0.04,
                 speed,
                 status: 'traveling',
-                color: getTopicDotColor(pub.topic),
+                color: '#22d3ee',
                 opacity: 1,
                 value,
                 originalValue: value,
@@ -425,7 +425,7 @@ export const useGameStore = create<GameState>()(
                     progress: batch * -0.04,
                     speed,
                     status: 'traveling',
-                    color: getTopicDotColor(pub.topic),
+                    color: '#22d3ee',
                     opacity: 1,
                     value,
                     originalValue: value,
@@ -532,7 +532,7 @@ export const useGameStore = create<GameState>()(
                 progress: batch * -0.04,
                 speed: normalizedSpeed(baseSpeed, primary.waypoints),
                 status: 'traveling',
-                color: getTopicDotColor(pub.topic),
+                color: '#22d3ee',
                 opacity: 1,
                 value,
                 originalValue: value,
@@ -677,12 +677,6 @@ export const useGameStore = create<GameState>()(
             comp.topicSegments = topic.split('/');
           }
           draft.components.push(comp);
-
-          // Tutorial trigger for first payments publisher
-          if (type === 'publisher' && comp.topic?.includes('/payments/') && !draft.tutorialsSeen['firstPaymentsPublisher']) {
-            draft.activeTutorial = 'firstPaymentsPublisher';
-            draft.tutorialsSeen['firstPaymentsPublisher'] = true;
-          }
 
           // Tutorial triggers for first-time component purchases
           const tutorialKeyMap: Partial<Record<ComponentType, string>> = {
@@ -1125,7 +1119,7 @@ export const useGameStore = create<GameState>()(
         const pub = state.components.find(c => c.id === publisherId);
         if (!pub) return 0.5;
         const valueLevel = pub.upgrades['eventValue'] ?? 0;
-        return 1.0 + getTopicValueBonus(pub.topic) + valueLevel * 0.45 + valueLevel * valueLevel * 0.05 + getPermanentValueBoost(state);
+        return 1.0 + valueLevel * 0.45 + valueLevel * valueLevel * 0.05 + getPermanentValueBoost(state);
       },
 
       performPrestige: () => {

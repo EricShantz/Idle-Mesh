@@ -112,7 +112,7 @@ export const queueUpgrades: UpgradeDef[] = [
   {
     key: 'subscriptionBroaden',
     label: 'Broaden Subscription',
-    description: 'Widen topic filter to accept events from more publishers, but reduces specificity bonus on payouts',
+    description: 'Widen topic filter to accept events from more publishers',
     baseCost: 40,
     costMultiplier: 2,
     maxLevel: 5,

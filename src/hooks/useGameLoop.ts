@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useGameStore, nextDotId } from '../store/gameStore';
 import { interpolatePath, normalizedSpeed } from '../utils/pathUtils';
-import { getSpecificityMultiplier } from '../utils/topicMatching';
 
 // Node card dimensions: positioned at left: x-60, top: y-28
 // Card width: 120px (half = 60), card height varies but ~56px
@@ -410,14 +409,7 @@ export function useGameLoop() {
               const consumptionValueLevel = subscriber?.upgrades['consumptionValue'] ?? 0;
               const subscriberMult = 1.0 + consumptionValueLevel * 0.5;
 
-              // Specificity bonus: reward queues with narrow subscriptions
-              const publisherId = dot.originalNodeIds?.[0];
-              const publisher = publisherId ? state.components.find(c => c.id === publisherId) : undefined;
-              const queueId = dot.originalNodeIds?.find(id => state.components.find(c => c.id === id)?.type === 'queue');
-              const queue = queueId ? state.components.find(c => c.id === queueId) : undefined;
-              const specificityMult = getSpecificityMultiplier(publisher?.topic, queue?.subscriptionTopic);
-
-              const finalValue = dot.value * subscriberMult * specificityMult;
+              const finalValue = dot.value * subscriberMult;
               toConsume.push({ id: dot.id, value: finalValue, subscriberId: subscriber?.id ?? '' });
               // Don't add to updated — dot is finished
             } else {
