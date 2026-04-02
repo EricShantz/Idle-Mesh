@@ -92,6 +92,8 @@
 - Content in `tutorialConfig.ts`; UI in `TutorialModal.tsx` (z-index 60).
 - `TutorialSlide` has an optional `graphic?: ComponentType` field. When present, `TutorialModal` renders the graphic between the slide title and body text.
 - Animated graphics live in `TutorialGraphics.tsx` — one SVG component per slide context (publisher, events flow, earn money, upgrade/expand, broker upgrade, queue, DMQ, multi-publisher, multi-subscriber, multi-broker). Each uses Framer Motion `motion.circle`/`motion.text`/`motion.rect` for traveling dots and highlights. Color tokens match the game's `typeColors` palette.
+- `TravelingDot` is the shared helper for animated dots. It accepts `delay`, `duration`, `repeatDelay`, `color`, and `hideOnMount`. When `hideOnMount` is true, the first `r` keyframe is `0` (invisible) so the dot doesn't appear at its start position during the initial delay — it snaps visible the instant its animation fires. This is needed for dots with large delays that would otherwise sit statically on-screen at mount.
+- `QueueGraphic` uses a **5.0s shared cycle**: two broker→queue dots (0.5s apart), queue slots light up reactively (rightmost then middle), then both queue→sub dots depart sequentially with `hideOnMount`. Slot fill/drain keyframe times are derived from dot travel duration so they stay in sync with the traveling dots.
 
 ## Prestige System ("Schema Registry")
 - `prestige` state holds `points`, `totalPoints`, `count`, `permanentUpgradeLevels: Record<string, number>`.

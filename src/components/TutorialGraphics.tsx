@@ -61,9 +61,10 @@ function TravelingDot({
   duration = 1.4,
   color = C.dot,
   repeatDelay = 2.8,
+  hideOnMount = false,
 }: {
   x1: number; y1: number; x2: number; y2: number;
-  delay?: number; duration?: number; color?: string; repeatDelay?: number;
+  delay?: number; duration?: number; color?: string; repeatDelay?: number; hideOnMount?: boolean;
 }) {
   return (
     <motion.circle
@@ -72,7 +73,7 @@ function TravelingDot({
       animate={{
         cx: [x1, x2, x2],
         cy: [y1, y2, y2],
-        r: [3, 3, 0],
+        r: hideOnMount ? [0, 3, 3, 0] : [3, 3, 0],
       }}
       transition={{
         duration,
@@ -80,7 +81,7 @@ function TravelingDot({
         repeat: Infinity,
         repeatDelay,
         ease: 'linear',
-        times: [0, 0.85, 1],
+        times: hideOnMount ? [0, 0.001, 0.85, 1] : [0, 0.85, 1],
       }}
     />
   );
@@ -403,7 +404,7 @@ export function BrokerUpgradeGraphic() {
 
 export function QueueGraphic() {
   const bX = 70, qX = W / 2, sX = W - 70, y = H / 2;
-  const qNodeW = 80, qNodeH = 52;
+  const qNodeW = 72, qNodeH = 40;
 
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderRadius: 8, background: C.bg }}>
@@ -416,21 +417,35 @@ export function QueueGraphic() {
         fill={C.queue.bg} stroke={C.queue.border} strokeWidth={1.5}
         filter={`drop-shadow(0 0 6px ${C.queue.glow})`}
       />
-      <text x={qX} y={y - qNodeH / 2 + 15} textAnchor="middle" fill={C.queue.border} fontSize={11} fontWeight="600">Queue</text>
-      {/* Slots below label — flicker on/off like real queue slots */}
-      {[-14, 0, 14].map((dx, i) => (
+      <text x={qX} y={y - qNodeH / 2 + 13} textAnchor="middle" fill={C.queue.border} fontSize={11} fontWeight="600">Queue</text>
+      {/* Slots: rightmost on at t=1.12s, off at t=3.12s; middle on at t=1.62s, off at t=2.12s — 5.0s shared cycle */}
+      {[-10, 0, 10].map((dx, i) => (
         <motion.circle
           key={i}
-          cx={qX + dx} cy={y - qNodeH / 2 + 34} r={3}
-          animate={{ fill: [C.dot, C.dot, '#1e293b', '#1e293b', C.dot] }}
-          transition={{ duration: 2.0, delay: i * 0.55, repeat: Infinity, times: [0, 0.3, 0.35, 0.7, 0.75], ease: 'linear' }}
+          cx={qX + dx} cy={y - qNodeH / 2 + 28} r={3}
+          animate={i === 2
+            ? { fill: ['#1e293b', '#1e293b', C.dot, C.dot, '#1e293b', '#1e293b'] }
+            : i === 1
+              ? { fill: ['#1e293b', '#1e293b', C.dot, C.dot, '#1e293b', '#1e293b'] }
+              : { fill: '#1e293b' }
+          }
+          transition={i === 2
+            ? { duration: 5.0, repeat: Infinity, times: [0, 0.224, 0.226, 0.624, 0.626, 1.0], ease: 'linear' }
+            : i === 1
+              ? { duration: 5.0, repeat: Infinity, times: [0, 0.324, 0.326, 0.424, 0.426, 1.0], ease: 'linear' }
+              : undefined
+          }
         />
       ))}
       <NodeBox x={sX} y={y} type="subscriber" label="Subscriber" />
-      {/* Dot flowing broker → queue */}
-      <TravelingDot x1={bX + 36} y1={y} x2={qX - qNodeW / 2} y2={y} duration={1.2} />
-      {/* Dot flowing queue → subscriber */}
-      <TravelingDot x1={qX + qNodeW / 2} y1={y} x2={sX - 36} y2={y} delay={0.6} duration={1.2} />
+      {/* 1st dot: broker → queue */}
+      <TravelingDot x1={bX + 36} y1={y} x2={qX - qNodeW / 2} y2={y} duration={1.2} repeatDelay={3.8} />
+      {/* 2nd dot: broker → queue, 0.5s after 1st */}
+      <TravelingDot x1={bX + 36} y1={y} x2={qX - qNodeW / 2} y2={y} delay={0.5} duration={1.2} repeatDelay={3.8} />
+      {/* 1st dot: queue → subscriber, departs at t=2.12s (0.5s after both queued) */}
+      <TravelingDot x1={qX + qNodeW / 2} y1={y} x2={sX - 36} y2={y} delay={2.12} duration={1.0} repeatDelay={4.0} hideOnMount />
+      {/* 2nd dot: queue → subscriber, departs at t=3.12s (after 1st arrives at sub) */}
+      <TravelingDot x1={qX + qNodeW / 2} y1={y} x2={sX - 36} y2={y} delay={3.12} duration={1.0} repeatDelay={4.0} hideOnMount />
     </svg>
   );
 }

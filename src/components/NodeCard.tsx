@@ -329,7 +329,7 @@ export function NodeCard({ component }: Props) {
               : colors.glow,
           color: colors.border,
           cursor: cursorGrabbing ? 'grabbing' : (isPublisher ? 'pointer' : 'default'),
-          width: isDmq ? dmqNodeWidth : component.type === 'queue' ? 140 : 120,
+          width: isDmq ? dmqNodeWidth : 120,
           minHeight: 56,
           textAlign: 'center',
           justifyContent: 'center',
