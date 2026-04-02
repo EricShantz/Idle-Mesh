@@ -75,7 +75,7 @@
 - Add action logic to `gameStore.ts`, add UI to `Sidebar.tsx` shop section. New components placed unconnected; user wires via drag-to-connect.
 
 ## Connection Slot Limits
-- Enforced in both `getValidTargets()` and `completeDragConnection()`. Broker→queue limited by `addQueueSlot` level, queue→subscriber by `addSubscriberSlot` level, broker→broker by `addBridgeSlot` level, publisher limited to 1 broker.
+- Enforced in both `getValidTargets()` and `completeDragConnection()`. Broker→queue limited by `addQueueSlot` level, queue→subscriber by `addSubscriberSlot` level, broker→broker by `addBridgeSlot` level (both brokers must have a free slot — a single drag consumes one slot on each end), publisher limited to 1 broker.
 - All slot checks exclude the connection being reassigned. Existing saves with more connections than upgrade levels are grandfathered.
 
 ## Event Batching
