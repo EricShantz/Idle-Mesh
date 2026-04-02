@@ -13,6 +13,8 @@ Essential features that complete the Solace-inspired EDA experience.
   - Visual topic labels on publisher nodes and connection lines
   - Default topic or user-configurable per publisher
   - Topics could appear on the connection strings, but how would users manage workflows? e.g. publisher pushes event to topic A, queue subscribes to Topic A, then subscriber consumes from queue
+  - or what if when you buy a new publisher / subscriber, its default cash value is higher, but then you can upgrade the pubs / subs topics to a broader topic? e.g. start at acme/orders/fulfilled/v1.0/northamerica/headphones/SKU001, then when you upgrade it the topic becomes: acme/orders/fulfilled/v1.0/northamerica/headphones/*, then each upgrade adds a wild card 1 level up so more queues/susbcribers can receive those events. Then you upgrade the queues with a subscription topic, then when the user buys fan-out all the subscribers attached to that queue get the higher level event. Or each publisher pushes events to a different SPECIFIC topic, then on each queue you can upgrade it to the the wild card thing. to accept events from more publishers
+
 
 - [ ] **Queue Subscriptions with Wildcards**
   - Queues subscribe to topic patterns: `orders/*`, `orders/>`, `payments/*`
