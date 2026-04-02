@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useGameStore, nextDotId } from '../store/gameStore';
-import { interpolatePath } from '../utils/pathUtils';
+import { interpolatePath, normalizedSpeed } from '../utils/pathUtils';
 
 // Node card dimensions: positioned at left: x-60, top: y-28
 // Card width: 120px (half = 60), card height varies but ~56px
@@ -232,7 +232,7 @@ export function useGameLoop() {
                       id: forkDotId,
                       path: forkWaypoints,
                       progress: 0,
-                      speed: dot.speed,
+                      speed: normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, forkWaypoints),
                       status: 'traveling' as const,
                       color: dot.color,
                       opacity: 1,
@@ -544,9 +544,10 @@ export function useGameLoop() {
                 }
               }
 
+              const releaseSpeed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, releaseDot.path);
               if (ti === 0) {
                 // Update the original dot in place
-                updated[i] = { ...releaseDot, status: 'traveling', progress: releaseProgress, pauseStartTime: undefined, queuedAtNodeId: undefined } as Dot;
+                updated[i] = { ...releaseDot, status: 'traveling', progress: releaseProgress, speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined } as Dot;
               } else {
                 // Fan-out: create a copy for additional subscribers
                 updated.push({
@@ -554,6 +555,7 @@ export function useGameLoop() {
                   id: nextDotId(),
                   status: 'traveling',
                   progress: releaseProgress,
+                  speed: releaseSpeed,
                   pauseStartTime: undefined,
                   queuedAtNodeId: undefined,
                 } as Dot);
@@ -638,7 +640,7 @@ export function useGameLoop() {
                 // Combine: DMQ → broker → original route from broker
                 const fullPath = [...dmqToBroker, ...pathFromBroker];
 
-                const speed = 0.0007 * state.upgrades.propagationSpeed;
+                const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, fullPath);
 
                 updated[i] = {
                   ...dot,

@@ -100,7 +100,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 
 - Publisher at `(150, 300)`, Webhook at `(450, 300)`, Subscriber at `(750, 300)`
 - Publisher click is on a **1-second cooldown** (upgradeable). Clicking during cooldown does nothing. A dark translucent overlay drains downward during cooldown (CSS `clipPath` animation driven by RAF in `NodeCard.tsx`).
-- Events travel at base speed `0.0007` (progress units/ms), taking ~1.3 seconds to traverse the full path
+- Events travel at a normalized speed so each connection segment (hop) takes the same duration regardless of pixel distance. Base rate `0.0007` progress/ms is calibrated for a 2-segment path; `normalizedSpeed()` in `pathUtils.ts` scales by `REFERENCE_SEGMENTS / actualSegments`. A 3-hop path takes 3× as long as a 1-hop path.
 - **Webhook slowdown**: events travel at 40% speed while passing through the webhook. The slowdown region is dynamically calculated to align with the webhook's visual edges. Up to 3 "Faster Routing" upgrades reduce this by 20% each.
 - **Processing border animation** (webhook only): when an event dot passes through a webhook (hidden behind it due to z-index), two cyan (`#66ffff`) border arcs animate from the left midpoint — one traveling clockwise along the top edge, one counterclockwise along the bottom — converging at the right midpoint. Driven by a dedicated RAF loop in `NodeCard.tsx` using SVG `stroke-dashoffset` on two half-perimeter `<path>` elements, manipulated imperatively via refs (bypasses React re-renders). Progress tracks the dot's normalized x-position through the node; after exit, progress pushes to completion before opacity fades out. Brokers have no border animation since they relay instantly.
 - When the dot collides with the subscriber node (via `dotTouchesNode()` bounding-box hit test), it **pauses and shrinks** over 2.5 seconds, then money increments.
@@ -114,13 +114,14 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 2. **Event slows** through the webhook, continues to subscriber
 3. **Subscriber consumes** over ~2.5s → money increments when animation is ~50% done
 4. **Blockage points**: if webhook is occupied, next event drops at webhook edge; if subscriber is busy, event drops at subscriber edge
-5. **Spend money** on per-component upgrades (publish speed, event value, faster consumption) and global upgrades
-6. **Upgrade webhook → broker** ($75) to unlock queue purchases
-7. **Buy queues** ($60 each) — placed unconnected, user wires them via drag-to-connect
-8. **Wire connections**: drag from output port to target node, or click existing connections to detach and reassign/delete
-9. **Automation**: unlock per-publisher auto-fire upgrades for idle income
-10. **Smart routing**: broker connected to multiple queues routes each event to the queue with the most free buffer space (accounting for buffered + in-flight dots). With fan-out upgrade purchased on all queues, events go to all queues (one dot per path).
-11. **Disconnected queues**: queues connected to a broker but not a subscriber still receive and buffer events. Once full, routing skips them in favor of non-full queues. Connecting a subscriber dynamically extends queued dots' paths and begins draining.
+5. **Dead-end firing**: if a webhook/broker has no downstream path (no queue, no subscriber connected), events still fire and travel to the node center (using the same node-center-to-center path as `_getAllPathsWithNodes`), then drop. This lets players see events flowing even before wiring the full path.
+6. **Spend money** on per-component upgrades (publish speed, event value, faster consumption) and global upgrades
+7. **Upgrade webhook → broker** ($75) to unlock queue purchases
+8. **Buy queues** ($60 each) — placed unconnected, user wires them via drag-to-connect
+9. **Wire connections**: drag from output port to target node, or click existing connections to detach and reassign/delete
+10. **Automation**: unlock per-publisher auto-fire upgrades for idle income
+11. **Smart routing**: broker connected to multiple queues routes each event to the queue with the most free buffer space (accounting for buffered + in-flight dots). With fan-out upgrade purchased on all queues, events go to all queues (one dot per path).
+12. **Disconnected queues**: queues connected to a broker but not a subscriber still receive and buffer events. Once full, routing skips them in favor of non-full queues. Connecting a subscriber dynamically extends queued dots' paths and begins draining.
 
 ---
 
@@ -187,7 +188,7 @@ type EventDot = {
   id: string;
   path: { x: number; y: number }[];  // waypoints from getAllPathsForPublisher()
   progress: number;                   // 0.0 → 1.0 along full path
-  speed: number;                      // 0.0007 * propagationSpeed multiplier
+  speed: number;                      // normalizedSpeed(0.0007 * propagationSpeed, path) — constant per-hop duration
   status: 'traveling' | 'pausing' | 'queued' | 'dropped' | 'consumed';
   pauseStartTime?: number;            // Date.now() when pausing began
   queuedAtNodeId?: string;            // queue component ID when status is 'queued'

@@ -4,6 +4,7 @@ import { canConnect } from '../utils/connectionRules';
 import { globalUpgrades, getUpgradeCost } from './upgradeConfig';
 import { getNextTopic } from './topicPool';
 import { topicMatches, computeBroadenedTopic } from '../utils/topicMatching';
+import { normalizedSpeed } from '../utils/pathUtils';
 
 export type ComponentType = 'publisher' | 'webhook' | 'broker' | 'queue' | 'subscriber' | 'dmq';
 
@@ -282,7 +283,46 @@ export const useGameStore = create<GameState>()(
 
         const allPaths = state._getAllPathsWithNodes(publisherId);
         const allValidPaths = allPaths.filter(p => p.waypoints.length >= 2);
-        if (allValidPaths.length === 0) return;
+        if (allValidPaths.length === 0) {
+          // No valid paths — fire event to the first connected node and let it drop there
+          const directConn = state.connections.find(c => c.fromId === publisherId);
+          if (!directConn) return;
+          const target = state.components.find(c => c.id === directConn.toId);
+          if (!target) return;
+          // Build path using node centers (same as _getAllPathsWithNodes), then expand orthogonally
+          const nodePath = [{ x: pub.x, y: pub.y }, { x: target.x, y: target.y }];
+          const truncatedWaypoints: { x: number; y: number }[] = [nodePath[0]];
+          if (Math.abs(nodePath[0].y - nodePath[1].y) >= 1) {
+            const midX = (nodePath[0].x + nodePath[1].x) / 2;
+            truncatedWaypoints.push({ x: midX, y: nodePath[0].y });
+            truncatedWaypoints.push({ x: midX, y: nodePath[1].y });
+          }
+          truncatedWaypoints.push(nodePath[1]);
+          const value = state.getEventValue(publisherId);
+          const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, truncatedWaypoints);
+          set(draft => {
+            if (!skipCooldown) {
+              draft.publisherCooldowns[publisherId] = Date.now();
+            }
+            const fireCount = state.upgrades.batchFire > 0 ? state.upgrades.batchFire : 1;
+            for (let batch = 0; batch < fireCount; batch++) {
+              const dotId = `dot-${++dotIdCounter}`;
+              draft.eventDots.push({
+                id: dotId,
+                path: truncatedWaypoints,
+                progress: batch * -0.04,
+                speed,
+                status: 'traveling',
+                color: '#66ffff',
+                opacity: 1,
+                value,
+                originalValue: value,
+                originalNodeIds: [publisherId, target.id],
+              });
+            }
+          });
+          return;
+        }
 
         // Topic filtering: only keep paths where the queue's subscription matches the publisher's topic
         const pubTopic = pub.topic;
@@ -316,7 +356,7 @@ export const useGameStore = create<GameState>()(
               const truncatedNodeIds = anyPath.nodeIds.slice(0, brokerIdx + 1);
 
               const value = state.getEventValue(publisherId);
-              const speed = 0.0007 * state.upgrades.propagationSpeed;
+              const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, truncatedWaypoints);
               set(draft => {
                 if (!skipCooldown) {
                   draft.publisherCooldowns[publisherId] = Date.now();
@@ -368,7 +408,7 @@ export const useGameStore = create<GameState>()(
         }
 
         const value = state.getEventValue(publisherId);
-        const speed = 0.0007 * state.upgrades.propagationSpeed;
+        const baseSpeed = 0.0007 * state.upgrades.propagationSpeed;
 
         // Group selected paths by their first broker so we create one dot per broker fork point
         const forkGroups = new Map<string, typeof selectedPaths>();
@@ -394,7 +434,7 @@ export const useGameStore = create<GameState>()(
                 id: dotId,
                 path: primary.waypoints,
                 progress: batch * -0.04,
-                speed,
+                speed: normalizedSpeed(baseSpeed, primary.waypoints),
                 status: 'traveling',
                 color: '#66ffff',
                 opacity: 1,
