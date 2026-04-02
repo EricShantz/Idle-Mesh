@@ -228,7 +228,7 @@ export function NodeModal() {
                   onClick={() => setTopicPickerOpen(true)}
                   className="mt-1 text-[10px] text-cyan-400 hover:text-cyan-300 cursor-pointer"
                 >
-                  Change Topic
+                  Change Queue Subscription
                 </button>
               );
             })()}

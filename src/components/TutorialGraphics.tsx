@@ -614,6 +614,24 @@ export function MultiSubscriberGraphic() {
       <NodeBox x={sX} y={s2Y} type="subscriber" label="Subscriber" />
       <OrthoTravelingDot x1={qX + 36} y1={qY} x2={sX - 36} y2={s1Y} duration={1.3} />
       <OrthoTravelingDot x1={qX + 36} y1={qY} x2={sX - 36} y2={s2Y} delay={0.5} duration={1.3} />
+      {/* Coin pop on subscriber 1 */}
+      <motion.g
+        animate={{ y: [0, -5, -30, -38], opacity: [0, 1, 1, 0] }}
+        transition={{ duration: 1.2, delay: 1.1, repeat: Infinity, repeatDelay: 2.9, times: [0, 0.12, 0.75, 1], ease: 'easeOut' }}
+      >
+        <circle cx={sX - 20} cy={s1Y - 22} r={7} fill="#ca8a04" />
+        <text x={sX - 20} y={s1Y - 18.5} textAnchor="middle" fill="#fef08a" fontSize={9} fontWeight="800">$</text>
+        <text x={sX - 9} y={s1Y - 17} textAnchor="start" fill="#22c55e" fontSize={10} fontWeight="700" filter="drop-shadow(0 0 4px rgba(34,197,94,0.6))">+$1.20</text>
+      </motion.g>
+      {/* Coin pop on subscriber 2 */}
+      <motion.g
+        animate={{ y: [0, -5, -30, -38], opacity: [0, 1, 1, 0] }}
+        transition={{ duration: 1.2, delay: 1.6, repeat: Infinity, repeatDelay: 2.9, times: [0, 0.12, 0.75, 1], ease: 'easeOut' }}
+      >
+        <circle cx={sX - 20} cy={s2Y - 22} r={7} fill="#ca8a04" />
+        <text x={sX - 20} y={s2Y - 18.5} textAnchor="middle" fill="#fef08a" fontSize={9} fontWeight="800">$</text>
+        <text x={sX - 9} y={s2Y - 17} textAnchor="start" fill="#22c55e" fontSize={10} fontWeight="700" filter="drop-shadow(0 0 4px rgba(34,197,94,0.6))">+$1.20</text>
+      </motion.g>
     </svg>
   );
 }
