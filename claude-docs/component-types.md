@@ -3,7 +3,7 @@
 ## Publisher
 - Click target. Fires one event per click (subject to cooldown).
 - **Cooldown**: 1 second base, reduced by accelerating curve: `boostPct = level * (level + 9) / 2`, `cooldown = 1000 * (1 - boostPct/100)`. Max level 10 (95% reduction).
-- **Base event value**: $0.50, accelerating increments: `value = 0.5 + level * 0.45 + level² * 0.05` (each level adds $0.10 more than the last, starting at +$0.50). No max level.
+- **Base event value**: varies by topic domain (orders $0.50, payments $1.00, inventory $2.00, shipping $4.00), plus accelerating upgrade increments: `value = base + level * 0.45 + level² * 0.05`. No max level. A specificity bonus (1.0–1.5x) is applied at consume time based on how narrow the delivering queue's subscription is.
 - **Auto-Publisher** upgrade: per-publisher automation. Lv1: 5s, Lv2: 3s, Lv3: 1s, Lv4: 0.75s, Lv5: 0.5s, Lv6: 0.25s, Lv7: 0.1s. Bypasses manual cooldown (`skipCooldown`). Each publisher fires independently at its own interval.
 - Upgrades: Event Value (accelerating $), Publish Speed (accelerating % cooldown reduction), Auto-Publisher (per-publisher auto-fire)
 
@@ -20,7 +20,7 @@
 - **Bridge slot limit**: brokers start with 0 bridge slots (must upgrade via `addBridgeSlot`). Connecting two brokers consumes **one slot on each broker** — a single drag operation handles this automatically. Both brokers must have a free slot or the connection is rejected with a mesh error toast indicating which broker is full.
 - **Throughput cap (ingestion-only)**: each broker can ingest a limited number of events/sec from publishers. Base cap = 8 events/sec, increased by `increaseThroughput` upgrade (accelerating: `8 + level*(level+9)/2`). The cap only applies at the **first broker** a dot encounters (the publisher's directly-connected broker). Events relayed through bridges to downstream brokers do **not** count against those brokers' caps. Fan-out fork dots spawned at the ingestion broker DO count. When over capacity, events drop at the broker (gravity fall, catchable by DMQ). Tracked via a rolling 1-second window of `performance.now()` timestamps per broker in module-level state in `useGameLoop.ts` (not persisted).
 - **Throughput bar**: thin horizontal bar inside the broker node showing current utilization. Green → yellow (>70%) → red (>90%). Driven by `getBrokerUtilization()` exported from `useGameLoop.ts`.
-- Upgrades: Add Queue Slot (**functional**), Add Bridge Slot (**functional**), Increase Throughput (**functional**), Topic Filter Boost (hidden in UI — effect not yet defined)
+- Upgrades: Add Queue Slot (**functional**), Add Bridge Slot (**functional**), Increase Throughput (**functional**)
 
 ## Queue
 - Purchased from the sidebar shop for $60 (requires broker)
@@ -30,7 +30,7 @@
 - **Always captures** arriving dots on collision — dots never pass through a queue
 - Buffer capacity = `3 + bufferSize upgrade level` (base holds 3 events, max 20 slots = 2 rows of 10)
 - **Auto-release**: FIFO by `pauseStartTime` — oldest queued dot released first, one per frame, only when the queue has a current connection to a subscriber AND subscriber is free (no pausing dot, no traveling dot past any queue heading to that subscriber). Uses current connection graph, not baked paths.
-- **Visual slot indicators**: filled slots pack to the right (oldest dot = rightmost slot, newest = leftmost filled slot). Empty slots on the left. Retry dots show orange (`#fb923c`), normal dots cyan (`#66ffff`). Sorted by `pauseStartTime`.
+- **Visual slot indicators**: filled slots pack to the right (oldest dot = rightmost slot, newest = leftmost filled slot). Empty slots on the left. Retry dots show orange (`#fb923c`), normal dots show their publisher's topic color. Sorted by `pauseStartTime`.
 - **Subscriber slot limit**: queue starts with 1 subscriber connection slot, +1 per `addSubscriberSlot` upgrade level. Enforced the same way as broker queue slots.
 - **Topic subscription**: when a queue first connects to a broker, it auto-subscribes to the topic of a reachable publisher. Users can change the subscription via a "Change Topic" picker in the upgrade modal, which lists one entry per reachable publisher (including through bridges), each broadened to the queue's current `subscriptionBroaden` level. At high broaden levels, multiple publishers may collapse into the same wildcard pattern — duplicates are deduplicated, so fewer choices appear. When only one option exists, the picker is hidden. Selecting a different topic calls `setQueueSubscription()` which updates `subscriptionSegments` (original publisher segments), `subscriptionTopic`, and `subscriptionBroaden` level to match.
 - **Deletable**: red "Delete Queue" button in upgrade modal. Removes the queue, all its connections, and any dots queued in it.

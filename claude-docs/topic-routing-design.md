@@ -2,6 +2,38 @@
 
 > Fully implemented as of 2026-04-02.
 
+## Topic Value System
+
+### Value Tiers
+Each publisher domain has a flat base value bonus applied in `getEventValue()`:
+| Domain | Bonus | Base value |
+|---|---|---|
+| orders | +$0.00 | $0.50 |
+| payments | +$0.50 | $1.00 |
+| inventory | +$1.50 | $2.00 |
+| shipping | +$3.50 | $4.00 |
+
+Gaps are intentionally large and accelerating to make higher-tier publishers meaningfully more rewarding.
+
+### Specificity Bonus
+Applied at consume time in `useGameLoop.ts` via `getSpecificityMultiplier(pubTopic, subscriptionTopic)`. Rewards queues with narrow subscriptions:
+- Exact match (0 wildcards) → 1.5x payout multiplier
+- 1 wildcard (`*`) → ~1.4x
+- Scales linearly down to 1.0x at maximum broadening (`acme/>`)
+
+This creates a tradeoff with the Broaden Subscription upgrade — more coverage vs. lower per-event payout.
+
+### Publisher Colors
+Publishers and their event dots are colored by domain to make the mesh readable at a glance:
+- Orders: bright cyan (`#22d3ee`)
+- Payments: electric blue (`#00aaff`)
+- Inventory: deep blue (`#1d4ed8`)
+- Shipping: white-blue (`#ffffff`)
+
+Dot color is set at fire time and never reverts after a drop.
+
+---
+
 ## Design Decisions
 
 - **Publishers**: fixed specific topics, never change, displayed from game start

@@ -14,7 +14,7 @@ import {
   type UpgradeDef,
 } from '../store/upgradeConfig';
 import { formatMoney } from '../utils/formatMoney';
-import { computeBroadenedTopic } from '../utils/topicMatching';
+import { computeBroadenedTopic, getTopicValueBonus } from '../utils/topicMatching';
 
 function getUpgradesForType(type: string): UpgradeDef[] {
   switch (type) {
@@ -28,7 +28,7 @@ function getUpgradesForType(type: string): UpgradeDef[] {
   }
 }
 
-function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number): string {
+function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number, topic?: string): string {
   const nextLevel = currentLevel + 1;
 
   switch (upgradeKey) {
@@ -57,8 +57,9 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number): strin
 
     // Value upgrades ($X.XX per unit)
     case 'eventValue': {
-      const curVal = (0.5 + currentLevel * 0.45 + currentLevel * currentLevel * 0.05).toFixed(2);
-      const nxtVal = (0.5 + nextLevel * 0.45 + nextLevel * nextLevel * 0.05).toFixed(2);
+      const base = 0.5 + getTopicValueBonus(topic);
+      const curVal = (base + currentLevel * 0.45 + currentLevel * currentLevel * 0.05).toFixed(2);
+      const nxtVal = (base + nextLevel * 0.45 + nextLevel * nextLevel * 0.05).toFixed(2);
       const increment = (nextLevel * 0.45 + nextLevel * nextLevel * 0.05 - currentLevel * 0.45 - currentLevel * currentLevel * 0.05).toFixed(2);
       return `$${curVal} → $${nxtVal} (+$${increment})`;
     }
@@ -105,7 +106,6 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number): strin
     // One-time upgrades (no progression display)
     case 'upgradeToBroker':
     case 'fanOut':
-    case 'topicFilterBoost':
       return 'One-time';
 
     default:
@@ -263,7 +263,8 @@ export function NodeModal() {
                   <span className="font-bold">
                     {def.label}
                     {['fasterConsumption', 'publishSpeed', 'dmqReleaseSpeed'].includes(def.key) && level > 0 && ` (${level * (level + 9) / 2}%)`}
-                    {['eventValue', 'consumptionValue'].includes(def.key) && level > 0 && ` ($${(0.5 + level * 0.45 + level * level * 0.05).toFixed(2)})`}
+                    {def.key === 'eventValue' && level > 0 && ` ($${(0.5 + getTopicValueBonus(node.topic) + level * 0.45 + level * level * 0.05).toFixed(2)})`}
+                    {def.key === 'consumptionValue' && level > 0 && ` ($${(0.5 + level * 0.45 + level * level * 0.05).toFixed(2)})`}
                     {def.key === 'increaseThroughput' && ` (${8 + level * (level + 9) / 2}/sec)`}
                   </span>
                   {!maxed && <span className="text-[10px] opacity-50">Lv {level}</span>}
@@ -274,7 +275,7 @@ export function NodeModal() {
                     {computeBroadenedTopic(node.subscriptionSegments, level)} → {computeBroadenedTopic(node.subscriptionSegments, level + 1)}
                   </div>
                 ) : !maxed && (
-                  <div className="text-xs text-blue-300 mt-0.5">{getUpgradeValueDisplay(def.key, level)}</div>
+                  <div className="text-xs text-blue-300 mt-0.5">{getUpgradeValueDisplay(def.key, level, node.topic)}</div>
                 )}
                 <div className="mt-0.5">
                   {maxed ? 'MAX' : formatMoney(cost)}

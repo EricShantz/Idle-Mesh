@@ -75,14 +75,6 @@ export const brokerUpgrades: UpgradeDef[] = [
     baseCost: 100,
     costMultiplier: 2.2,
   },
-  {
-    key: 'topicFilterBoost',
-    label: 'Topic Filter Boost',
-    description: 'Routes events to more subscriber queues',
-    baseCost: 60,
-    costMultiplier: 2,
-    hidden: true,
-  },
 ];
 
 export const queueUpgrades: UpgradeDef[] = [
@@ -120,7 +112,7 @@ export const queueUpgrades: UpgradeDef[] = [
   {
     key: 'subscriptionBroaden',
     label: 'Broaden Subscription',
-    description: 'Widen topic filter to accept events from more publishers',
+    description: 'Widen topic filter to accept events from more publishers, but reduces specificity bonus on payouts',
     baseCost: 40,
     costMultiplier: 2,
     maxLevel: 5,

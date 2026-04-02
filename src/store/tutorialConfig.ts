@@ -69,6 +69,12 @@ export const tutorials: TutorialDef[] = [
       { title: 'Additional Broker!', body: 'Bridge brokers together to create a full event mesh. Use the bridge slot upgrade to connect brokers and route events across multiple paths.', graphic: MultiBrokerGraphic },
     ],
   },
+  {
+    key: 'firstPaymentsPublisher',
+    slides: [
+      { title: 'Higher-Value Topic!', body: 'Not all events are worth the same. acme/payments/> events have a higher base value than acme/orders/> events' },
+    ],
+  },
 ];
 
 export const tutorialMap: Record<string, TutorialDef> = Object.fromEntries(

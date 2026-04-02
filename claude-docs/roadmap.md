@@ -21,14 +21,10 @@
 
 ## Not Yet Implemented
 
-### Tier 2: Progression Depth
-- [ ] **Topic Filter Boost** — broker upgrade hidden in UI, effect not yet defined
-
 ### Tier 3: Advanced / Idle Scaling
 - [ ] **Event Mesh Visualization** — color-code connection lines by topic
-- [ ] **DMQ Replay Scaling** — auto-replay disabled events, dead letter explorer
-- [ ] **Solace-Flavored Unlocks** — rename global upgrades to Solace concepts, achievement notifications
-- [ ] **Advanced Topic Patterns** — topic-based earnings, dynamic topic routing, topic pool expansion (pool cycles after 8th publisher)
+- [ ] **Advanced Topic Patterns** — dynamic topic routing, topic pool expansion (pool cycles after 8th publisher)
+- [x] **Topic-Based Earnings** — value tiers by domain (orders→payments→inventory→shipping), specificity bonus for narrow subscriptions
 
 ---
 

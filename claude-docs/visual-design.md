@@ -2,7 +2,7 @@
 
 - **Background**: Deep dark navy (`#0a0e1a`)
 - **Nodes**: Rounded rectangles with border glow. Color-coded by type:
-  - Publisher: teal/cyan (`#22d3ee`)
+  - Publisher: color varies by topic domain (see below)
   - Webhook: amber (`#f59e0b`)
   - Broker: bright orange-red (`#fb923c`) — visually distinct from webhook to signal the upgrade
   - Queue: purple (`#a855f7`)
@@ -15,10 +15,15 @@
   - DMQ→broker connections use vertical-first routing (`buildVerticalFirstSvgPath()`) and terminate at the broker's bottom edge
   - Click to detach: clicking a connection line detaches the arrow end and starts a drag. Drop on a valid target to reassign, or release on nothing to delete. Original line hidden during drag.
   - Drag preview line shown in cyan during connection creation/reassignment (also orthogonal)
+- **Publisher topic colors**: publishers and their event dots are colored by topic domain, indicating value tier:
+  - Orders (base $0.50): bright cyan (`#22d3ee`)
+  - Payments (base $1.00): electric blue (`#00aaff`)
+  - Inventory (base $2.00): deep blue (`#1d4ed8`)
+  - Shipping (base $4.00): white-blue (`#ffffff`)
 - **Event dots**: 2.5px filled circles traveling along connection lines (collision detection remains at 6px radius)
-  - Traveling: cyan (`#66ffff`) with radial glow (4.5px); retry events are orange (`#fb923c`)
-  - Pausing at subscriber: cyan (or orange for retries), shrinks/fades over ~2.5s
-  - Dropped: red (`#ff4444`), falls with gravity, fades over ~2.5s. Retry events that drop a second time turn dark grey (`#4a5568`) instead of red.
+  - Traveling: colored to match their source publisher's topic (see above) with radial glow (4.5px); retry events are orange (`#fb923c`)
+  - Pausing at subscriber: publisher color (or orange for retries), shrinks/fades over ~2.5s
+  - Dropped: red (`#ff4444`), falls with gravity, fades over ~2.5s. Once dropped, dots never revert to their original color. Retry events that drop a second time turn dark grey (`#4a5568`) instead of red.
 - **Coin pops**: 🪙 emoji + green `+$X.XX` text floats up 50px from subscriber on money earned, fades over 1s. Color: green (`#22c55e`) with glow. Z-index 40. Adaptively throttled based on frame rate — at high throughput, pops are batched with aggregated amounts to maintain performance.
 - **Z-index layering**: connections (5) → back event canvas (19) → subscriber (20) → front event canvas (25) → webhook/broker/queue (26) → publisher (30) → coin pops (40) → dragging node (50)
   - Two canvases: traveling/queued/dropped dots render behind subscribers (z-19), pausing (consuming) dots render above (z-25) so the shrink animation is visible
