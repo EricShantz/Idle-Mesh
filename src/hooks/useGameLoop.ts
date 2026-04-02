@@ -531,16 +531,18 @@ export function useGameLoop() {
                   extension.push({ x: midX, y: subTarget.y });
                 }
                 extension.push({ x: subTarget.x, y: subTarget.y });
-                const newPath = dedupeConsecutiveWaypoints([...pathBeforeQueue, queuePoint, ...extension]);
-                const newQueueIdx = pathBeforeQueue.length;
-                const totalSegments = newPath.length - 1;
-                releaseDot = { ...releaseDot, path: newPath };
-                if (newQueueIdx < totalSegments) {
-                  const from = newPath[newQueueIdx];
-                  const to = newPath[newQueueIdx + 1];
+                // Only use queue→subscriber as the release path (not the full path from publisher)
+                const releasePath = dedupeConsecutiveWaypoints([queuePoint, ...extension]);
+                releaseDot = { ...releaseDot, path: releasePath };
+                const totalSegments = releasePath.length - 1;
+                if (totalSegments > 0) {
+                  const from = releasePath[0];
+                  const to = releasePath[1];
                   const segLen = Math.hypot(to.x - from.x, to.y - from.y);
                   const clearanceFraction = segLen > 0 ? (NODE_HALF_W + DOT_RADIUS + 2) / segLen : 1;
-                  releaseProgress = Math.min((newQueueIdx + clearanceFraction) / totalSegments, 1);
+                  releaseProgress = Math.min(clearanceFraction / totalSegments, 1);
+                } else {
+                  releaseProgress = 0;
                 }
               }
 
