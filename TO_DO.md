@@ -8,30 +8,28 @@ Organized by progression tier, aligned with **Solace PubSub+ event mesh** concep
 
 Essential features that complete the Solace-inspired EDA experience.
 
-- [ ] **Topic System**
-  - Publishers emit events on topic strings (e.g., `orders/created`, `payments/processed`)
-  - Visual topic labels on publisher nodes and connection lines
-  - Default topic or user-configurable per publisher
-  - Topics could appear on the connection strings, but how would users manage workflows? e.g. publisher pushes event to topic A, queue subscribes to Topic A, then subscriber consumes from queue
-  - or what if when you buy a new publisher / subscriber, its default cash value is higher, but then you can upgrade the pubs / subs topics to a broader topic? e.g. start at acme/orders/fulfilled/v1.0/northamerica/headphones/SKU001, then when you upgrade it the topic becomes: acme/orders/fulfilled/v1.0/northamerica/headphones/*, then each upgrade adds a wild card 1 level up so more queues/susbcribers can receive those events. Then you upgrade the queues with a subscription topic, then when the user buys fan-out all the subscribers attached to that queue get the higher level event. Or each publisher pushes events to a different SPECIFIC topic, then on each queue you can upgrade it to the the wild card thing. to accept events from more publishers
+- [x] **Topic System**
+  - Publishers emit events on specific topic strings (e.g., `acme/orders/created/na/electronics/SKU001`)
+  - Visual topic labels on publisher and queue nodes
+  - Topics assigned from predefined pool per publisher
 
+- [x] **Queue Subscriptions with Wildcards**
+  - Queues auto-subscribe to matching publisher topic on first broker connection
+  - Broaden Subscription upgrade: `*` (single level) → `>` (catch-all) across segments
+  - Solace-style hierarchical matching via `topicMatching.ts`
+  - Topic picker UI in queue upgrade modal
 
-- [ ] **Queue Subscriptions with Wildcards**
-  - Queues subscribe to topic patterns: `orders/*`, `orders/>`, `payments/*`
-  - Solace-style hierarchical matching (`>` = catch-all, `*` = single level)
-  - UI: text input or hierarchical selector on queue upgrade modal
+- [x] **Persistent Delivery (Fan-out)**
+  - Multiple subscribers can attach to one queue (via Add Subscriber Slot upgrade)
+  - Queue duplicates events at release time to all connected subscribers
+  - One-time "Persistent Delivery" upgrade per queue
 
-- [ ] **Persistent Delivery (Fan-out)**
-  - Multiple subscribers can attach to one queue
-  - Each event delivered to all subscribers (all earn money)
-  - Visual: queue shows all connected subscribers
-
-- [ ] **Dead Letter Queue (DMQ)**
-  - DMQ is a component with configurable width (upgradeable)
-  - Failed/dropped events fall off screen toward DMQ
-  - If DMQ catches the event (intersects width), event routes back to broker at 50% value
-  - Upgrades: DMQ Shape Width (wider catch zone), DMQ Recovery Rate (increase replay value: 50% → 60% → 75%)
-  - Unlock via global upgrade ($80 or similar cost)
+- [x] **Dead Letter Queue (DMQ)**
+  - DMQ component with configurable width (upgradeable)
+  - Catches dropped events during gravity fall
+  - Retries through broker at partial value (10% base + 10% per Value Recovery level)
+  - Upgrades: Width, Faster Release, Buffer Size, Value Recovery
+  - One-time purchase from shop ($80)
 
 ---
 
@@ -39,43 +37,31 @@ Essential features that complete the Solace-inspired EDA experience.
 
 Expand player agency and deepen the optimization puzzle.
 
-- [ ] **Multi-Publisher & Multi-Subscriber**
-  - Purchase additional publishers from shop (2nd, 3rd, etc.) after broker upgrade
-  - Each can emit different topics (e.g., `orders/created`, `payments/processed`)
+- [x] **Multi-Publisher & Multi-Subscriber**
+  - Purchase additional publishers/subscribers from shop with escalating costs
+  - Each publisher has a unique topic from the pool
   - Independent cooldown and upgrade tracks per publisher
-  - Cost: ~$200-300 per publisher
-  - Similarly, purchase additional subscribers from shop after queue purchase
-  - Enables parallel processing and complex topologies
-  - Each new publisher and subscriber could have a different "topic", and they should be more and more expensive, but their base value for events / consumming events should also be higher
+  - Publishers: $250 base (×1.5), Subscribers: $150 base (×1.5)
 
-- [ ] **Broker: Add Queue Slot (Mechanical)**
-  - Currently UI-only; make it mechanically limit queue connections
-  - Broker with 0 slots: queues cannot attach
-  - Each upgrade adds 1 slot (like persistent queue capacity)
-  - Forces progression: upgrade broker to scale queue topology
+- [x] **Broker: Add Queue Slot (Mechanical)**
+  - Mechanically limits queue connections (1 + upgrade level)
+  - Enforced in connection validation — excess connections rejected with toast
 
-- [ ] **Queue: Add Subscriber Slot (Mechanical)**
-  - Currently UI-only; limit how many subscribers per queue
-  - Queue with 1 slot (default): only one subscriber, no fan-out
-  - Each upgrade: +1 subscriber allowed
+- [x] **Queue: Add Subscriber Slot (Mechanical)**
+  - Mechanically limits subscriber connections (1 + upgrade level)
   - Prerequisite for fan-out strategy
 
-- [ ] **Upgrade UI Enhancement: Show Current Values**
-  - Display current component value when upgrading (e.g., "Add Subscriber Slot: 1 → 2")
-  - Helps players see immediate impact of upgrades
-  - Apply to all per-component upgrades
+- [x] **Upgrade UI Enhancement: Show Current Values**
+  - All upgrades show `current → next (+delta)` format
+  - Level number shown in top-right corner of each card
 
-- [ ] **Sync Broker & Queue Upgrades**
-  - Ensure broker queue slots and queue subscriber slots work mechanically together
-  - Broker slots limit how many queues can attach
-  - Queue slots limit how many subscribers can attach
-  - Both prevent "cheesing" the topology
+- [x] **Sync Broker & Queue Upgrades**
+  - Broker queue slots and queue subscriber slots both mechanically enforced
+  - Connection validation checks slot limits in both `getValidTargets()` and `completeDragConnection()`
 
 - [ ] **Topic Filter Boost (Broker Upgrade)**
-  - Make mechanical: enables advanced wildcard syntax on queues
-  - Without it: only basic patterns (`orders/*`)
-  - With it: full Solace syntax (`orders/>`, regex-like patterns)
-  - Cost scaling similar to other broker upgrades
+  - Hidden in UI — effect not yet defined
+  - Topic system exists but this upgrade's gameplay effect needs design
 
 ---
 
@@ -84,24 +70,23 @@ Expand player agency and deepen the optimization puzzle.
 Long-term vision for deep progression and endless scaling fantasy.
 
 - [ ] **Event Mesh Visualization**
-  - Show topic label on connection lines (SVG text above lines)
+  - Color-code connection lines by topic (e.g., orders = blue, payments = orange)
   - Dynamic updates when topics change
-  - Color-code lines by topic (e.g., orders = blue, payments = orange)
 
-- [ ] **Multiple Brokers**
-  - Ability to purchase second broker ($150-200)
-  - Can connect to different publishers/queues
-  - Begin sketching multi-broker mesh topology (bridges between brokers)
+- [x] **Multiple Brokers**
+  - Purchase additional brokers from shop ($200 base, ×2 per extra)
+  - Connect to different publishers/queues
+  - Multi-broker mesh topology via bridge connections
 
-- [ ] **Broker Bridging**
-  - Brokers can relay events to each other (mesh topology)
-  - Foundation for true event mesh with multiple hops
-  - Advanced visualization: show topic flowing across mesh
+- [x] **Broker Bridging**
+  - Broker-to-broker bridge connections via Add Bridge Slot upgrade
+  - Events relay across brokers with topic-aware filtering
+  - Visually distinct bridge lines (thicker, orange-tinted)
+  - Bidirectional DFS traversal for path discovery
 
 - [ ] **DMQ Replay Scaling**
   - Auto-replay disabled events (with increasing cost)
   - Dead letter explorer: view dropped event topics/counts
-  - "Salvage Rate" upgrade: increase partial replay value (e.g., 50% → 75%)
 
 - [ ] **Solace-Flavored Unlocks**
   - Rename global upgrades to Solace concepts:
@@ -111,19 +96,15 @@ Long-term vision for deep progression and endless scaling fantasy.
   - Achievement/milestone notifications: "Event Mesh Online!", "Distributed Topology Unlocked"
 
 - [ ] **Advanced Topic Patterns**
-  - Regex-style subscriptions (if UI supports it)
   - Topic-based earnings: certain topics pay more (unlocked via upgrade)
   - Dynamic topic routing: publisher can switch topics
+  - Topic pool expansion: pool cycles back after 8th publisher — need more unique topics
 
-- [ ] **Dynamic Connection Rewiring (Boomi-style)**
-  - Drag connection lines to reassign where components connect
-  - Users can re-orchestrate their mesh at any time
-  - Constraint validation: prevent invalid connections
-    - Publishers → Broker/Webhook only (no direct subscriber)
-    - Subscribers must come from Queue or Broker
-    - DMQ must route back to Broker
-    - Queues go between Broker and Subscriber(s)
-  - Enables player creativity in topology design
+- [x] **Dynamic Connection Rewiring (Boomi-style)**
+  - Click-to-detach and drag connections to reassign targets
+  - Output port drag-to-connect for creating new connections
+  - Full constraint validation: publishers → broker/webhook, subscribers from queue/broker, DMQ → broker, etc.
+  - Connection slot limits enforced per component type
 
 - [ ] **Schema Registry: Prestige System**
   - Cost: $1,000,000 per prestige
@@ -140,14 +121,24 @@ Long-term vision for deep progression and endless scaling fantasy.
 
 ## Known Bugs / Technical Debt
 
-- [ ] **Event routing bug**: If multiple queues sit between broker and 1 subscriber, events can pass through the subscriber and route to another queue before being consumed or dropped. Check path validation logic.
+- [ ] **Bridge rendering glitch**: dots released from a queue behind a bridge appear to start halfway down the queue→subscriber segment at max propagation speed
+- [ ] **Topic pool limited**: pool cycles back to first topic after 8th publisher — need more unique topics for late-game
 
 ---
 
 ## Implementation Notes
 
 ### ✅ Already Implemented
-- [x] Queue functionality: events pause at queue when subscriber busy, auto-release when free (done!)
+- [x] Queue functionality: events pause at queue when subscriber busy, auto-release when free
+- [x] Topic system: publishers have fixed topics, queues subscribe with broadening upgrades
+- [x] Multi-broker mesh: bridge connections with topic-aware forwarding
+- [x] Fan-out: persistent delivery duplicates events at queue release time
+- [x] DMQ: catches dropped events, retries through broker at partial value
+- [x] Multi-publisher/subscriber: shop purchases with escalating costs
+- [x] Connection slot limits: mechanical enforcement for broker→queue, queue→subscriber, broker→broker
+- [x] Dynamic connection rewiring: click-to-detach, drag-to-connect, output port creation
+- [x] Upgrade value display: current → next (+delta) format on all upgrade cards
+- [x] Tutorial system: intro slides on first load + contextual popups on first component purchase/unlock
 
 ### ❓ Clarification Needed
 - **Micro-Integrations / Gateways**: What should these do? Examples?
@@ -163,4 +154,4 @@ Long-term vision for deep progression and endless scaling fantasy.
 - [ ] Replay/undo button for failed topology experiments
 - [ ] Persistent DMQ: events visible across sessions (or reset on new game)
 - [ ] Steam integration: achievements for Solace milestones
-- [ ] Tutorial: guided first 2 minutes explaining Solace concepts
+- [x] Tutorial: intro slides + contextual popups on first component unlock

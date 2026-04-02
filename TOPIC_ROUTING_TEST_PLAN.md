@@ -1,5 +1,7 @@
 # Topic Routing & Multi-Broker Mesh — Test Plan
 
+> **STATUS: ALL TESTS PASSING** (as of 2026-04-02). All phases verified.
+
 > Clear localStorage and hard-refresh (Ctrl+Shift+R) before starting.
 > Set starting balance high for testing: `balance: saved?.balance ?? 5000000` in `gameStore.ts`.
 

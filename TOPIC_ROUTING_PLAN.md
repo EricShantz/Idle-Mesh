@@ -1,5 +1,7 @@
 # Topic-Based Event Routing + Multi-Broker Mesh
 
+> **STATUS: FULLY IMPLEMENTED** (as of 2026-04-02). All phases complete and tested. See TOPIC_ROUTING_TEST_PLAN.md for test results.
+
 ## Context
 
 The game currently routes events purely by connection topology — any publisher fires to any connected queue through the broker. We're adding two systems that work together:
