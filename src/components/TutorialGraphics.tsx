@@ -455,10 +455,23 @@ export function DmqGraphic() {
   const dmqX = 265, dmqY = 116;
   const dmqNodeW = 80, dmqNodeH = 52;
 
+  // Return path: DMQ left edge → left to broker x → up to broker bottom center (one 90° bend)
+  const retX1 = dmqX - dmqNodeW / 2, retY1 = dmqY;
+  const retX2 = bX, retY2 = bY + 20; // broker bottom center
+  const retMx = retX2; // bend is directly below broker
+
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderRadius: 8, background: C.bg }}>
-      {/* Orthogonal wire: broker → DMQ */}
-      <Wire x1={bX + 36} y1={bY} x2={dmqX - dmqNodeW / 2} y2={dmqY} />
+      {/* Orthogonal return wire: DMQ → broker bottom center, arrow pointing at broker */}
+      <path
+        d={`M ${retX1} ${retY1} L ${retMx} ${retY1} L ${retMx} ${retY2}`}
+        fill="none" stroke={C.line} strokeWidth={1.5} strokeDasharray="4 3"
+      />
+      {/* Arrowhead pointing upward into broker bottom */}
+      <polygon
+        points={`${retX2},${retY2} ${retX2 - 4},${retY2 + 6} ${retX2 + 4},${retY2 + 6}`}
+        fill={C.line}
+      />
 
       {/* Broker */}
       <NodeBox x={bX} y={bY} type="broker" label="Broker" />
@@ -470,18 +483,32 @@ export function DmqGraphic() {
         filter={`drop-shadow(0 0 6px ${C.dmq.glow})`}
       />
       <text x={dmqX} y={dmqY - dmqNodeH / 2 + 15} textAnchor="middle" fill={C.dmq.border} fontSize={11} fontWeight="600">DMQ</text>
-      {/* Slots fill with red as events are caught */}
+      {/* Slots — 5.0s shared cycle
+           i=2: lights at t=0.616s → 0.123, dark at t=2.2s → 0.440
+           i=1: lights at t=1.616s → 0.323, dark at t=3.2s → 0.640 */}
       {[-14, 0, 14].map((dx, i) => (
         <motion.circle
           key={i}
           cx={dmqX + dx} cy={dmqY - dmqNodeH / 2 + 34} r={3}
-          animate={{ fill: ['#1e293b', '#1e293b', '#ff4444', '#ff4444', '#1e293b'] }}
-          transition={{ duration: 1.8, delay: i * 0.5, repeat: Infinity, times: [0, 0.2, 0.25, 0.7, 0.75], ease: 'linear' }}
+          animate={i === 2
+            ? { fill: ['#1e293b', '#1e293b', '#ff4444', '#ff4444', '#1e293b', '#1e293b'] }
+            : i === 1
+              ? { fill: ['#1e293b', '#1e293b', '#ff4444', '#ff4444', '#1e293b', '#1e293b'] }
+              : { fill: '#1e293b' }
+          }
+          transition={i === 2
+            ? { duration: 5.0, repeat: Infinity, times: [0, 0.122, 0.124, 0.438, 0.440, 1.0], ease: 'linear' }
+            : i === 1
+              ? { duration: 5.0, repeat: Infinity, times: [0, 0.222, 0.224, 0.538, 0.540, 1.0], ease: 'linear' }
+              : undefined
+          }
         />
       ))}
 
-      {/* Red dots falling from above into DMQ */}
-      {[0, 1.1].map((delay, i) => (
+      {/* Red dots — duration+repeatDelay=5.0 keeps phase-locked to slot cycle
+           dot 0: delay=0,   fires at 0, 5, 10...   arrives at 0.616s into each cycle
+           dot 1: delay=1.0, fires at 1, 6, 11...   arrives at 1.616s into each cycle */}
+      {([{ delay: 0, repeatDelay: 4.3 }, { delay: 0.5, repeatDelay: 4.3 }]).map(({ delay, repeatDelay }, i) => (
         <motion.circle
           key={i}
           r={3}
@@ -492,17 +519,31 @@ export function DmqGraphic() {
             cy: [8, dmqY - dmqNodeH / 2 - 4],
             opacity: [0, 1, 1, 0],
           }}
-          transition={{ duration: 0.9, delay, repeat: Infinity, repeatDelay: 0.8, ease: 'easeIn', times: [0, 0.08, 0.88, 1] }}
+          transition={{ duration: 0.7, delay, repeat: Infinity, repeatDelay, ease: 'easeIn', times: [0, 0.08, 0.88, 1] }}
         />
       ))}
 
-      {/* Retry dot: travels back up from DMQ to broker (orange) */}
-      <TravelingDot
-        x1={dmqX - dmqNodeW / 2} y1={dmqY}
-        x2={bX + 36} y2={bY}
-        delay={0.8} duration={1.3}
-        color="#fb923c"
-      />
+      {/* Two orange retry dots — duration+repeatDelay=5.0, offset by 1.0s apart
+           orange 1: departs at t=2.2s → slot i=2 dark; fires at 2.2, 7.2, 12.2...
+           orange 2: departs at t=3.2s → slot i=1 dark; fires at 3.2, 8.2, 13.2... */}
+      {(() => {
+        const seg1 = Math.abs(retX1 - retX2), seg2 = Math.abs(retY2 - retY1);
+        const t1 = seg1 / (seg1 + seg2);
+        return [2.2, 2.7].map((delay, i) => (
+          <motion.circle
+            key={i}
+            r={3}
+            fill="#fb923c"
+            filter="drop-shadow(0 0 4px rgba(251,146,60,0.6))"
+            animate={{
+              cx: [retX1, retX2, retX2, retX2],
+              cy: [retY1, retY1, retY2, retY2],
+              opacity: [0, 1, 1, 0],
+            }}
+            transition={{ duration: 1.0, delay, repeat: Infinity, repeatDelay: 4.0, ease: 'linear', times: [0, t1 * 0.92, 0.92, 1] }}
+          />
+        ));
+      })()}
     </svg>
   );
 }
