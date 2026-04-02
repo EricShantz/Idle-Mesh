@@ -114,6 +114,8 @@ export type GameState = {
   completeDragConnection: (targetId: string) => void;
   cancelDragConnection: () => void;
   setDraggingNodeId: (id: string | null) => void;
+  getAvailableTopics: (queueId: string) => { topic: string; segments: string[]; broadenLevel: number }[];
+  setQueueSubscription: (queueId: string, topic: string, segments: string[], broadenLevel: number) => void;
 };
 
 let dotIdCounter = 0;
@@ -806,6 +808,64 @@ export const useGameStore = create<GameState>()(
 
       setDraggingNodeId: (id: string | null) => {
         set(draft => { draft.draggingNodeId = id; });
+      },
+
+      getAvailableTopics: (queueId: string) => {
+        const state = get();
+        // Find broker(s) connected to this queue
+        const brokerIds = state.connections
+          .filter(c => c.toId === queueId)
+          .map(c => c.fromId)
+          .filter(id => state.components.find(c => c.id === id)?.type === 'broker');
+
+        // Walk bridges to find all reachable publishers
+        const visited = new Set<string>();
+        const publishers: Map<string, { topic: string; segments: string[] }> = new Map();
+
+        const walk = (brokerId: string) => {
+          if (visited.has(brokerId)) return;
+          visited.add(brokerId);
+          // Direct publisher connections to this broker
+          for (const conn of state.connections) {
+            if (conn.toId === brokerId) {
+              const pub = state.components.find(c => c.id === conn.fromId && c.type === 'publisher');
+              if (pub?.topic && !publishers.has(pub.topic)) {
+                publishers.set(pub.topic, { topic: pub.topic, segments: pub.topicSegments ?? pub.topic.split('/') });
+              }
+            }
+          }
+          // Bridge connections (bidirectional)
+          for (const conn of state.connections) {
+            const other = conn.fromId === brokerId ? conn.toId : conn.toId === brokerId ? conn.fromId : null;
+            if (other && state.components.find(c => c.id === other)?.type === 'broker') {
+              walk(other);
+            }
+          }
+        };
+
+        for (const bId of brokerIds) walk(bId);
+
+        // Generate one entry per publisher at the queue's current broaden level
+        const queue = state.components.find(c => c.id === queueId);
+        const broadenLevel = queue?.upgrades.subscriptionBroaden ?? 0;
+        const results: Map<string, { topic: string; segments: string[]; broadenLevel: number }> = new Map();
+        for (const pub of publishers.values()) {
+          const broadened = broadenLevel === 0 ? pub.topic : computeBroadenedTopic(pub.segments, broadenLevel);
+          if (!results.has(broadened)) {
+            results.set(broadened, { topic: broadened, segments: pub.segments, broadenLevel });
+          }
+        }
+        return Array.from(results.values());
+      },
+
+      setQueueSubscription: (queueId: string, topic: string, segments: string[], broadenLevel: number) => {
+        set(draft => {
+          const queue = draft.components.find(c => c.id === queueId);
+          if (!queue || queue.type !== 'queue') return;
+          queue.subscriptionSegments = [...segments];
+          queue.upgrades.subscriptionBroaden = broadenLevel;
+          queue.subscriptionTopic = topic;
+        });
       },
 
       purchaseGlobalUpgrade: (upgradeKey: string) => {

@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useSyncExternalStore, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 import { useViewport } from '../hooks/useViewport';
@@ -115,6 +115,9 @@ export function NodeModal() {
   const upgradeComponent = useGameStore(s => s.upgradeComponent);
   const selectNode = useGameStore(s => s.selectNode);
   const removeComponent = useGameStore(s => s.removeComponent);
+  const getAvailableTopics = useGameStore(s => s.getAvailableTopics);
+  const setQueueSubscription = useGameStore(s => s.setQueueSubscription);
+  const [topicPickerOpen, setTopicPickerOpen] = useState(false);
   const viewport = useViewport();
 
   // Subscribe to viewport for screen-space anchoring
@@ -175,6 +178,48 @@ export function NodeModal() {
             x
           </button>
         </div>
+        {node.type === 'queue' && node.subscriptionTopic && (
+          <div className="mb-2">
+            <div className="text-[10px] text-gray-400 mb-0.5">Subscription</div>
+            <div className="text-xs font-mono text-amber-300 truncate" title={node.subscriptionTopic}>
+              {node.subscriptionTopic}
+            </div>
+            {(() => {
+              const topics = getAvailableTopics(node.id);
+              if (topics.length <= 1) return null;
+              return topicPickerOpen ? (
+                <div className="mt-1 flex flex-col gap-0.5 max-h-32 overflow-y-auto">
+                  {topics.map(t => (
+                    <button
+                      key={t.topic}
+                      onClick={() => {
+                        if (t.topic !== node.subscriptionTopic) {
+                          setQueueSubscription(node.id, t.topic, t.segments, t.broadenLevel);
+                        }
+                        setTopicPickerOpen(false);
+                      }}
+                      className="text-left text-[10px] font-mono px-1.5 py-1 rounded border transition-colors cursor-pointer"
+                      style={{
+                        borderColor: t.topic === node.subscriptionTopic ? '#f59e0b' : '#374151',
+                        background: t.topic === node.subscriptionTopic ? '#78350f33' : '#1f293744',
+                        color: t.topic === node.subscriptionTopic ? '#fbbf24' : '#9ca3af',
+                      }}
+                    >
+                      {t.topic}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <button
+                  onClick={() => setTopicPickerOpen(true)}
+                  className="mt-1 text-[10px] text-cyan-400 hover:text-cyan-300 cursor-pointer"
+                >
+                  Change Topic
+                </button>
+              );
+            })()}
+          </div>
+        )}
         <div className="flex flex-col gap-1.5">
           {upgrades.map(def => {
             const level = node.upgrades[def.key] ?? 0;
