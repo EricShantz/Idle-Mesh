@@ -3,7 +3,7 @@ import { type ComponentType, type GameComponent, type Connection } from '../stor
 const ALLOWED_TARGETS: Record<ComponentType, ComponentType[]> = {
   publisher: ['broker', 'webhook'],
   webhook: ['queue', 'subscriber'],
-  broker: ['queue', 'subscriber'],
+  broker: ['queue', 'subscriber', 'broker'],
   queue: ['subscriber'],
   subscriber: [],
   dmq: ['broker'],
@@ -51,6 +51,18 @@ export function getValidTargets(
     if (from.type === 'queue' && c.type === 'subscriber') {
       const maxSlots = 1 + (from.upgrades['addSubscriberSlot'] ?? 0);
       if ((outgoingByType['subscriber'] ?? 0) >= maxSlots) return false;
+    }
+
+    // Broker → broker bridge slot limit (starts at 0, must upgrade)
+    if (from.type === 'broker' && c.type === 'broker') {
+      const maxSlots = from.upgrades['addBridgeSlot'] ?? 0;
+      if ((outgoingByType['broker'] ?? 0) >= maxSlots) return false;
+    }
+
+    // Publisher → single broker limit
+    if (from.type === 'publisher') {
+      const totalOutgoing = connections.filter(cn => cn.fromId === fromId).length;
+      if (totalOutgoing >= 1) return false;
     }
 
     return true;

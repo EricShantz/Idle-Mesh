@@ -54,6 +54,8 @@ export function ConnectionLine({ conn }: Props) {
     ? buildVerticalFirstSvgPath(startX, startY, endX, endY)
     : buildOrthogonalSvgPath(startX, startY, endX, endY);
 
+  const isBridge = from.type === 'broker' && to.type === 'broker';
+
   const handleClickLine = (e: React.PointerEvent) => {
     e.stopPropagation();
     e.preventDefault();
@@ -74,9 +76,9 @@ export function ConnectionLine({ conn }: Props) {
       <path
         d={pathD}
         fill="none"
-        stroke={hovered ? '#4b6a82' : '#334155'}
-        strokeWidth={1.5}
-        strokeDasharray="4 4"
+        stroke={hovered ? '#4b6a82' : isBridge ? '#fb923c55' : '#334155'}
+        strokeWidth={isBridge ? 2 : 1.5}
+        strokeDasharray={isBridge ? '8 4' : '4 4'}
         markerEnd="url(#arrowhead)"
         style={{ transition: 'stroke 0.15s' }}
       />

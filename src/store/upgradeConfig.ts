@@ -54,6 +54,13 @@ export const brokerUpgrades: UpgradeDef[] = [
     costMultiplier: 2,
   },
   {
+    key: 'addBridgeSlot',
+    label: 'Add Bridge Slot',
+    description: 'Allow connection to another broker (event mesh bridging)',
+    baseCost: 80,
+    costMultiplier: 2.5,
+  },
+  {
     key: 'topicFilterBoost',
     label: 'Topic Filter Boost',
     description: 'Routes events to more subscriber queues',
@@ -94,6 +101,14 @@ export const queueUpgrades: UpgradeDef[] = [
     baseCost: 45,
     costMultiplier: 2,
     maxLevel: 17,
+  },
+  {
+    key: 'subscriptionBroaden',
+    label: 'Broaden Subscription',
+    description: 'Widen topic filter to accept events from more publishers',
+    baseCost: 40,
+    costMultiplier: 2,
+    maxLevel: 5,
   },
 ];
 

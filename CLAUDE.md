@@ -142,7 +142,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - Same position as the webhook it replaced; label and color change on purchase
 - Unlocks the **Queue shop item** in the sidebar
 - **Queue slot limit**: broker starts with 1 queue connection slot, +1 per `addQueueSlot` upgrade level. Connection validation enforces this — excess connections are rejected with a mesh error toast.
-- Upgrades: Add Queue Slot (**functional**), Topic Filter Boost (hidden in UI — requires topic hierarchy system, not yet implemented)
+- Upgrades: Add Queue Slot (**functional**), Add Bridge Slot (**functional**), Topic Filter Boost (hidden in UI — effect not yet defined)
 
 ### Queue
 - Purchased from the sidebar shop for $60 (requires broker)
@@ -155,7 +155,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - **Visual slot indicators**: filled slots pack to the right (oldest dot = rightmost slot, newest = leftmost filled slot). Empty slots on the left. Retry dots show orange (`#fb923c`), normal dots cyan (`#66ffff`). Sorted by `pauseStartTime`.
 - **Subscriber slot limit**: queue starts with 1 subscriber connection slot, +1 per `addSubscriberSlot` upgrade level. Enforced the same way as broker queue slots.
 - **Deletable**: red "Delete Queue" button in upgrade modal. Removes the queue, all its connections, and any dots queued in it.
-- Upgrades: Add Subscriber Slot (**functional**), Persistent Delivery/`fanOut` (**functional** — routing logic in `fireEvent`), Faster Release (**functional** — accelerating release threshold), Increase Buffer Size (**functional**)
+- Upgrades: Add Subscriber Slot, Persistent Delivery/`fanOut`, Faster Release, Increase Buffer Size, Broaden Subscription (all **functional** — see upgrade tables below)
 
 ### Dead Message Queue (DMQ)
 - Purchased from the sidebar shop for $80 (requires broker, one-time purchase)
@@ -168,14 +168,14 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - **Pass 2 exclusion**: DMQ-queued dots are skipped by the regular queue release pass (Pass 2); they are only released by the dedicated DMQ release pass (Pass 3).
 - **Faster Release**: accelerating curve (`boostPct = level * (level + 9) / 2`) reduces how far the previous retry dot must travel before the next is released. At level 0 the previous dot must be 100% past the DMQ→broker segment; each level reduces this threshold. Max level 10 (95%).
 - **Deletable**: red "Delete DMQ" button in upgrade modal. Removes the DMQ and all its connections; DMQ becomes available again in the shop.
-- Upgrades: Increase Width (+40px), Faster Release (accelerating %), Increase Buffer Size, Value Recovery (+10%, max 9 levels = 100%)
+- Upgrades: Increase Width, Faster Release, Increase Buffer Size, Value Recovery (all **functional** — see upgrade tables below)
 
 ### Subscriber
 - Consumes events. Pauses for ~2.5s while "processing" (shrink animation), then money increments.
 - **Coin pop animation**: when money is earned, a 🪙 coin icon with the earned amount floats upward from the subscriber and fades out over 1 second (Framer Motion `AnimatePresence` in `MeshCanvas.tsx`, state in `coinPops` array)
 - **Faster Consumption** upgrade: accelerating curve `boostPct = min(level * (level + 9) / 2, 100)`, `duration = 2500 * (1 - boostPct/100)`. Max level 11 (100% reduction = instant consumption).
 - **Value calculation**: final event value = publisher value + subscriber value. Subscriber value uses same accelerating formula as publisher: `0.5 + level * 0.45 + level² * 0.05`. No max level.
-- Upgrades: Consumption Value (accelerating $, **functional**), Faster Consumption (accelerating %, **functional**)
+- Upgrades: Consumption Value, Faster Consumption (both **functional** — see upgrade tables below)
 
 ---
 
@@ -200,6 +200,8 @@ type EventDot = {
   isRetry?: boolean;                  // true for DMQ retry dots (orange, no re-catch)
   originalNodeIds?: string[];         // node IDs of the original path, used to rebuild fresh path on DMQ release
   originalValue?: number;             // publisher event value at creation, used for DMQ value recovery calc
+  forkPaths?: { waypoints: { x: number; y: number }[]; nodeIds: string[] }[];  // additional paths to spawn when dot reaches fork broker
+  forkNodeId?: string;               // broker ID where fork dots should spawn
 };
 ```
 
@@ -213,6 +215,8 @@ type EventDot = {
 - `dotTouchesNode(px, py, nodeX, nodeY)` tests a 6px-radius dot against node bounding boxes (NODE_HALF_W=60, NODE_TOP_OFFSET=28, NODE_BOTTOM_OFFSET=28)
 - Webhook/broker blockage uses proximity check (30px radius) + `isComponentOccupied()` (checks for pausing/queued dots)
 - **Path-ordered interaction**: dots only collide with the **next** queue or subscriber on their path (determined from `pathComps` by progress). This prevents dots from being captured by nodes they physically overlap but haven't reached yet along their connection route (e.g., a subscriber dragged near the broker won't consume dots that still need to pass through a queue first). DMQ catch is exempt — it uses spatial-only collision on falling dots.
+
+**Broker-level forking**: when multiple downstream paths exist (fan-out or bridge), `fireEvent` creates one dot per unique first-broker. Extra paths are stored as `forkPaths` on the dot. When the dot reaches the fork broker (detected via `dotTouchesNode` in `useGameLoop`), fork dots are spawned from the broker position for each additional path. This creates the visual effect of the broker duplicating events rather than the publisher. Fork dot IDs are generated via `nextDotId()` exported from `gameStore.ts`.
 
 **Key behaviors:**
 - `traveling` → slows through webhook when dot visually overlaps the webhook node (bounding-box check via `dotTouchesNode()`), drops near webhook/broker if component is occupied (proximity check)
@@ -249,7 +253,8 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 | Upgrade | Effect | Base Cost | Multiplier |
 |---|---|---|---|
 | Add Queue Slot | **Functional**: max queue connections = 1 + level | $40 | ×2 |
-| Topic Filter Boost | Hidden in UI (requires topic hierarchy system) | $60 | ×2 |
+| Add Bridge Slot | **Functional**: max broker-to-broker connections = 0 + level | $80 | ×2.5 |
+| Topic Filter Boost | Hidden in UI (effect not yet defined) | $60 | ×2 |
 
 ### Queue
 | Upgrade | Effect | Base Cost | Multiplier |
@@ -258,6 +263,7 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 | Persistent Delivery (`fanOut`) | **Functional**: all connected queues receive every event (broker-level routing) | $100 (one-time) |  |
 | Faster Release | **Functional**: Accelerating `level*(level+9)/2`% release threshold reduction | $35 | ×1.8 | 10 (95%) |
 | Increase Buffer Size | **Functional**: buffer capacity = 3 + level (max 20 slots) | $45 | ×2 | 17 |
+| Broaden Subscription | **Functional**: widens topic filter each level (specific → `*` → `>` across segments) | $40 | ×2 | 5 |
 
 ### Dead Message Queue (DMQ)
 | Upgrade | Effect | Base Cost | Multiplier | Max Level |
@@ -295,55 +301,19 @@ Global upgrades use the same `UpgradeDef` system as node upgrades — each is a 
 **Auto-Publisher**: bypasses the manual click cooldown (`fireEvent(id, true)` with `skipCooldown`). Auto-fires do NOT reset the manual cooldown timer, so players can click manually between auto-fires. `useAutoPublisher` uses `getState()` inside the `setInterval` callback (not Zustand subscriptions) so the interval is only reset when `autoPubLevel` changes, not on every component position update.
 
 ### Shop (visible after broker upgrade)
-| Component | Cost | Notes |
-|---|---|---|
-| Queue | $60 | Places unconnected on canvas, user wires via drag-to-connect |
-| Dead Message Queue | $80 (one-time) | Catches dropped events, retries through broker. Connect top port to broker. |
+| Component | Cost | Cost Multiplier | Notes |
+|---|---|---|---|
+| Queue | $60 | — | Places unconnected on canvas, user wires via drag-to-connect |
+| Dead Message Queue | $80 (one-time) | — | Catches dropped events, retries through broker. Connect top port to broker. |
+| Publisher | $250 | ×1.5 | Additional publisher, placed unconnected. Single-broker connection limit. |
+| Subscriber | $150 | ×1.5 | Additional subscriber, placed unconnected. |
+| Broker | $200 | ×2.0 | Additional broker for multi-broker mesh. Bridge to other brokers via broker→broker connections. |
 
 ---
 
-## What's Implemented vs Planned
-
-### ✅ Implemented
-- Publisher → Webhook → Subscriber initial mesh (pre-wired)
-- **Draggable connections (Boomi-style)**: drag from output port to create connections. Click existing connection to detach arrow end and drag to new target; releasing on nothing deletes the connection. Orthogonal routing (horizontal → vertical → horizontal) with rounded 12px corners. SVG arrowheads point to target node edge. Connection validation enforces semi-flexible rules: publisher→broker/webhook, broker/webhook→queue/subscriber, queue→subscriber, dmq→broker. Validation in `connectionRules.ts`.
-- **Fan-out**: `getAllPathsForPublisher()` DFS forks at branch points, `fireEvent` creates one dot per path. Broker connected to multiple queues sends events to all paths.
-- **Multiple independent queues**: each queue has unique ID, own buffer, own connections. Purchased unconnected from shop, user wires manually.
-- **Drag-to-move**: any component can be repositioned by dragging; connection lines follow in real-time
-- Click-to-fire with cooldown (upgradeable), cooldown overlay animation on publisher (dark translucent bar drains downward)
-- Event dot animation: travel, webhook slowdown, subscriber pause/shrink, drop with gravity
-- Processing border animation on webhook only: cyan arcs sweep left→right along node border while a dot passes through (RAF-driven, imperative DOM updates via refs). Brokers have no animation.
-- **Collision-based detection**: `dotTouchesNode()` bounding-box hit test for queue capture and subscriber pause/drop; proximity check (30px) for webhook/broker blockage. Replaced old progress-threshold system.
-- **Mutable array game loop**: dots processed sequentially in `for` loop so each sees results of prior dots in same frame — prevents race conditions
-- **Queue buffering**: dots always captured on queue collision (no pass-through), FIFO auto-release (oldest by `pauseStartTime`) one per frame when queue is connected to subscriber and subscriber is free. Visual slot indicators pack filled slots to the right (oldest rightmost, newest leftmost filled; retry dots orange, normal cyan). Buffer capacity = 1 + bufferSize level. Overflow drops at queue edge. Disconnected queues buffer events and hold them until a subscriber is connected.
-- **Smart queue routing**: broker with multiple queues routes each event to the queue with most free buffer space (factoring in-flight dots). Fan-out upgrade on all queues sends to all paths instead.
-- **Connection-aware dots**: traveling dots validate their path against current connections each frame; removed connections cause immediate drop. Queued dot release checks live connection graph, not baked paths.
-- Blockage at webhook (drops at left edge if occupied — detected in a 20px zone before the node's left edge via `isComponentOccupied()` which checks for traveling dots inside the bounding box)
-- Broker: instant relay (no slowdown, no blockage, no border animation)
-- Blockage at subscriber (drops at subscriber edge if consuming)
-- Per-node upgrade modal (↑ icon), upgrade count badge (top-left)
-- Publisher upgrades: Event Value, Publish Speed (both functional)
-- Webhook upgrades: Upgrade to Broker (functional — removes delay, changes type/color/label), Faster Routing (functional)
-- Broker upgrades: Add Queue Slot (**functional** — enforces connection slot limit), Topic Filter Boost (hidden in UI, requires topic system)
-- Queue upgrades: Add Subscriber Slot (**functional** — enforces connection slot limit), Increase Buffer Size (functional), Persistent Delivery/Fan-out (**functional** — routing logic in `fireEvent`)
-- Subscriber upgrades: Faster Consumption (**functional** — accelerating curve), Consumption Value (**functional** — accelerating $ increments)
-- Global upgrades: Propagation Speed (accelerating curve), Cost Reduction, Auto-Publisher 7 tiers, Event Batching (multi-level, +1 event/click/level), Income Multiplier (multi-level, accelerating ×) (all functional, level-based cost scaling)
-- **Mesh error toast**: red notification in top-left of canvas when connection slot limits are exceeded, auto-dismisses after 2.5s (`meshError` transient state)
-- Broker/Queue/Subscriber shop in sidebar (Queue purchasable, placed unconnected for manual wiring)
-- Auto-save / load from localStorage (snapshot comparison optimization, 500ms debounce, transient fields excluded: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`, `draggingConnection`, `draggingNodeId`, `meshError`)
-- Z-index layering: two event canvases (back z-19 for traveling/queued/dropped, front z-25 for pausing/consuming); dragged nodes elevate to z-index 50
-- Coin pop animation: 🪙 + earned amount floats up from subscriber on consumption (Framer Motion, `coinPops` transient state)
-- **Dead Message Queue (DMQ)**: purchasable component ($80, one-time, requires broker). Catches falling dropped events via bounding-box collision (dynamic width). Buffers caught events, releases one at a time as orange retry dots through the broker following the original route (rebuilt from current positions). Retry value = 10%–100% of original (upgradeable). Retry dots that fail again turn dark grey and are not re-caught. Four upgrades: width, faster release (accelerating curve), buffer size, value recovery. Output port at top-center, connects only to broker. Connection line uses vertical-first routing to broker's bottom edge.
-- **Delete component**: queues and DMQ can be deleted via a red button in their upgrade modal. `removeComponent` action removes the component, its connections, and queued dots. Deleting the DMQ makes it re-purchasable in the shop.
-- Only publisher has hover/tap scale animation (other nodes do not scale)
-
-### 🔲 Not yet implemented
-- **Solace-inspired features**:
-  - Topic hierarchies: publishers emit on topic strings (e.g., `orders/created`), queues subscribe with wildcards (`orders/*`, `orders/>`) following Solace syntax
-  - Topic Filter Boost: enables advanced wildcard patterns on broker/queue subscriptions (hidden in UI until topic system exists)
-  - Persistent Delivery (fan-out via queue): multiple subscribers attached to one queue, all receiving the event (broker-level fan-out to multiple queues IS implemented)
-- **Shop expansion**: Second Publisher (different topic), Second Subscriber
-- **Advanced mechanics**: mesh topology visualization (topic labels on lines), multi-broker mesh
+## Not Yet Implemented
+- **Topic Filter Boost**: broker upgrade to enable advanced wildcard patterns. Hidden in UI — topic system exists but this upgrade's gameplay effect is not yet defined.
+- **Persistent Delivery (fan-out via queue)**: multiple subscribers attached to one queue, all receiving the same event. (Broker-level fan-out to multiple queues IS implemented.)
 
 ---
 
@@ -361,10 +331,12 @@ src/
   store/
     gameStore.ts        # All Zustand state + actions, auto-save subscription
     upgradeConfig.ts    # All upgrade defs (cost, multiplier, maxLevel, label, description)
+    topicPool.ts        # Predefined topic pool for publisher/queue assignment
   hooks/
     useGameLoop.ts      # RAF game loop (dot movement, webhook slowdown, consume/drop logic) + useAutoPublisher
   utils/
     connectionRules.ts  # canConnect(fromType, toType), getValidTargets() — connection validation + slot capacity enforcement
+    topicMatching.ts    # Solace-style topic matching: wildcards (*, >) and subscription broadening
     orthogonalPath.ts   # getOrthogonalWaypoints(), buildOrthogonalSvgPath(), buildVerticalFirstSvgPath() — orthogonal line routing
     pathUtils.ts        # interpolatePath(path, progress) → {x, y}
     formatMoney.ts      # $1,234.56 formatter
@@ -384,10 +356,10 @@ src/
 - **Connection validation skipped during drag**: the position-based waypoint-to-component matching (`Math.abs(c.x - pt.x) < 1`) is unreliable when components are moving, so connection validation is bypassed while `draggingNodeId` is set. Connections can't be disconnected during a drag operation anyway.
 - **Draggable connections**: `draggingConnection` transient state in `gameStore.ts` tracks active drag (type, fromId, connectionId, mouseX, mouseY). `MeshCanvas.tsx` handles pointer move/up for drop detection (bounding-box: 70px × 38px). `ConnectionLine.tsx` hides itself during reassign drag and initiates detach on click. Output port in `NodeCard.tsx` initiates create drags. `cancelDragConnection` deletes the connection when a reassign drag is dropped on nothing. Validation via `connectionRules.ts`.
 - **Connection line geometry**: orthogonal (Boomi-style) lines routed horizontal → vertical → horizontal with rounded 12px corners. Lines start from the output port's right edge and end at the target node's left edge. Port position = `from.x + halfW + 16` where halfW is 60 (120px nodes) or 70 (140px queue nodes). Exception: DMQ uses top-center port (`from.x, from.y - 28 - 16`) with vertical-first routing (`buildVerticalFirstSvgPath()`), terminating at the broker's bottom edge (`to.x, to.y + 30`). Rendering via `orthogonalPath.ts`. All nodes use `minHeight: 56` and fixed `width` for consistent port alignment (DMQ width is dynamic: 120 + 40 * dmqWidthLevel).
-- **Smart routing & fan-out**: `_getAllPathsWithNodes()` does DFS returning paths with both waypoints and node IDs. `fireEvent()` groups paths by broker, then for each group: if all queues have fan-out upgrade, sends to all; otherwise picks the queue with the most effective free space (buffer capacity − queued − in-flight dots). Prefers non-full queues. `getAllPathsForPublisher()` wraps it returning just waypoints. `getPathForPublisher()` returns the first path for backward compat.
+- **Smart routing & fan-out**: `_getAllPathsWithNodes()` does DFS returning paths with both waypoints and node IDs. Bridge connections (broker↔broker) are traversed bidirectionally in the DFS (checks both `fromId` and `toId`). `fireEvent()` groups paths by broker, then for each group: if all queues have fan-out upgrade, sends to all; otherwise picks the queue with the most effective free space (buffer capacity − queued − in-flight dots). Prefers non-full queues. `getAllPathsForPublisher()` wraps it returning just waypoints. `getPathForPublisher()` returns the first path for backward compat.
 - **Path deduplication**: `dedupeConsecutiveWaypoints()` removes consecutive duplicate waypoints (within 1px) from rebuilt paths in Pass 2 queue release. Without this, when a queue and subscriber share the same x-coordinate, the orthogonal midpoint `(midX, queue.y)` duplicates the queue waypoint, causing `isPastAllQueues` to fail — it finds the queue at both waypoints and considers the dot "not past" the second one. This made both queues release dots every frame instead of waiting for the subscriber, draining buffers at ~60×/s. Applied to both the `pendingExtension` path and the main queue→subscriber rebuild path.
 - **Connection-aware dot lifecycle**: traveling dots validate their remaining path against the current connection graph each frame — if a connection was removed, the dot drops immediately. Queued dots only release when the queue has an active connection to a subscriber (checked via `state.connections`, not baked path). Queue collision check skips waypoints the dot has already passed to prevent re-capture after release.
-- **ID counters**: `componentIdCounter` and `connectionIdCounter` are initialized from saved state on load via `initCountersFromSaved()` to prevent duplicate IDs after reload.
+- **ID counters**: `componentIdCounter` and `connectionIdCounter` are initialized from saved state on load via `initCountersFromSaved()` to prevent duplicate IDs after reload. `nextDotId()` is exported from `gameStore.ts` for use in `useGameLoop.ts` when spawning fork dots at broker nodes.
 - **Clock consistency**: `pauseStartTime` uses `Date.now()` (Unix epoch). The RAF `time` argument is a different clock — don't mix them.
 - **Accelerating upgrade curves**: most percentage-based upgrades use the formula `boostPct = level * (level + 9) / 2` (5%, 11%, 18%, 26%... 95% at level 10). This gives each level a bigger effect than the last. Value upgrades (Event Value, Consumption Value) use `$0.50 + level * 0.45 + level² * 0.05` so each level adds $0.10 more than the previous. Income Multiplier uses compounding `1.4 + level * 0.1` per level (×1.5, ×1.6, ×1.7...). All upgrade cards show current value, next value, and increment in a `current → next (+delta)` format via `getUpgradeValueDisplay()` (node upgrades) and `getGlobalUpgradeValueDisplay()` (sidebar). Level number shown in top-right corner of each card.
 - **Upgrade effects location**: most per-component upgrade effects are read in `useGameLoop.ts` by looking up the component by position from the dot's path array. Global upgrade effects are applied in `purchaseGlobalUpgrade` in `gameStore.ts`.

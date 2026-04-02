@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { canConnect } from '../utils/connectionRules';
 import { globalUpgrades, getUpgradeCost } from './upgradeConfig';
+import { getNextTopic } from './topicPool';
+import { topicMatches, computeBroadenedTopic } from '../utils/topicMatching';
 
 export type ComponentType = 'publisher' | 'webhook' | 'broker' | 'queue' | 'subscriber' | 'dmq';
 
@@ -12,6 +14,10 @@ export type GameComponent = {
   y: number;
   label: string;
   topic?: string;
+  topicSegments?: string[];
+  subscriptionTopic?: string;
+  subscriptionSegments?: string[];
+  tags: Record<string, string>;
   upgrades: Record<string, number>;
 };
 
@@ -40,6 +46,8 @@ export type EventDot = {
   isRetry?: boolean;
   originalNodeIds?: string[];
   originalValue?: number;
+  forkPaths?: { waypoints: { x: number; y: number }[]; nodeIds: string[] }[];
+  forkNodeId?: string;
 };
 
 export type GameState = {
@@ -109,6 +117,7 @@ export type GameState = {
 };
 
 let dotIdCounter = 0;
+export function nextDotId() { return `dot-${++dotIdCounter}`; }
 let componentIdCounter = 10; // start above initial component count, bumped after load
 let connectionIdCounter = 10; // bumped after load
 
@@ -137,7 +146,9 @@ function createInitialComponents(): GameComponent[] {
       x: 150,
       y: 300,
       label: 'Publisher',
-      topic: 'orders/created',
+      topic: 'acme/orders/created/na/electronics/SKU001',
+      topicSegments: ['acme', 'orders', 'created', 'na', 'electronics', 'SKU001'],
+      tags: {},
       upgrades: {},
     },
     {
@@ -146,6 +157,7 @@ function createInitialComponents(): GameComponent[] {
       x: 450,
       y: 300,
       label: 'Webhook',
+      tags: {},
       upgrades: {},
     },
     {
@@ -154,6 +166,7 @@ function createInitialComponents(): GameComponent[] {
       x: 750,
       y: 300,
       label: 'Subscriber',
+      tags: {},
       upgrades: {},
     },
   ];
@@ -203,6 +216,7 @@ function migrateGlobalUpgradeLevels(upgrades: GameState['upgrades'] | undefined)
   return levels;
 }
 
+
 export const useGameStore = create<GameState>()(
   immer((set, get) => {
     const saved = loadSavedState();
@@ -214,7 +228,11 @@ export const useGameStore = create<GameState>()(
       eventsConsumed: saved?.eventsConsumed ?? 0,
       eventsDropped: saved?.eventsDropped ?? 0,
 
-      components: saved?.components ?? createInitialComponents(),
+      components: (saved?.components ?? createInitialComponents()).map(c => ({
+        ...c,
+        tags: c.tags ?? {},
+        topicSegments: c.topicSegments ?? (c.topic ? c.topic.split('/') : undefined),
+      })),
       connections: saved?.connections ?? createInitialConnections(),
       eventDots: [], // never persist in-flight dots
 
@@ -252,8 +270,67 @@ export const useGameStore = create<GameState>()(
         }
 
         const allPaths = state._getAllPathsWithNodes(publisherId);
-        const validPaths = allPaths.filter(p => p.waypoints.length >= 2);
-        if (validPaths.length === 0) return;
+        const allValidPaths = allPaths.filter(p => p.waypoints.length >= 2);
+        if (allValidPaths.length === 0) return;
+
+        // Topic filtering: only keep paths where the queue's subscription matches the publisher's topic
+        const pubTopic = pub.topic;
+        const validPaths = pubTopic
+          ? allValidPaths.filter(p => {
+              const queueId = p.nodeIds.find(id =>
+                state.components.find(c => c.id === id)?.type === 'queue');
+              if (!queueId) return true; // no queue in path, allow
+              const queue = state.components.find(c => c.id === queueId);
+              return !queue?.subscriptionTopic || topicMatches(pubTopic, queue.subscriptionTopic);
+            })
+          : allValidPaths;
+        if (validPaths.length === 0) {
+          // No matching queues — create a dot that travels to the broker and drops there
+          // Find any path that reaches a broker
+          const anyPath = allValidPaths[0];
+          if (anyPath) {
+            const brokerIdx = anyPath.nodeIds.findIndex(id =>
+              state.components.find(c => c.id === id)?.type === 'broker');
+            if (brokerIdx >= 0) {
+              const broker = state.components.find(c => c.id === anyPath.nodeIds[brokerIdx])!;
+              // Build a truncated path: publisher → broker left edge
+              const brokerLeftEdge = { x: broker.x - 62, y: broker.y };
+              // Find the last waypoint before the broker and append the edge point
+              const truncatedWaypoints = [anyPath.waypoints[0]];
+              for (const wp of anyPath.waypoints.slice(1)) {
+                if (Math.abs(wp.x - broker.x) < 80 && Math.abs(wp.y - broker.y) < 40) break;
+                truncatedWaypoints.push(wp);
+              }
+              truncatedWaypoints.push(brokerLeftEdge);
+              const truncatedNodeIds = anyPath.nodeIds.slice(0, brokerIdx + 1);
+
+              const value = state.getEventValue(publisherId);
+              const speed = 0.0007 * state.upgrades.propagationSpeed;
+              set(draft => {
+                if (!skipCooldown) {
+                  draft.publisherCooldowns[publisherId] = Date.now();
+                }
+                const fireCount = state.upgrades.batchFire > 0 ? state.upgrades.batchFire : 1;
+                for (let batch = 0; batch < fireCount; batch++) {
+                  const dotId = `dot-${++dotIdCounter}`;
+                  draft.eventDots.push({
+                    id: dotId,
+                    path: truncatedWaypoints,
+                    progress: batch * -0.04,
+                    speed,
+                    status: 'traveling',
+                    color: '#66ffff',
+                    opacity: 1,
+                    value,
+                    originalValue: value,
+                    originalNodeIds: truncatedNodeIds,
+                  });
+                }
+              });
+            }
+          }
+          return;
+        }
 
         // Smart routing: without fan-out, pick the queue with most free buffer space
         // Group paths by their broker (the node before the queue where paths diverge)
@@ -274,48 +351,23 @@ export const useGameStore = create<GameState>()(
           groupedByBroker.get(brokerId)!.push(p);
         }
 
-        // For each broker group, check fan-out and pick best queue
+        // Broker fan-out: always send to all matching queues (true pub/sub behavior)
         for (const [, group] of groupedByBroker) {
-          // Check if ALL queues in this group have fan-out purchased
-          const allHaveFanOut = group.every(p => {
-            const queueId = p.nodeIds.find(id => state.components.find(c => c.id === id)?.type === 'queue');
-            const queue = state.components.find(c => c.id === queueId);
-            return queue && (queue.upgrades['fanOut'] ?? 0) > 0;
-          });
-
-          if (allHaveFanOut) {
-            selectedPaths.push(...group);
-          } else {
-            // Pick the queue with the most effective free space
-            // Account for: buffered dots + in-flight dots heading toward the queue
-            // Prefer queues that have a subscriber connected (path ends at a subscriber)
-            const pathsWithScore = group.map(p => {
-              const queueId = p.nodeIds.find(id => state.components.find(c => c.id === id)?.type === 'queue')!;
-              const queue = state.components.find(c => c.id === queueId)!;
-              const capacity = 3 + (queue.upgrades['bufferSize'] ?? 0);
-              const queued = state.eventDots.filter(d => d.status === 'queued' && d.queuedAtNodeId === queueId).length;
-              const inFlight = state.eventDots.filter(d =>
-                d.status === 'traveling' &&
-                d.path.some(wp => Math.abs(wp.x - queue.x) < 1 && Math.abs(wp.y - queue.y) < 1)
-              ).length;
-              const freeSpace = capacity - queued - inFlight;
-              return { path: p, freeSpace };
-            });
-
-            // Pick the queue with the most free space; skip full queues if others have room
-            const nonFull = pathsWithScore.filter(p => p.freeSpace > 0);
-            const candidates = nonFull.length > 0 ? nonFull : pathsWithScore;
-
-            let best = candidates[0];
-            for (const c of candidates) {
-              if (c.freeSpace > best.freeSpace) best = c;
-            }
-            selectedPaths.push(best.path);
-          }
+          selectedPaths.push(...group);
         }
 
         const value = state.getEventValue(publisherId);
         const speed = 0.0007 * state.upgrades.propagationSpeed;
+
+        // Group selected paths by their first broker so we create one dot per broker fork point
+        const forkGroups = new Map<string, typeof selectedPaths>();
+        for (const p of selectedPaths) {
+          // Find first broker in the path (index 1 is typically the broker after publisher)
+          const firstBrokerId = p.nodeIds.find(id =>
+            state.components.find(c => c.id === id)?.type === 'broker') ?? 'none';
+          if (!forkGroups.has(firstBrokerId)) forkGroups.set(firstBrokerId, []);
+          forkGroups.get(firstBrokerId)!.push(p);
+        }
 
         set(draft => {
           if (!skipCooldown) {
@@ -323,11 +375,13 @@ export const useGameStore = create<GameState>()(
           }
           const fireCount = state.upgrades.batchFire > 0 ? state.upgrades.batchFire : 1;
           for (let batch = 0; batch < fireCount; batch++) {
-            for (const { waypoints, nodeIds } of selectedPaths) {
+            for (const [brokerId, group] of forkGroups) {
+              const primary = group[0];
+              const forks = group.length > 1 ? group.slice(1) : undefined;
               const dotId = `dot-${++dotIdCounter}`;
               draft.eventDots.push({
                 id: dotId,
-                path: waypoints,
+                path: primary.waypoints,
                 progress: batch * -0.04,
                 speed,
                 status: 'traveling',
@@ -335,7 +389,9 @@ export const useGameStore = create<GameState>()(
                 opacity: 1,
                 value,
                 originalValue: value,
-                originalNodeIds: nodeIds,
+                originalNodeIds: primary.nodeIds,
+                forkPaths: forks,
+                forkNodeId: brokerId !== 'none' ? brokerId : undefined,
               });
             }
           }
@@ -419,6 +475,11 @@ export const useGameStore = create<GameState>()(
               comp.type = 'broker';
               comp.label = 'Broker';
             }
+            // Broaden queue subscription topic
+            if (upgradeKey === 'subscriptionBroaden' && comp.subscriptionSegments) {
+              const level = comp.upgrades[upgradeKey]; // already incremented above
+              comp.subscriptionTopic = computeBroadenedTopic(comp.subscriptionSegments, level);
+            }
           }
         });
       },
@@ -426,7 +487,14 @@ export const useGameStore = create<GameState>()(
       addComponent: (type: ComponentType, x: number, y: number, label: string) => {
         const id = `comp-${++componentIdCounter}`;
         set(draft => {
-          draft.components.push({ id, type, x, y, label, upgrades: {} });
+          const comp: GameComponent = { id, type, x, y, label, tags: {}, upgrades: {} };
+          if (type === 'publisher') {
+            const pubCount = draft.components.filter(c => c.type === 'publisher').length;
+            const topic = getNextTopic(pubCount);
+            comp.topic = topic;
+            comp.topicSegments = topic.split('/');
+          }
+          draft.components.push(comp);
         });
         return id;
       },
@@ -553,6 +621,36 @@ export const useGameStore = create<GameState>()(
           }
         }
 
+        // Slot limit: broker → broker bridge (starts at 0)
+        if (from.type === 'broker' && to.type === 'broker') {
+          const bridgeConns = state.connections.filter(
+            c => c.fromId === drag.fromId &&
+              state.components.find(comp => comp.id === c.toId)?.type === 'broker'
+          ).length;
+          const maxSlots = from.upgrades['addBridgeSlot'] ?? 0;
+          if (bridgeConns >= maxSlots) {
+            set(draft => {
+              draft.draggingConnection = null;
+              draft.meshError = maxSlots === 0
+                ? 'Broker needs "Add Bridge Slot" upgrade to connect to another broker'
+                : `Broker bridge slots full (${maxSlots}/${maxSlots} used)`;
+            });
+            return;
+          }
+        }
+
+        // Publisher → single broker limit
+        if (from.type === 'publisher') {
+          const existingConns = state.connections.filter(c => c.fromId === drag.fromId).length;
+          if (existingConns >= 1) {
+            set(draft => {
+              draft.draggingConnection = null;
+              draft.meshError = 'Publisher can only connect to one broker';
+            });
+            return;
+          }
+        }
+
         set(draft => {
           if (drag.type === 'reassign' && drag.connectionId) {
             const conn = draft.connections.find(c => c.id === drag.connectionId);
@@ -562,6 +660,43 @@ export const useGameStore = create<GameState>()(
           } else {
             draft.connections.push({ id: `conn-${++connectionIdCounter}`, fromId: drag.fromId, toId: targetId });
           }
+
+          // Auto-assign subscription when a queue first connects to a broker
+          if (from.type === 'broker' && to.type === 'queue') {
+            const queue = draft.components.find(c => c.id === targetId);
+            if (queue && !queue.subscriptionTopic) {
+              // Find a publisher connected to this broker or any bridged broker
+              const findPublisher = (brokerId: string, visited: Set<string>): typeof draft.components[0] | undefined => {
+                if (visited.has(brokerId)) return undefined;
+                visited.add(brokerId);
+                // Check direct publisher connections
+                const pubConn = draft.connections.find(c => c.toId === brokerId);
+                if (pubConn) {
+                  const pub = draft.components.find(c => c.id === pubConn.fromId && c.type === 'publisher');
+                  if (pub?.topic) return pub;
+                }
+                // Check bridged brokers
+                for (const conn of draft.connections) {
+                  const other = conn.fromId === brokerId ? conn.toId : conn.toId === brokerId ? conn.fromId : null;
+                  if (other) {
+                    const otherComp = draft.components.find(c => c.id === other && c.type === 'broker');
+                    if (otherComp) {
+                      const found = findPublisher(other, visited);
+                      if (found) return found;
+                    }
+                  }
+                }
+                return undefined;
+              };
+              const pub = findPublisher(drag.fromId, new Set());
+              if (pub?.topic) {
+                const segments = pub.topicSegments ?? pub.topic.split('/');
+                queue.subscriptionTopic = pub.topic;
+                queue.subscriptionSegments = [...segments];
+              }
+            }
+          }
+
           draft.draggingConnection = null;
         });
       },
@@ -637,12 +772,24 @@ export const useGameStore = create<GameState>()(
           const path = [...currentPath, { x: node.x, y: node.y }];
           const nodeIds = [...currentNodeIds, nodeId];
 
+          // Outgoing connections + reverse bridge connections (bridges are bidirectional)
           const nextConns = state.connections.filter(c => c.fromId === nodeId);
-          if (nextConns.length === 0) {
-            results.push({ waypoints: path, nodeIds });
+          const reverseBridgeConns = node.type === 'broker'
+            ? state.connections.filter(c => c.toId === nodeId &&
+                state.components.find(comp => comp.id === c.fromId)?.type === 'broker')
+            : [];
+          const allNext = [
+            ...nextConns.map(c => c.toId),
+            ...reverseBridgeConns.map(c => c.fromId),
+          ];
+          if (allNext.length === 0) {
+            // Only record paths that end at a subscriber or a queue (for buffering)
+            if (node.type === 'subscriber' || node.type === 'queue') {
+              results.push({ waypoints: path, nodeIds });
+            }
           } else {
-            for (const conn of nextConns) {
-              walk(conn.toId, path, nodeIds, new Set(visited));
+            for (const nextId of allNext) {
+              walk(nextId, path, nodeIds, new Set(visited));
             }
           }
         }
@@ -705,3 +852,7 @@ useGameStore.subscribe((state) => {
     localStorage.setItem(SAVE_KEY, snapshot);
   }, 500);
 });
+
+// Expose store globally for console debugging
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(window as any).useGameStore = useGameStore;

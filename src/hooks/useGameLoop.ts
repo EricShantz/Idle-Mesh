@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useGameStore } from '../store/gameStore';
+import { useGameStore, nextDotId } from '../store/gameStore';
 import { interpolatePath } from '../utils/pathUtils';
 
 // Node card dimensions: positioned at left: x-60, top: y-28
@@ -160,8 +160,12 @@ export function useGameLoop() {
               const fromProgress = pathComps[pc].idx / (dot.path.length - 1);
               // Only validate segments the dot hasn't passed yet
               if (pathComps[pc + 1].idx / (dot.path.length - 1) < dot.progress - 0.01) continue;
+              const a = pathComps[pc].comp;
+              const b = pathComps[pc + 1].comp;
+              const bothBrokers = a.type === 'broker' && b.type === 'broker';
               const connExists = state.connections.some(c =>
-                c.fromId === pathComps[pc].comp.id && c.toId === pathComps[pc + 1].comp.id
+                (c.fromId === a.id && c.toId === b.id) ||
+                (bothBrokers && c.fromId === b.id && c.toId === a.id)
               );
               if (!connExists) {
                 pathInvalid = true;
@@ -204,6 +208,44 @@ export function useGameLoop() {
 
             const newProgress = Math.min(dot.progress + actualSpeed * dt, 1);
             const newPos = interpolatePath(dot.path, newProgress);
+
+            // Fork spawning: when dot with forkPaths passes its fork broker, spawn fork dots
+            if (dot.forkPaths && dot.forkNodeId) {
+              const forkComp = state.components.find(c => c.id === dot.forkNodeId);
+              if (forkComp && dotTouchesNode(newPos.x, newPos.y, forkComp.x, forkComp.y)) {
+                for (const fork of dot.forkPaths) {
+                  const forkDotId = nextDotId();
+                  // Build fork path starting from the broker position onward
+                  const brokerIdxInFork = fork.nodeIds.indexOf(dot.forkNodeId!);
+                  const forkStartNodeIds = brokerIdxInFork >= 0 ? fork.nodeIds.slice(brokerIdxInFork) : fork.nodeIds;
+                  // Build waypoints from broker onward using the fork's full waypoints
+                  // Find the waypoint closest to the broker
+                  let brokerWpIdx = 0;
+                  let bestDist = Infinity;
+                  for (let wi = 0; wi < fork.waypoints.length; wi++) {
+                    const d = Math.hypot(fork.waypoints[wi].x - forkComp.x, fork.waypoints[wi].y - forkComp.y);
+                    if (d < bestDist) { bestDist = d; brokerWpIdx = wi; }
+                  }
+                  const forkWaypoints = fork.waypoints.slice(brokerWpIdx);
+                  if (forkWaypoints.length >= 2) {
+                    updated.push({
+                      id: forkDotId,
+                      path: forkWaypoints,
+                      progress: 0,
+                      speed: dot.speed,
+                      status: 'traveling' as const,
+                      color: dot.color,
+                      opacity: 1,
+                      value: dot.value,
+                      originalValue: dot.originalValue,
+                      originalNodeIds: forkStartNodeIds,
+                    });
+                  }
+                }
+                // Clear fork data from this dot
+                dot = { ...dot, forkPaths: undefined, forkNodeId: undefined };
+              }
+            }
 
             // Find the next component the dot should interact with (queue or subscriber)
             // This prevents dots from being captured by nodes they pass through spatially
@@ -444,43 +486,44 @@ export function useGameLoop() {
           }
 
           if (hasSubscriber && !isSubscriberBusy) {
-            // Apply path extension only at release time so queued dots aren't mutated every frame
-            if (pendingExtension) {
-              const queueComp2 = state.components.find(c => c.id === queueId)!;
-              const extension: { x: number; y: number }[] = [];
-              if (Math.abs(queueComp2.y - pendingExtension.target.y) >= 1) {
-                const midX = (queueComp2.x + pendingExtension.target.x) / 2;
-                extension.push({ x: midX, y: queueComp2.y });
-                extension.push({ x: midX, y: pendingExtension.target.y });
-              }
-              extension.push(pendingExtension.target);
-              const newPath = dedupeConsecutiveWaypoints([...dot.path, ...extension]);
-              const oldLen = dot.path.length - 1;
-              const newLen = newPath.length - 1;
-              dot = { ...dot, path: newPath, progress: oldLen > 0 ? (dot.progress * oldLen) / newLen : 0 } as typeof dot;
-            }
             releasedQueues.add(queueId);
-            // Rebuild the path from the queue onward using current positions.
-            // The queue may have been dragged, so old midpoints are stale.
             const queue = state.components.find(c => c.id === queueId);
-            let releaseProgress = dot.progress;
-            if (queue) {
-              // Find the queue's waypoint index in the baked path
-              let bestIdx = 0;
-              let bestDist = Infinity;
-              for (let pi = 0; pi < dot.path.length; pi++) {
-                const d = Math.hypot(dot.path[pi].x - queue.x, dot.path[pi].y - queue.y);
-                if (d < bestDist) { bestDist = d; bestIdx = pi; }
-              }
-              // Truncate path at the queue and rebuild queue→subscriber with current positions
-              const pathBeforeQueue = dot.path.slice(0, bestIdx);
-              const queuePoint = { x: queue.x, y: queue.y };
-              // Find the subscriber target from current connections
-              const subConn = state.connections.find(c => c.fromId === queueId);
-              const subComp = subConn ? state.components.find(c => c.id === subConn.toId && c.type === 'subscriber') : null;
-              const subTarget = subComp ?? (targetSub ? { x: targetSub.x, y: targetSub.y } : null);
+            const hasFanOut = queueComp && (queueComp.upgrades['fanOut'] ?? 0) > 0;
 
-              if (subTarget) {
+            // Collect all connected subscribers
+            const allSubTargets: { x: number; y: number }[] = [];
+            if (queue) {
+              const outConns = state.connections.filter(c => c.fromId === queueId);
+              for (const conn of outConns) {
+                const sub = state.components.find(c => c.id === conn.toId && c.type === 'subscriber');
+                if (sub) allSubTargets.push({ x: sub.x, y: sub.y });
+              }
+            }
+            // Fallback to baked path subscriber
+            if (allSubTargets.length === 0 && targetSub) {
+              allSubTargets.push({ x: targetSub.x, y: targetSub.y });
+            }
+
+            // Without fan-out, only send to first subscriber
+            const targets = hasFanOut ? allSubTargets : allSubTargets.slice(0, 1);
+
+            for (let ti = 0; ti < targets.length; ti++) {
+              const subTarget = targets[ti];
+              let releaseDot = { ...dot };
+              let releaseProgress = dot.progress;
+
+              if (queue) {
+                // Find the queue's waypoint index in the baked path
+                let bestIdx = 0;
+                let bestDist = Infinity;
+                for (let pi = 0; pi < releaseDot.path.length; pi++) {
+                  const d = Math.hypot(releaseDot.path[pi].x - queue.x, releaseDot.path[pi].y - queue.y);
+                  if (d < bestDist) { bestDist = d; bestIdx = pi; }
+                }
+                // Truncate path at the queue and rebuild queue→subscriber with current positions
+                const pathBeforeQueue = releaseDot.path.slice(0, bestIdx);
+                const queuePoint = { x: queue.x, y: queue.y };
+
                 const extension: { x: number; y: number }[] = [];
                 if (Math.abs(queue.y - subTarget.y) >= 1) {
                   const midX = (queue.x + subTarget.x) / 2;
@@ -489,11 +532,9 @@ export function useGameLoop() {
                 }
                 extension.push({ x: subTarget.x, y: subTarget.y });
                 const newPath = dedupeConsecutiveWaypoints([...pathBeforeQueue, queuePoint, ...extension]);
-                // Find the new queue index and recalculate progress
                 const newQueueIdx = pathBeforeQueue.length;
                 const totalSegments = newPath.length - 1;
-                dot = { ...dot, path: newPath } as typeof dot;
-                // Set progress past the queue's far edge so the dot won't re-collide
+                releaseDot = { ...releaseDot, path: newPath };
                 if (newQueueIdx < totalSegments) {
                   const from = newPath[newQueueIdx];
                   const to = newPath[newQueueIdx + 1];
@@ -501,22 +542,23 @@ export function useGameLoop() {
                   const clearanceFraction = segLen > 0 ? (NODE_HALF_W + DOT_RADIUS + 2) / segLen : 1;
                   releaseProgress = Math.min((newQueueIdx + clearanceFraction) / totalSegments, 1);
                 }
+              }
+
+              if (ti === 0) {
+                // Update the original dot in place
+                updated[i] = { ...releaseDot, status: 'traveling', progress: releaseProgress, pauseStartTime: undefined, queuedAtNodeId: undefined } as Dot;
               } else {
-                // No subscriber — just snap queue waypoint and use old clearance logic
-                const newPath = [...dot.path];
-                newPath[bestIdx] = queuePoint;
-                dot = { ...dot, path: newPath } as typeof dot;
-                const totalSegments = dot.path.length - 1;
-                if (bestIdx < totalSegments) {
-                  const from = dot.path[bestIdx];
-                  const to = dot.path[bestIdx + 1];
-                  const segLen = Math.hypot(to.x - from.x, to.y - from.y);
-                  const clearanceFraction = segLen > 0 ? (NODE_HALF_W + DOT_RADIUS + 2) / segLen : 1;
-                  releaseProgress = Math.min((bestIdx + clearanceFraction) / totalSegments, 1);
-                }
+                // Fan-out: create a copy for additional subscribers
+                updated.push({
+                  ...releaseDot,
+                  id: nextDotId(),
+                  status: 'traveling',
+                  progress: releaseProgress,
+                  pauseStartTime: undefined,
+                  queuedAtNodeId: undefined,
+                } as Dot);
               }
             }
-            updated[i] = { ...dot, status: 'traveling', progress: releaseProgress, pauseStartTime: undefined, queuedAtNodeId: undefined } as Dot;
           }
         }
 

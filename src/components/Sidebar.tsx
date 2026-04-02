@@ -4,6 +4,9 @@ import { formatMoney } from '../utils/formatMoney';
 
 const QUEUE_COST = 60;
 const DMQ_COST = 80;
+const PUBLISHER_BASE_COST = 250;
+const SUBSCRIBER_BASE_COST = 150;
+const BROKER_BASE_COST = 200;
 
 const autoPubIntervals = [5, 3, 1, 0.75, 0.5, 0.25, 0.1];
 
@@ -78,18 +81,52 @@ export function Sidebar() {
   };
 
   const hasBroker = components.some(c => c.type === 'broker');
+  const hasQueue = components.some(c => c.type === 'queue');
   const hasDmq = components.some(c => c.type === 'dmq');
   const canAffordQueue = balance >= QUEUE_COST;
   const canAffordDmq = balance >= DMQ_COST;
 
+  const pubCount = components.filter(c => c.type === 'publisher').length;
+  const subCount = components.filter(c => c.type === 'subscriber').length;
+  const brokerCount = components.filter(c => c.type === 'broker').length;
+  const publisherCost = Math.floor(PUBLISHER_BASE_COST * Math.pow(1.5, pubCount - 1));
+  const subscriberCost = Math.floor(SUBSCRIBER_BASE_COST * Math.pow(1.5, subCount - 1));
+  const brokerCost = Math.floor(BROKER_BASE_COST * Math.pow(2, brokerCount - 1));
+  const canAffordPublisher = balance >= publisherCost;
+  const canAffordSubscriber = balance >= subscriberCost;
+  const canAffordBroker = balance >= brokerCost;
+
   const handleBuyDmq = () => {
     if (hasDmq) return;
     if (!spend(DMQ_COST)) return;
-    // Place DMQ below the mesh, centered under the broker
     const broker = components.find(c => c.type === 'broker');
     const dmqX = broker ? broker.x : 450;
     const dmqY = 550;
     addComponent('dmq', dmqX, dmqY, 'Dead Message Queue');
+  };
+
+  const handleBuyPublisher = () => {
+    if (!spend(publisherCost)) return;
+    const lastPub = [...components].reverse().find(c => c.type === 'publisher');
+    const px = lastPub ? lastPub.x : 150;
+    const py = lastPub ? lastPub.y + 140 : 300;
+    addComponent('publisher', px, py, 'Publisher');
+  };
+
+  const handleBuySubscriber = () => {
+    if (!spend(subscriberCost)) return;
+    const lastSub = [...components].reverse().find(c => c.type === 'subscriber');
+    const sx = lastSub ? lastSub.x : 750;
+    const sy = lastSub ? lastSub.y + 140 : 300;
+    addComponent('subscriber', sx, sy, 'Subscriber');
+  };
+
+  const handleBuyBroker = () => {
+    if (!spend(brokerCost)) return;
+    const lastBroker = [...components].reverse().find(c => c.type === 'broker');
+    const bx = lastBroker ? lastBroker.x : 450;
+    const by = lastBroker ? lastBroker.y + 200 : 300;
+    addComponent('broker', bx, by, 'Broker');
   };
 
   return (
@@ -200,6 +237,50 @@ export function Sidebar() {
                 <div className="mt-0.5 font-mono">{formatMoney(DMQ_COST)}</div>
               </button>
             )}
+            <button
+              onClick={handleBuyPublisher}
+              disabled={!canAffordPublisher}
+              className="text-left px-2 py-1.5 rounded text-xs border transition-colors cursor-pointer disabled:cursor-not-allowed"
+              style={{
+                borderColor: canAffordPublisher ? '#22d3ee' : '#374151',
+                background: canAffordPublisher ? '#0e303822' : '#1f293744',
+                color: canAffordPublisher ? '#cffafe' : '#6b7280',
+              }}
+            >
+              <div className="font-bold">Buy Publisher</div>
+              <div className="opacity-60">Emits events on a unique topic. Connect to a broker.</div>
+              <div className="mt-0.5 font-mono">{formatMoney(publisherCost)}</div>
+            </button>
+            {hasQueue && (
+              <button
+                onClick={handleBuySubscriber}
+                disabled={!canAffordSubscriber}
+                className="text-left px-2 py-1.5 rounded text-xs border transition-colors cursor-pointer disabled:cursor-not-allowed"
+                style={{
+                  borderColor: canAffordSubscriber ? '#22c55e' : '#374151',
+                  background: canAffordSubscriber ? '#0a2e1a22' : '#1f293744',
+                  color: canAffordSubscriber ? '#bbf7d0' : '#6b7280',
+                }}
+              >
+                <div className="font-bold">Buy Subscriber</div>
+                <div className="opacity-60">Consumes events from queues for money.</div>
+                <div className="mt-0.5 font-mono">{formatMoney(subscriberCost)}</div>
+              </button>
+            )}
+            <button
+              onClick={handleBuyBroker}
+              disabled={!canAffordBroker}
+              className="text-left px-2 py-1.5 rounded text-xs border transition-colors cursor-pointer disabled:cursor-not-allowed"
+              style={{
+                borderColor: canAffordBroker ? '#fb923c' : '#374151',
+                background: canAffordBroker ? '#2a160a22' : '#1f293744',
+                color: canAffordBroker ? '#fed7aa' : '#6b7280',
+              }}
+            >
+              <div className="font-bold">Buy Broker</div>
+              <div className="opacity-60">Routes events. Bridge to other brokers for mesh topology.</div>
+              <div className="mt-0.5 font-mono">{formatMoney(brokerCost)}</div>
+            </button>
           </div>
         </div>
       )}

@@ -12,6 +12,7 @@ import {
   type UpgradeDef,
 } from '../store/upgradeConfig';
 import { formatMoney } from '../utils/formatMoney';
+import { computeBroadenedTopic } from '../utils/topicMatching';
 
 function getUpgradesForType(type: string): UpgradeDef[] {
   switch (type) {
@@ -83,6 +84,10 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number): strin
     // Queue slot upgrade
     case 'addQueueSlot':
       return `${1 + currentLevel} → ${1 + nextLevel}`;
+
+    // Bridge slot upgrade (starts at 0)
+    case 'addBridgeSlot':
+      return `${currentLevel} → ${nextLevel} bridge slots`;
 
     // One-time upgrades (no progression display)
     case 'upgradeToBroker':
@@ -185,7 +190,13 @@ export function NodeModal() {
                   {!maxed && <span className="text-[10px] opacity-50">Lv {level}</span>}
                 </div>
                 <div className="opacity-70">{def.description}</div>
-                {!maxed && <div className="text-xs text-blue-300 mt-0.5">{getUpgradeValueDisplay(def.key, level)}</div>}
+                {!maxed && def.key === 'subscriptionBroaden' && node.subscriptionSegments ? (
+                  <div className="text-xs text-amber-300 mt-0.5 font-mono">
+                    {computeBroadenedTopic(node.subscriptionSegments, level)} → {computeBroadenedTopic(node.subscriptionSegments, level + 1)}
+                  </div>
+                ) : !maxed && (
+                  <div className="text-xs text-blue-300 mt-0.5">{getUpgradeValueDisplay(def.key, level)}</div>
+                )}
                 <div className="mt-0.5">
                   {maxed ? 'MAX' : formatMoney(cost)}
                 </div>

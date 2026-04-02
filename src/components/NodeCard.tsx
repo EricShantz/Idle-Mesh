@@ -465,9 +465,19 @@ export function NodeCard({ component }: Props) {
           </div>
         )}
       </motion.div>
-      {component.topic && (
-        <div className="text-[10px] text-gray-500 font-mono">
-          {component.topic}
+      {component.type === 'publisher' && component.topicSegments && (
+        <div className="text-[8px] text-gray-500 font-mono text-center" style={{ maxWidth: 140, wordBreak: 'break-all' }}>
+          {component.topicSegments.join('/')}
+        </div>
+      )}
+      {component.type === 'queue' && component.subscriptionTopic && (
+        <div className="text-[8px] font-mono text-center" style={{ maxWidth: 140, wordBreak: 'break-all' }}>
+          {component.subscriptionTopic.split('/').map((seg, i, arr) => (
+            <span key={i}>
+              {i > 0 && <span className="text-gray-600">/</span>}
+              <span style={{ color: seg === '*' || seg === '>' ? '#f59e0b' : '#6b7280' }}>{seg}</span>
+            </span>
+          ))}
         </div>
       )}
     </motion.div>
