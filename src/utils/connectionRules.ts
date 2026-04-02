@@ -54,9 +54,23 @@ export function getValidTargets(
     }
 
     // Broker → broker bridge slot limit (starts at 0, must upgrade)
+    // Both brokers must have an available bridge slot (connection is bidirectional)
     if (from.type === 'broker' && c.type === 'broker') {
-      const maxSlots = from.upgrades['addBridgeSlot'] ?? 0;
-      if ((outgoingByType['broker'] ?? 0) >= maxSlots) return false;
+      const fromMaxSlots = from.upgrades['addBridgeSlot'] ?? 0;
+      if ((outgoingByType['broker'] ?? 0) >= fromMaxSlots) return false;
+
+      // Check target broker's available bridge slots
+      const toMaxSlots = c.upgrades['addBridgeSlot'] ?? 0;
+      const toUsedSlots = connections.filter(cn => {
+        if (cn.fromId === c.id) {
+          return components.find(comp => comp.id === cn.toId)?.type === 'broker';
+        }
+        if (cn.toId === c.id) {
+          return components.find(comp => comp.id === cn.fromId)?.type === 'broker';
+        }
+        return false;
+      }).length;
+      if (toUsedSlots >= toMaxSlots) return false;
     }
 
     // Publisher → single broker limit

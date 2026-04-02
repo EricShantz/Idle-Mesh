@@ -819,18 +819,36 @@ export const useGameStore = create<GameState>()(
         }
 
         // Slot limit: broker → broker bridge (starts at 0)
+        // Both brokers must have an available bridge slot
         if (from.type === 'broker' && to.type === 'broker') {
-          const bridgeConns = state.connections.filter(
+          const fromBridgeConns = state.connections.filter(
             c => c.fromId === drag.fromId && c.id !== drag.connectionId &&
               state.components.find(comp => comp.id === c.toId)?.type === 'broker'
           ).length;
-          const maxSlots = from.upgrades['addBridgeSlot'] ?? 0;
-          if (bridgeConns >= maxSlots) {
+          const fromMaxSlots = from.upgrades['addBridgeSlot'] ?? 0;
+          if (fromBridgeConns >= fromMaxSlots) {
             set(draft => {
               draft.draggingConnection = null;
-              draft.meshError = maxSlots === 0
+              draft.meshError = fromMaxSlots === 0
                 ? 'Broker needs "Add Bridge Slot" upgrade to connect to another broker'
-                : `Broker bridge slots full (${maxSlots}/${maxSlots} used)`;
+                : `Broker bridge slots full (${fromMaxSlots}/${fromMaxSlots} used)`;
+            });
+            return;
+          }
+
+          // Check target broker's available bridge slots
+          const toBridgeConns = state.connections.filter(
+            c => c.id !== drag.connectionId &&
+              (c.fromId === targetId || c.toId === targetId) &&
+              state.components.find(comp => comp.id === (c.fromId === targetId ? c.toId : c.fromId))?.type === 'broker'
+          ).length;
+          const toMaxSlots = to.upgrades['addBridgeSlot'] ?? 0;
+          if (toBridgeConns >= toMaxSlots) {
+            set(draft => {
+              draft.draggingConnection = null;
+              draft.meshError = toMaxSlots === 0
+                ? 'Target broker needs "Add Bridge Slot" upgrade to accept a bridge connection'
+                : `Target broker bridge slots full (${toMaxSlots}/${toMaxSlots} used)`;
             });
             return;
           }
