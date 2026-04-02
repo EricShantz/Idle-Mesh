@@ -38,8 +38,8 @@ function drawDot(
       ctx.globalAlpha = Math.max(0, dot.opacity * shrinkProgress);
     }
 
-    const radius = 6 * scale;
-    const glowRadius = 10 * scale;
+    const radius = 2.5 * scale;
+    const glowRadius = 4.5 * scale;
 
     ctx.beginPath();
     ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
@@ -60,7 +60,7 @@ function drawDot(
     const y = dot.dropY ?? dot.path[0].y;
 
     ctx.beginPath();
-    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.arc(x, y, 2.5, 0, Math.PI * 2);
     ctx.fillStyle = dot.color;
     ctx.fill();
   }

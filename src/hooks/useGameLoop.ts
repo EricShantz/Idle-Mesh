@@ -15,6 +15,11 @@ const BROKER_BASE_THROUGHPUT = 8; // events/sec
 /** Rolling window of relay timestamps per broker for throughput cap */
 const brokerRelayTimestamps = new Map<string, number[]>();
 
+/** Smoothed FPS for adaptive coin pop throttling */
+let _smoothedFps = 60;
+const FPS_SMOOTH = 0.05; // low-pass filter weight (lower = smoother)
+export function getSmoothedFps() { return _smoothedFps; }
+
 /** Try to relay an event through a broker. Returns true if under cap, false if over. */
 function tryBrokerRelay(brokerId: string, cap: number, now: number): boolean {
   let ts = brokerRelayTimestamps.get(brokerId) ?? [];
@@ -122,6 +127,12 @@ export function useGameLoop() {
       if (lastTimeRef.current === 0) lastTimeRef.current = time;
       const dt = time - lastTimeRef.current;
       lastTimeRef.current = time;
+
+      // Update smoothed FPS for adaptive coin pop throttling
+      if (dt > 0) {
+        const instantFps = 1000 / dt;
+        _smoothedFps += FPS_SMOOTH * (instantFps - _smoothedFps);
+      }
 
       const state = useGameStore.getState();
       const toConsume: { id: string; value: number; subscriberId: string }[] = [];
@@ -405,7 +416,7 @@ export function useGameLoop() {
               ...dot,
               dropVY: newVY,
               dropY: newDropY,
-              opacity: dot.opacity - dt / 1200,
+              opacity: dot.opacity - dt / 2500,
             } as Dot;
 
             // DMQ catch: check if dropping dot lands on the DMQ

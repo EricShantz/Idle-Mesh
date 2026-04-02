@@ -55,11 +55,11 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
   - DMQ→broker connections use vertical-first routing (`buildVerticalFirstSvgPath()`) and terminate at the broker's bottom edge
   - Click to detach: clicking a connection line detaches the arrow end and starts a drag. Drop on a valid target to reassign, or release on nothing to delete. Original line hidden during drag.
   - Drag preview line shown in cyan during connection creation/reassignment (also orthogonal)
-- **Event dots**: 6px filled circles traveling along connection lines
-  - Traveling: cyan (`#66ffff`) with radial glow; retry events are orange (`#fb923c`)
+- **Event dots**: 2.5px filled circles traveling along connection lines (collision detection remains at 6px radius)
+  - Traveling: cyan (`#66ffff`) with radial glow (4.5px); retry events are orange (`#fb923c`)
   - Pausing at subscriber: cyan (or orange for retries), shrinks/fades over ~2.5s
-  - Dropped: red (`#ff4444`), falls with gravity, fades over ~1.2s. Retry events that drop a second time turn dark grey (`#4a5568`) instead of red.
-- **Coin pops**: 🪙 emoji + green `+$X.XX` text floats up 50px from subscriber on money earned, fades over 1s. Color: green (`#22c55e`) with glow. Z-index 40.
+  - Dropped: red (`#ff4444`), falls with gravity, fades over ~2.5s. Retry events that drop a second time turn dark grey (`#4a5568`) instead of red.
+- **Coin pops**: 🪙 emoji + green `+$X.XX` text floats up 50px from subscriber on money earned, fades over 1s. Color: green (`#22c55e`) with glow. Z-index 40. Adaptively throttled based on frame rate — at high throughput, pops are batched with aggregated amounts to maintain performance (see FPS-based tiers below).
 - **Z-index layering**: connections (5) → back event canvas (19) → subscriber (20) → front event canvas (25) → webhook/broker/queue (26) → publisher (30) → coin pops (40) → dragging node (50)
   - Two canvases: traveling/queued/dropped dots render behind subscribers (z-19), pausing (consuming) dots render above (z-25) so the shrink animation is visible
   - Publishers render on top so events appear to emerge from behind them
@@ -377,6 +377,7 @@ src/
 - **Upgrade effects location**: most per-component upgrade effects are read in `useGameLoop.ts` by looking up the component by position from the dot's path array. Global upgrade effects are applied in `purchaseGlobalUpgrade` in `gameStore.ts`.
 - **`getUpgradesForType`** is duplicated in `NodeModal.tsx` and `NodeCard.tsx` — keep both in sync when adding new component types (currently includes `dmq`).
 - **DMQ mechanics**: DMQ catch detection runs inside the `dropped` dot branch of Pass 1 — checks `!dot.isRetry` to prevent infinite loops. DMQ release (Pass 3) gates on `dmqLineBusy` — checks if any retry dot is still traveling between DMQ and broker. Retry paths are rebuilt at release time from `dot.originalNodeIds` using current component positions (not baked waypoints), so moved components are respected. Released retry dots preserve `originalNodeIds` (set to `[dmqId, ...nodeIdsFromBroker]`) so they benefit from live path rebuilding during drag. DMQ width for collision = `(120 + dmqWidthLevel * 40) / 2` as half-width.
+- **Adaptive coin pop throttling**: `consumeEvent()` in `gameStore.ts` tracks per-subscriber pop rate via module-level `coinPopTracking`. Smoothed FPS is computed in `useGameLoop.ts` (exported via `getSmoothedFps()`) using a low-pass filter. Three tiers: ≥50 FPS (5 pops/sec, 12 max active), 35–49 FPS (2 pops/sec, 6 max), <35 FPS (1 pop/sec, 3 max). Skipped pops aggregate their amounts into the next shown pop so earnings remain visible.
 - **Adding new shop items**: add action logic to `gameStore.ts`, add UI to `Sidebar.tsx` shop section. New components are placed unconnected; user wires via drag-to-connect.
 - **Connection slot limits**: enforced in both `getValidTargets()` (filters drag targets during preview) and `completeDragConnection()` (rejects on drop). Broker→queue limited by `addQueueSlot` level, queue→subscriber by `addSubscriberSlot` level, broker→broker by `addBridgeSlot` level, publisher limited to 1 broker connection. All slot checks exclude the connection being reassigned (`c.id !== drag.connectionId`) so reassigning a connection doesn't count against the limit. Existing saves with more connections than upgrade levels are grandfathered — only new connections are validated.
 - **Mesh error toast**: `meshError` transient state in store, rendered as a red toast in top-left of `MeshCanvas.tsx` via Framer Motion `AnimatePresence`. Auto-clears after 2.5s. Used for slot limit rejections.

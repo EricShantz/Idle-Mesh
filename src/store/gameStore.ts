@@ -5,6 +5,7 @@ import { globalUpgrades, getUpgradeCost } from './upgradeConfig';
 import { getNextTopic } from './topicPool';
 import { topicMatches, computeBroadenedTopic } from '../utils/topicMatching';
 import { normalizedSpeed } from '../utils/pathUtils';
+import { getSmoothedFps } from '../hooks/useGameLoop';
 
 export type ComponentType = 'publisher' | 'webhook' | 'broker' | 'queue' | 'subscriber' | 'dmq';
 
@@ -119,6 +120,7 @@ export type GameState = {
 };
 
 let dotIdCounter = 0;
+const coinPopTracking: Record<string, { count: number; windowStart: number; pendingAmount: number }> = {};
 export function nextDotId() { return `dot-${++dotIdCounter}`; }
 let componentIdCounter = 10; // start above initial component count, bumped after load
 let connectionIdCounter = 10; // bumped after load
@@ -501,7 +503,37 @@ export const useGameStore = create<GameState>()(
           draft.recentEarnings.push({ time: Date.now(), amount: earned });
           const sub = draft.components.find(c => c.id === subscriberId);
           if (sub) {
-            draft.coinPops.push({ id: `coin-${++dotIdCounter}`, x: sub.x, y: sub.y, amount: earned });
+            const now = Date.now();
+            let track = coinPopTracking[subscriberId];
+            if (!track || now - track.windowStart > 1000) {
+              track = { count: 0, windowStart: now, pendingAmount: 0 };
+              coinPopTracking[subscriberId] = track;
+            }
+            track.count++;
+            track.pendingAmount += earned;
+
+            // Adaptive coin pop throttling based on frame rate
+            const fps = getSmoothedFps();
+            let maxPopsPerSec: number;
+            let maxActivePops: number;
+            if (fps >= 50) {
+              // Smooth — show generously
+              maxPopsPerSec = 5;
+              maxActivePops = 12;
+            } else if (fps >= 35) {
+              // Starting to dip — moderate throttle
+              maxPopsPerSec = 2;
+              maxActivePops = 6;
+            } else {
+              // Struggling — aggressive throttle
+              maxPopsPerSec = 1;
+              maxActivePops = 3;
+            }
+            const showEveryN = track.count <= maxPopsPerSec ? 1 : Math.ceil(track.count / maxPopsPerSec);
+            if (track.count % showEveryN === 0 && draft.coinPops.length < maxActivePops) {
+              draft.coinPops.push({ id: `coin-${++dotIdCounter}`, x: sub.x, y: sub.y, amount: track.pendingAmount });
+              track.pendingAmount = 0;
+            }
           }
         });
       },
