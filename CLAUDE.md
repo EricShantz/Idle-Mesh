@@ -118,7 +118,7 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 6. **Upgrade webhook → broker** ($75) to unlock queue purchases
 7. **Buy queues** ($60 each) — placed unconnected, user wires them via drag-to-connect
 8. **Wire connections**: drag from output port to target node, or click existing connections to detach and reassign/delete
-9. **Automation**: unlock auto-publisher tiers for idle income
+9. **Automation**: unlock per-publisher auto-fire upgrades for idle income
 10. **Smart routing**: broker connected to multiple queues routes each event to the queue with the most free buffer space (accounting for buffered + in-flight dots). With fan-out upgrade purchased on all queues, events go to all queues (one dot per path).
 11. **Disconnected queues**: queues connected to a broker but not a subscriber still receive and buffer events. Once full, routing skips them in favor of non-full queues. Connecting a subscriber dynamically extends queued dots' paths and begins draining.
 
@@ -130,7 +130,8 @@ This inspiration ensures the game teaches authentic EDA patterns while maintaini
 - Click target. Fires one event per click (subject to cooldown).
 - **Cooldown**: 1 second base, reduced by accelerating curve: `boostPct = level * (level + 9) / 2`, `cooldown = 1000 * (1 - boostPct/100)`. Max level 10 (95% reduction).
 - **Base event value**: $0.50, accelerating increments: `value = 0.5 + level * 0.45 + level² * 0.05` (each level adds $0.10 more than the last, starting at +$0.50). No max level.
-- Upgrades: Event Value (accelerating $), Publish Speed (accelerating % cooldown reduction)
+- **Auto-Publisher** upgrade: per-publisher automation. Lv1: 5s, Lv2: 3s, Lv3: 1s, Lv4: 0.75s, Lv5: 0.5s, Lv6: 0.25s, Lv7: 0.1s. Bypasses manual cooldown (`skipCooldown`). Each publisher fires independently at its own interval.
+- Upgrades: Event Value (accelerating $), Publish Speed (accelerating % cooldown reduction), Auto-Publisher (per-publisher auto-fire)
 
 ### Webhook
 - Middle-hop between publisher and subscriber
@@ -242,6 +243,7 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 |---|---|---|---|---|
 | Event Value | Accelerating: `$0.50 + level*0.45 + level²*0.05` (+$0.10 more each level) | $10 | ×1.8 | unlimited |
 | Publish Speed | Accelerating: `level*(level+9)/2`% cooldown reduction | $8 | ×1.8 | 10 (95%) |
+| Auto-Publisher | Per-publisher auto-fire: 5s, 3s, 1s, 0.75s, 0.5s, 0.25s, 0.1s | $150 | ×4 | 7 |
 
 ### Webhook
 | Upgrade | Effect | Cost |
@@ -294,11 +296,8 @@ Global upgrades use the same `UpgradeDef` system as node upgrades — each is a 
 |---|---|---|---|---|
 | Faster Event Propagation | Accelerating: `level*(level+9)/2`% speed boost, multiplier = `1 + boostPct/100` | $50 | ×1.8 | 10 (95%) |
 | 10% Cheaper Upgrades | Cost reduction, stackable | $50 | ×2 | 3 |
-| Auto-Publisher | Lv1: 5s, Lv2: 3s, Lv3: 1s, Lv4: 0.75s, Lv5: 0.5s, Lv6: 0.25s, Lv7: 0.1s | $150 | ×4 | 7 |
 | Event Batching | +1 event per click per level (staggered start, `progress: batch * -0.04`) | $200 | ×2.5 | 5 (6 events) |
 | Income Multiplier | Accelerating: each level multiplies by `1.4 + level*0.1` (×1.5, ×1.6, ×1.7...) | $500 | ×3 | 5 |
-
-**Auto-Publisher**: bypasses the manual click cooldown (`fireEvent(id, true)` with `skipCooldown`). Auto-fires do NOT reset the manual cooldown timer, so players can click manually between auto-fires. `useAutoPublisher` uses `getState()` inside the `setInterval` callback (not Zustand subscriptions) so the interval is only reset when `autoPubLevel` changes, not on every component position update.
 
 ### Shop (visible after broker upgrade)
 | Component | Cost | Cost Multiplier | Notes |

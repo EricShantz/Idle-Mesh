@@ -24,6 +24,14 @@ export const publisherUpgrades: UpgradeDef[] = [
     costMultiplier: 1.8,
     maxLevel: 10,
   },
+  {
+    key: 'autoPub',
+    label: 'Auto-Publisher',
+    description: 'Automatically publishes events at increasing speed',
+    baseCost: 150,
+    costMultiplier: 4,
+    maxLevel: 7,
+  },
 ];
 
 export const webhookUpgrades: UpgradeDef[] = [
@@ -179,14 +187,6 @@ export const globalUpgrades: UpgradeDef[] = [
     baseCost: 50,
     costMultiplier: 2,
     maxLevel: 3,
-  },
-  {
-    key: 'autoPub',
-    label: 'Auto-Publisher',
-    description: 'Automatically publishes events',
-    baseCost: 150,
-    costMultiplier: 4,
-    maxLevel: 7,
   },
   {
     key: 'batchFire',

@@ -8,8 +8,6 @@ const PUBLISHER_BASE_COST = 250;
 const SUBSCRIBER_BASE_COST = 150;
 const BROKER_BASE_COST = 200;
 
-const autoPubIntervals = [5, 3, 1, 0.75, 0.5, 0.25, 0.1];
-
 function getGlobalUpgradeValueDisplay(key: string, level: number): string | null {
   const next = level + 1;
   switch (key) {
@@ -20,11 +18,6 @@ function getGlobalUpgradeValueDisplay(key: string, level: number): string | null
     }
     case 'costReduction': {
       return `${level * 10}% → ${next * 10}%`;
-    }
-    case 'autoPub': {
-      const curInterval = level > 0 ? `${autoPubIntervals[Math.min(level - 1, 6)]}s` : 'Off';
-      const nxtInterval = `${autoPubIntervals[Math.min(level, 6)]}s`;
-      return `${curInterval} → ${nxtInterval}`;
     }
     case 'batchFire': {
       return `${level + 1} → ${next + 1} events/click`;

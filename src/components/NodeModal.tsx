@@ -78,6 +78,10 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number): strin
       const nxtPct = nextLevel * (nextLevel + 9) / 2;
       return `${curPct}% → ${nxtPct}% (+${nxtPct - curPct}%)`;
     }
+    case 'autoPub': {
+      const intervals = ['Off', '5s', '3s', '1s', '0.75s', '0.5s', '0.25s', '0.1s'];
+      return `${intervals[currentLevel]} → ${intervals[nextLevel]}`;
+    }
     case 'fasterRouting':
       return `${currentLevel * 20}% → ${nextLevel * 20}%`;
 

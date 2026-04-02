@@ -698,22 +698,53 @@ export function useGameLoop() {
   }, []);
 }
 
+const AUTO_PUB_INTERVALS = [5000, 3000, 1000, 750, 500, 250, 100];
+
 export function useAutoPublisher() {
-  const autoPubLevel = useGameStore(s => s.upgrades.autoPubLevel);
+  const timersRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
   useEffect(() => {
-    if (autoPubLevel === 0) return;
-
-    const intervals = [5000, 3000, 1000, 750, 500, 250, 100];
-    const interval = intervals[Math.min(autoPubLevel - 1, intervals.length - 1)];
-    const timer = setInterval(() => {
+    // Poll publisher autoPub levels and manage per-publisher timers
+    const check = setInterval(() => {
       const state = useGameStore.getState();
-      const firstPub = state.components.find(c => c.type === 'publisher');
-      if (firstPub) {
-        state.fireEvent(firstPub.id, true);
-      }
-    }, interval);
+      const publishers = state.components.filter(c => c.type === 'publisher');
+      const activeIds = new Set<string>();
 
-    return () => clearInterval(timer);
-  }, [autoPubLevel]);
+      for (const pub of publishers) {
+        const level = pub.upgrades['autoPub'] ?? 0;
+        if (level === 0) continue;
+        activeIds.add(pub.id);
+        const interval = AUTO_PUB_INTERVALS[Math.min(level - 1, AUTO_PUB_INTERVALS.length - 1)];
+
+        // Check if timer exists with correct interval (stored as data attribute)
+        const existing = timersRef.current.get(pub.id);
+        const existingInterval = (timersRef.current as any)[`${pub.id}_ms`];
+        if (existing && existingInterval === interval) continue;
+
+        // Clear old timer and set new one
+        if (existing) clearInterval(existing);
+        const timer = setInterval(() => {
+          const s = useGameStore.getState();
+          s.fireEvent(pub.id, true);
+        }, interval);
+        timersRef.current.set(pub.id, timer);
+        (timersRef.current as any)[`${pub.id}_ms`] = interval;
+      }
+
+      // Clean up timers for removed or downgraded publishers
+      for (const [id, timer] of timersRef.current.entries()) {
+        if (!activeIds.has(id)) {
+          clearInterval(timer);
+          timersRef.current.delete(id);
+          delete (timersRef.current as any)[`${id}_ms`];
+        }
+      }
+    }, 500);
+
+    return () => {
+      clearInterval(check);
+      for (const timer of timersRef.current.values()) clearInterval(timer);
+      timersRef.current.clear();
+    };
+  }, []);
 }

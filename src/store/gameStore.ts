@@ -63,7 +63,6 @@ export type GameState = {
   upgrades: {
     propagationSpeed: number;
     costReduction: number;
-    autoPubLevel: number;
     batchFire: number;
     globalValueMultiplier: number;
   };
@@ -203,7 +202,7 @@ function migrateGlobalUpgradeLevels(upgrades: GameState['upgrades'] | undefined)
   if (upgrades.costReduction > 0) {
     levels.costReduction = Math.round(upgrades.costReduction / 0.1);
   }
-  if (upgrades.autoPubLevel > 0) levels.autoPub = upgrades.autoPubLevel;
+  // autoPub migrated to per-publisher upgrade — skip global level
   if ((upgrades as any).batchFire === true || upgrades.batchFire > 0) levels.batchFire = 1;
   if (upgrades.globalValueMultiplier > 1) {
     // Derive level from old multiplier by iterating the new formula
@@ -228,18 +227,30 @@ export const useGameStore = create<GameState>()(
       eventsConsumed: saved?.eventsConsumed ?? 0,
       eventsDropped: saved?.eventsDropped ?? 0,
 
-      components: (saved?.components ?? createInitialComponents()).map(c => ({
-        ...c,
-        tags: c.tags ?? {},
-        topicSegments: c.topicSegments ?? (c.topic ? c.topic.split('/') : undefined),
-      })),
+      components: (() => {
+        const comps = (saved?.components ?? createInitialComponents()).map(c => ({
+          ...c,
+          tags: c.tags ?? {},
+          topicSegments: c.topicSegments ?? (c.topic ? c.topic.split('/') : undefined),
+        }));
+        // Migrate old global autoPub level to first publisher's per-component upgrade
+        const oldAutoPubLevel = (saved?.upgrades as any)?.autoPubLevel
+          ?? saved?.globalUpgradeLevels?.autoPub
+          ?? 0;
+        if (oldAutoPubLevel > 0) {
+          const firstPub = comps.find(c => c.type === 'publisher');
+          if (firstPub && !(firstPub.upgrades['autoPub'] > 0)) {
+            firstPub.upgrades['autoPub'] = oldAutoPubLevel;
+          }
+        }
+        return comps;
+      })(),
       connections: saved?.connections ?? createInitialConnections(),
       eventDots: [], // never persist in-flight dots
 
       upgrades: saved?.upgrades ?? {
         propagationSpeed: 1.0,
         costReduction: 0,
-        autoPubLevel: 0,
         batchFire: (saved?.upgrades as any)?.batchFire === true ? 2 : (saved?.upgrades?.batchFire ?? 0),
         globalValueMultiplier: 1.0,
       },
@@ -730,9 +741,6 @@ export const useGameStore = create<GameState>()(
             }
             case 'costReduction':
               draft.upgrades.costReduction = Math.min(0.3, draft.upgrades.costReduction + 0.1);
-              break;
-            case 'autoPub':
-              draft.upgrades.autoPubLevel = level + 1;
               break;
             case 'batchFire':
               draft.upgrades.batchFire = level + 2; // level 0 → 2 events, level 1 → 3, etc.
