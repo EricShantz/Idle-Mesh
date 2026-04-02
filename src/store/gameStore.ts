@@ -1125,7 +1125,7 @@ export const useGameStore = create<GameState>()(
         const pub = state.components.find(c => c.id === publisherId);
         if (!pub) return 0.5;
         const valueLevel = pub.upgrades['eventValue'] ?? 0;
-        return 0.5 + getTopicValueBonus(pub.topic) + valueLevel * 0.45 + valueLevel * valueLevel * 0.05 + getPermanentValueBoost(state);
+        return 1.0 + getTopicValueBonus(pub.topic) + valueLevel * 0.45 + valueLevel * valueLevel * 0.05 + getPermanentValueBoost(state);
       },
 
       performPrestige: () => {

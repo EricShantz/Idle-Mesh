@@ -408,7 +408,7 @@ export function useGameLoop() {
 
             if (elapsed >= moneyAddTime && !dot.moneyAdded) {
               const consumptionValueLevel = subscriber?.upgrades['consumptionValue'] ?? 0;
-              const subscriberValue = 0.5 + consumptionValueLevel * 0.45 + consumptionValueLevel * consumptionValueLevel * 0.05;
+              const subscriberMult = 1.0 + consumptionValueLevel * 0.5;
 
               // Specificity bonus: reward queues with narrow subscriptions
               const publisherId = dot.originalNodeIds?.[0];
@@ -417,7 +417,7 @@ export function useGameLoop() {
               const queue = queueId ? state.components.find(c => c.id === queueId) : undefined;
               const specificityMult = getSpecificityMultiplier(publisher?.topic, queue?.subscriptionTopic);
 
-              const finalValue = (dot.value + subscriberValue) * specificityMult;
+              const finalValue = dot.value * subscriberMult * specificityMult;
               toConsume.push({ id: dot.id, value: finalValue, subscriberId: subscriber?.id ?? '' });
               // Don't add to updated — dot is finished
             } else {

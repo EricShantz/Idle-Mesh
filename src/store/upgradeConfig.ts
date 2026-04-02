@@ -155,8 +155,8 @@ export const dmqUpgrades: UpgradeDef[] = [
 export const subscriberUpgrades: UpgradeDef[] = [
   {
     key: 'consumptionValue',
-    label: 'Consumption Value',
-    description: 'Accelerating value increase per consumed event',
+    label: 'Consumption Multiplier',
+    description: '+50% payout multiplier per level — scales with all upstream value',
     baseCost: 10,
     costMultiplier: 1.8,
   },
