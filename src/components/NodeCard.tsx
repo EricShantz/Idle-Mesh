@@ -69,6 +69,7 @@ export function NodeCard({ component }: Props) {
   const colors = typeColors[component.type] ?? typeColors.publisher;
   const isSelected = selectedNodeId === component.id;
   const isPublisher = component.type === 'publisher';
+  const isSubscriber = component.type === 'subscriber';
 
   // Drag state
   const [cursorGrabbing, setCursorGrabbing] = useState(false);
@@ -103,6 +104,51 @@ export function NodeCard({ component }: Props) {
     cooldownRaf.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(cooldownRaf.current);
   }, [isPublisher, publisherCooldowns[component.id], component.upgrades]);
+
+  // Subscriber consume cooldown overlay
+  const [subscriberCooldownPct, setSubscriberCooldownPct] = useState(0);
+  const subscriberCooldownRaf = useRef<number>(0);
+  const subscriberConsumeStart = useRef<number>(0);
+  const subscriberConsumeDuration = useRef<number>(0);
+
+  useEffect(() => {
+    if (!isSubscriber) return;
+
+    const tick = () => {
+      const now = Date.now();
+      const dots = useGameStore.getState().eventDots;
+      const pausingDot = dots.find(d =>
+        d.status === 'pausing' && d.pauseStartTime &&
+        Math.hypot(
+          (d.path[d.path.length - 1]?.x ?? 0) - component.x,
+          (d.path[d.path.length - 1]?.y ?? 0) - component.y
+        ) < 50
+      );
+
+      // Latch start time when a new consuming dot appears
+      if (pausingDot && pausingDot.pauseStartTime && subscriberConsumeStart.current !== pausingDot.pauseStartTime) {
+        subscriberConsumeStart.current = pausingDot.pauseStartTime;
+        const fasterConsumptionLevel = component.upgrades['fasterConsumption'] ?? 0;
+        const boostPct = Math.min(fasterConsumptionLevel * (fasterConsumptionLevel + 9) / 2, 100);
+        subscriberConsumeDuration.current = 2500 * (1 - boostPct / 100) * 0.5;
+      }
+
+      // Animate based on latched start/duration (continues even after dot is removed)
+      if (subscriberConsumeStart.current > 0) {
+        const elapsed = now - subscriberConsumeStart.current;
+        const remaining = Math.max(0, 1 - elapsed / subscriberConsumeDuration.current);
+        setSubscriberCooldownPct(remaining);
+        if (remaining <= 0) {
+          subscriberConsumeStart.current = 0;
+        }
+      }
+
+      subscriberCooldownRaf.current = requestAnimationFrame(tick);
+    };
+
+    subscriberCooldownRaf.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(subscriberCooldownRaf.current);
+  }, [isSubscriber, component.x, component.y, component.upgrades]);
 
   // Count affordable upgrades
   const upgrades = getUpgradesForType(component.type).filter(d => !d.hidden && !(d.key === 'subscriptionBroaden' && !component.subscriptionTopic));
@@ -344,6 +390,16 @@ export function NodeCard({ component }: Props) {
             style={{
               background: 'rgba(0, 0, 0, 0.35)',
               clipPath: `inset(${(1 - cooldownPct) * 100}% 0 0 0)`,
+            }}
+          />
+        )}
+        {/* Cooldown overlay for subscriber (consuming) */}
+        {isSubscriber && subscriberCooldownPct > 0 && (
+          <div
+            className="absolute inset-0 rounded-lg pointer-events-none"
+            style={{
+              background: 'rgba(0, 0, 0, 0.35)',
+              clipPath: `inset(${(1 - subscriberCooldownPct) * 100}% 0 0 0)`,
             }}
           />
         )}
