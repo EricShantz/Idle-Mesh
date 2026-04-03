@@ -63,10 +63,9 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number, topic?
       return `$${curVal} → $${nxtVal} (+$${increment})`;
     }
     case 'consumptionValue': {
-      const curVal = (0.5 + currentLevel * 0.45 + currentLevel * currentLevel * 0.05).toFixed(2);
-      const nxtVal = (0.5 + nextLevel * 0.45 + nextLevel * nextLevel * 0.05).toFixed(2);
-      const increment = (nextLevel * 0.45 + nextLevel * nextLevel * 0.05 - currentLevel * 0.45 - currentLevel * currentLevel * 0.05).toFixed(2);
-      return `$${curVal} → $${nxtVal} (+$${increment})`;
+      const cur = 1.0 + currentLevel * 0.08 + currentLevel * currentLevel * 0.02;
+      const nxt = 1.0 + nextLevel * 0.08 + nextLevel * nextLevel * 0.02;
+      return `${cur.toFixed(2)}x → ${nxt.toFixed(2)}x (+${(nxt - cur).toFixed(2)}x)`;
     }
 
     // Level-based percentage upgrades
@@ -263,7 +262,7 @@ export function NodeModal() {
                     {def.label}
                     {['fasterConsumption', 'publishSpeed', 'dmqReleaseSpeed'].includes(def.key) && level > 0 && ` (${level * (level + 9) / 2}%)`}
                     {def.key === 'eventValue' && level > 0 && ` ($${(1.0 + level * 0.45 + level * level * 0.05).toFixed(2)})`}
-                    {def.key === 'consumptionValue' && level > 0 && ` ($${(0.5 + level * 0.45 + level * level * 0.05).toFixed(2)})`}
+                    {def.key === 'consumptionValue' && level > 0 && ` (${(1.0 + level * 0.08 + level * level * 0.02).toFixed(2)}x)`}
                     {def.key === 'increaseThroughput' && ` (${8 + level * (level + 9) / 2}/sec)`}
                   </span>
                   {!maxed && <span className="text-[10px] opacity-50">Lv {level}</span>}

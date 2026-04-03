@@ -410,7 +410,7 @@ export function useGameLoop() {
 
             if (elapsed >= moneyAddTime && !dot.moneyAdded) {
               const consumptionValueLevel = subscriber?.upgrades['consumptionValue'] ?? 0;
-              const subscriberMult = 1.0 + consumptionValueLevel * 0.5;
+              const subscriberMult = 1.0 + consumptionValueLevel * 0.08 + consumptionValueLevel * consumptionValueLevel * 0.02;
 
               const finalValue = dot.value * subscriberMult;
               toConsume.push({ id: dot.id, value: finalValue, subscriberId: subscriber?.id ?? '' });

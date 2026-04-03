@@ -97,7 +97,8 @@ export function Sidebar() {
   const hasBroker = components.some(c => c.type === 'broker');
   const hasQueue = components.some(c => c.type === 'queue');
   const hasDmq = components.some(c => c.type === 'dmq');
-  const queueCost = Math.floor(QUEUE_COST * shopDiscount);
+  const queueCount = components.filter(c => c.type === 'queue').length;
+  const queueCost = Math.floor(QUEUE_COST * Math.pow(1.3, Math.max(0, queueCount - 1)) * shopDiscount);
   const dmqCost = Math.floor(DMQ_COST * shopDiscount);
   const canAffordQueue = balance >= queueCost;
   const canAffordDmq = balance >= dmqCost;
