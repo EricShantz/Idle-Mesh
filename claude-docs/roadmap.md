@@ -38,6 +38,7 @@
 - [ ] Replay/undo button for failed topology experiments
 - [ ] Tutorial: prestige availability notification when $1M first reached
 - [ ] Tutorial: prestige tree explanation on first visit
+- [ ] Tutorial/UI: explain competing consumers vs fan-out on queue (add info to queue card and/or "New Subscriber Added" tutorial slides — multiple subscribers round-robin by default, fan-out upgrade sends to all)
 - [x] Sidebar upgrades in dropdown menus (global upgrades dropdown, broker upgrades dropdown, etc.) to reduce scrolling
 
 ---

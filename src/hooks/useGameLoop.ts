@@ -15,6 +15,9 @@ const BROKER_BASE_THROUGHPUT = 8; // events/sec
 /** Rolling window of relay timestamps per broker for throughput cap */
 const brokerRelayTimestamps = new Map<string, number[]>();
 
+/** Round-robin index per queue for competing consumer pattern */
+const queueRoundRobinIdx = new Map<string, number>();
+
 /** Smoothed FPS for adaptive coin pop throttling */
 let _smoothedFps = 60;
 const FPS_SMOOTH = 0.05; // low-pass filter weight (lower = smoother)
@@ -591,8 +594,15 @@ export function useGameLoop() {
               allSubTargets.push({ x: targetSub.x, y: targetSub.y });
             }
 
-            // Without fan-out, only send to first subscriber
-            const targets = hasFanOut ? allSubTargets : allSubTargets.slice(0, 1);
+            // Without fan-out, round-robin across subscribers (competing consumers)
+            let targets: { x: number; y: number }[];
+            if (hasFanOut) {
+              targets = allSubTargets;
+            } else {
+              const rrIdx = (queueRoundRobinIdx.get(queueId) ?? 0) % allSubTargets.length;
+              queueRoundRobinIdx.set(queueId, rrIdx + 1);
+              targets = [allSubTargets[rrIdx]];
+            }
 
             for (let ti = 0; ti < targets.length; ti++) {
               const subTarget = targets[ti];
