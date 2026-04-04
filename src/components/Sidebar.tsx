@@ -20,10 +20,10 @@ function CollapsibleSection({ title, defaultOpen = true, children }: { title: st
   );
 }
 
-const QUEUE_COST = 60;
-const DMQ_COST = 80;
-const PUBLISHER_BASE_COST = 250;
-const SUBSCRIBER_BASE_COST = 150;
+const QUEUE_COST = 30;
+const DMQ_COST = 100;
+const PUBLISHER_BASE_COST = 150;
+const SUBSCRIBER_BASE_COST = 75;
 const BROKER_BASE_COST = 200;
 
 function getGlobalUpgradeValueDisplay(key: string, level: number): string | null {
@@ -105,8 +105,8 @@ export function Sidebar() {
   const pubCount = components.filter(c => c.type === 'publisher').length;
   const subCount = components.filter(c => c.type === 'subscriber').length;
   const brokerCount = components.filter(c => c.type === 'broker').length;
-  const publisherCost = Math.floor(PUBLISHER_BASE_COST * Math.pow(1.5, pubCount - 1) * shopDiscount);
-  const subscriberCost = Math.floor(SUBSCRIBER_BASE_COST * Math.pow(1.5, subCount - 1) * shopDiscount);
+  const publisherCost = Math.floor(PUBLISHER_BASE_COST * Math.pow(1.8, pubCount - 1) * shopDiscount);
+  const subscriberCost = Math.floor(SUBSCRIBER_BASE_COST * Math.pow(1.8, subCount - 1) * shopDiscount);
   const brokerCost = Math.floor(BROKER_BASE_COST * Math.pow(2, brokerCount - 1) * shopDiscount);
   const canAffordPublisher = balance >= publisherCost;
   const canAffordSubscriber = balance >= subscriberCost;

@@ -23,14 +23,14 @@
 
 ### Tier 3: Advanced / Idle Scaling
 - [ ] **Event Mesh Visualization** — color-code connection lines by topic
-- [ ] **Advanced Topic Patterns** — dynamic topic routing, topic pool expansion (pool cycles after 8th publisher)
+- [ ] **Advanced Topic Patterns** — dynamic topic routing (pool cycles after 24th publisher)
 - [ ] ~~**Topic-Based Earnings**~~ — removed: value tiers and specificity bonus were too complex for users
 
 ---
 
 ## Known Bugs / Technical Debt
 - [ ] Bridge rendering glitch: dots released from a queue behind a bridge appear to start halfway down the queue->subscriber segment at max propagation speed
-- [ ] Topic pool limited: pool cycles back to first topic after 8th publisher
+- [ ] Topic pool cycles back after 24th publisher (4 clusters of 6)
 
 ---
 
@@ -40,6 +40,8 @@
 - [ ] Tutorial: prestige tree explanation on first visit
 - [ ] Tutorial/UI: explain competing consumers vs fan-out on queue (add info to queue card and/or "New Subscriber Added" tutorial slides — multiple subscribers round-robin by default, fan-out upgrade sends to all)
 - [x] Sidebar upgrades in dropdown menus (global upgrades dropdown, broker upgrades dropdown, etc.) to reduce scrolling
+- [ ] Show a tutorial slide the first time an event drops - explaining what that means, and that the user needs to upgrade the component that the events are dropping off at
+- [ ] after the user upgrades the webhook to a broker, they get a broker tutorial slide. after they close that slide, the side menu should scroll down to show the new components. The new components should be highlighted and a new tutorial slide should pop up explaining that they now have new components they can add to their mesh, and to purchase one for more information on each one.
 
 ---
 

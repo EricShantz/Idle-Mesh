@@ -43,7 +43,7 @@ When multiple downstream paths exist (fan-out or bridge), `fireEvent` creates on
 - `traveling` → on collision with next queue on path, always transitions to `queued` if buffer has space, otherwise drops
 - `traveling` → on collision with next subscriber on path (only if no queue ahead), transitions to `pausing` if subscriber is free, otherwise drops
 - `queued` → auto-released one per queue per frame when queue has active connection to subscriber, subscriber is free, and no traveling dots past any queue heading to that subscriber. Path dynamically extended at release time if queue was disconnected when dot arrived.
-- `pausing` → at 50% of consume duration, value is passed directly to `consumeEvent(id, value)` and dot is removed from array
+- `pausing` → at end of consume duration (1s base), value is passed directly to `consumeEvent(id, value)` and dot is removed from array
 - `dropped` → gravity fall + fade over 1.2s; position is where the blockage occurred. Non-retry dots can be caught by the DMQ. Retry dots turn dark grey and cannot be re-caught. `eventsDropped` counter incremented via batch `setState` after the dot loop.
 
 ## Game loop pattern

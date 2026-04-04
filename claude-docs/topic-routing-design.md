@@ -29,16 +29,43 @@
 
 ## Topic Pool
 
+Topics are clustered in groups of 6 so that each broadening level captures exactly one additional publisher from the same cluster.
+
 ```
+── Orders cluster (pubs 1–6) ──
 acme/orders/created/na/electronics/SKU001     (pub-1, starting)
-acme/orders/created/eu/clothing/SKU042        (pub-2)
-acme/payments/processed/na/cards/TXN001       (pub-3)
-acme/payments/refunded/eu/cards/TXN099        (pub-4)
-acme/inventory/updated/na/warehouse/WH005     (pub-5)
-acme/inventory/updated/eu/warehouse/WH012     (pub-6)
-acme/shipping/dispatched/na/logistics/SHP001  (pub-7)
-acme/shipping/delivered/eu/logistics/SHP042   (pub-8)
+acme/orders/created/na/electronics/SKU002     (pub-2, differs in identifier)
+acme/orders/created/na/clothing/SKU003        (pub-3, differs in category)
+acme/orders/created/eu/warehouse/SKU004       (pub-4, differs in region)
+acme/orders/processed/na/cards/SKU005         (pub-5, differs in action)
+acme/payments/fulfilled/na/logistics/SKU006   (pub-6, differs in domain)
+
+── Payments cluster (pubs 7–12) ──
+acme/payments/processed/na/cards/TXN001       (pub-7)
+acme/payments/processed/na/cards/TXN002       (pub-8)
+acme/payments/processed/na/crypto/TXN003      (pub-9)
+acme/payments/processed/eu/bank/TXN004        (pub-10)
+acme/payments/refunded/na/cards/TXN005        (pub-11)
+acme/inventory/settled/na/cards/TXN006        (pub-12)
+
+── Inventory cluster (pubs 13–18) ──
+acme/inventory/updated/na/warehouse/WH001     (pub-13)
+acme/inventory/updated/na/warehouse/WH002     (pub-14)
+acme/inventory/updated/na/fulfillment/WH003   (pub-15)
+acme/inventory/updated/eu/distribution/WH004  (pub-16)
+acme/inventory/depleted/na/warehouse/WH005    (pub-17)
+acme/shipping/restocked/na/warehouse/WH006    (pub-18)
+
+── Shipping cluster (pubs 19–24) ──
+acme/shipping/dispatched/na/logistics/SHP001  (pub-19)
+acme/shipping/dispatched/na/logistics/SHP002  (pub-20)
+acme/shipping/dispatched/na/express/SHP003    (pub-21)
+acme/shipping/dispatched/eu/freight/SHP004    (pub-22)
+acme/shipping/delivered/na/logistics/SHP005   (pub-23)
+acme/orders/tracking/na/logistics/SHP006      (pub-24)
 ```
+
+Pool wraps around after 24 publishers.
 
 ## Topic Matching
 
@@ -50,12 +77,12 @@ acme/shipping/delivered/eu/logistics/SHP042   (pub-8)
 ### Broadening Example
 
 Queue subscribed to `acme/orders/created/na/electronics/SKU001`:
-- Level 0: `acme/orders/created/na/electronics/SKU001` (1 publisher)
-- Level 1: `acme/orders/created/na/electronics/*` (same-category)
-- Level 2: `acme/orders/created/na/>` (same-region orders)
-- Level 3: `acme/orders/created/>` (all created orders)
-- Level 4: `acme/orders/>` (all orders)
-- Level 5: `acme/>` (everything)
+- Level 0: `acme/orders/created/na/electronics/SKU001` (1 publisher — pub 1 only)
+- Level 1: `acme/orders/created/na/electronics/*` (+pub 2, same category different identifier)
+- Level 2: `acme/orders/created/na/>` (+pub 3, different category)
+- Level 3: `acme/orders/created/>` (+pub 4, different region)
+- Level 4: `acme/orders/>` (+pub 5, different action)
+- Level 5: `acme/>` (+pub 6 and everything else)
 
 ## Routing Integration
 

@@ -130,7 +130,7 @@ export function NodeCard({ component }: Props) {
         subscriberConsumeStart.current = pausingDot.pauseStartTime;
         const fasterConsumptionLevel = component.upgrades['fasterConsumption'] ?? 0;
         const boostPct = Math.min(fasterConsumptionLevel * (fasterConsumptionLevel + 9) / 2, 100);
-        subscriberConsumeDuration.current = 2500 * (1 - boostPct / 100) * 0.5;
+        subscriberConsumeDuration.current = 1000 * (1 - boostPct / 100);
       }
 
       // Animate based on latched start/duration (continues even after dot is removed)

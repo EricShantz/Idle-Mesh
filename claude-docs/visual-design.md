@@ -17,7 +17,7 @@
   - Drag preview line shown in cyan during connection creation/reassignment (also orthogonal)
 - **Event dots**: 2.5px filled circles traveling along connection lines (collision detection remains at 6px radius)
   - Traveling: cyan (`#22d3ee`) with radial glow (4.5px); retry events are orange (`#fb923c`)
-  - Pausing at subscriber: cyan (or orange for retries), shrinks/fades over ~2.5s
+  - Pausing at subscriber: cyan (or orange for retries), shrinks/fades over ~1s
   - Dropped: red (`#ff4444`), falls with gravity, fades over ~2.5s. Once dropped, dots never revert to their original color. Retry events that drop a second time turn dark grey (`#4a5568`) instead of red.
 - **Coin pops**: 🪙 emoji + green `+$X.XX` text floats up 50px from subscriber on money earned, fades over 1s. Color: green (`#22c55e`) with glow. Z-index 40. Adaptively throttled based on frame rate — at high throughput, pops are batched with aggregated amounts to maintain performance.
 - **Z-index layering**: connections (5) → back event canvas (19) → subscriber (20) → front event canvas (25) → webhook/broker/queue (26) → publisher (30) → coin pops (40) → dragging node (50)

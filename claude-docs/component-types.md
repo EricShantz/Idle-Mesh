@@ -11,7 +11,7 @@
 - Middle-hop between publisher and subscriber
 - **Visually slows events** (40% speed while passing through). Max 3 "Faster Routing" upgrades.
 - Only one event in the webhook at a time — new events drop at its entrance if occupied
-- One-time upgrade to **Broker** ($75) changes type, label, color, and opens broker upgrade modal
+- One-time upgrade to **Broker** ($50) changes type, label, color, and opens broker upgrade modal
 
 ## Broker (upgraded Webhook)
 - Same position as the webhook it replaced; label and color change on purchase
@@ -23,7 +23,7 @@
 - Upgrades: Add Queue Slot (**functional**), Add Bridge Slot (**functional**), Increase Throughput (**functional**)
 
 ## Queue
-- Purchased from the sidebar shop for $60 (requires broker)
+- Purchased from the sidebar shop for $30 (requires broker)
 - Placed unconnected on the canvas, offset downward: `y = 300 + (n+1) * 140`
 - User wires connections manually via drag-to-connect (output port → target node)
 - Each queue is independent with its own unique ID, buffer, and connections
@@ -37,7 +37,7 @@
 - Upgrades: Add Subscriber Slot, Persistent Delivery/`fanOut`, Faster Release, Increase Buffer Size, Broaden Subscription (all **functional**)
 
 ## Dead Message Queue (DMQ)
-- Purchased from the sidebar shop for $80 (requires broker, one-time purchase)
+- Purchased from the sidebar shop for $100 (requires broker, one-time purchase)
 - Placed unconnected on the canvas below the broker. User wires via drag-to-connect.
 - **Output port**: top-center (unique — all other nodes have right-edge ports). Can only connect to a broker.
 - **Catch mechanic**: while a dropped (non-retry) dot falls with gravity, if its `dropX` is within the DMQ's horizontal bounds and `dropY` reaches the DMQ's top edge, the dot is caught and queued in the DMQ buffer.
@@ -50,8 +50,8 @@
 - Upgrades: Increase Width, Faster Release, Increase Buffer Size, Value Recovery (all **functional**)
 
 ## Subscriber
-- Consumes events. Pauses for ~2.5s while "processing" (shrink animation), then money increments.
+- Consumes events. Pauses for ~1s while "processing" (shrink animation), then money increments.
 - **Coin pop animation**: when money is earned, a 🪙 coin icon with the earned amount floats upward from the subscriber and fades out over 1 second (Framer Motion `AnimatePresence` in `MeshCanvas.tsx`, state in `coinPops` array)
-- **Faster Consumption** upgrade: accelerating curve `boostPct = min(level * (level + 9) / 2, 100)`, `duration = 2500 * (1 - boostPct/100)`. Max level 11 (100% reduction = instant consumption).
+- **Faster Consumption** upgrade: accelerating curve `boostPct = min(level * (level + 9) / 2, 100)`, `duration = 1000 * (1 - boostPct/100)`. Max level 11 (100% reduction = instant consumption).
 - **Value calculation**: final event value = publisher value + subscriber value. Subscriber value uses same accelerating formula as publisher: `0.5 + level * 0.45 + level² * 0.05`. No max level.
 - Upgrades: Consumption Value, Faster Consumption (both **functional**)

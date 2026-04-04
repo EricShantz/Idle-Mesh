@@ -48,7 +48,7 @@ src/
 
 1. Click publisher → spawns event dot (respects cooldown)
 2. Event slows through webhook, continues to subscriber
-3. Subscriber consumes over ~2.5s → money increments at ~50% done
+3. Subscriber consumes over ~1s → money increments when consume completes
 4. Blockage: if webhook occupied or subscriber busy, event drops
 5. Upgrade webhook → broker ($75) to unlock queues
 6. Buy queues, wire connections via drag-to-connect
@@ -65,7 +65,7 @@ src/
 
 ## Not Yet Implemented
 - **Topic Filter Boost**: broker upgrade hidden in UI — effect not yet defined
-- **Topic pool expansion**: need more unique topics for late-game
+- **Topic pool expansion**: 24 topics across 4 domain clusters (wraps after 24th publisher)
 
 ## Detailed Documentation
 

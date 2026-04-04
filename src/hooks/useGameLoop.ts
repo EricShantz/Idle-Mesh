@@ -405,10 +405,8 @@ export function useGameLoop() {
             );
             const fasterConsumptionLevel = subscriber?.upgrades['fasterConsumption'] ?? 0;
             const boostPct = Math.min(fasterConsumptionLevel * (fasterConsumptionLevel + 9) / 2, 100);
-            const consumeDuration = 2500 * (1 - boostPct / 100);
-            const moneyAddTime = consumeDuration * 0.5;
-
-            if (elapsed >= moneyAddTime && !dot.moneyAdded) {
+            const consumeDuration = 1000 * (1 - boostPct / 100);
+            if (elapsed >= consumeDuration && !dot.moneyAdded) {
               const consumptionValueLevel = subscriber?.upgrades['consumptionValue'] ?? 0;
               const subscriberMult = 1.0 + consumptionValueLevel * 0.08 + consumptionValueLevel * consumptionValueLevel * 0.02;
 
