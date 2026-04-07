@@ -10,6 +10,7 @@ import {
   MultiPublisherGraphic,
   MultiSubscriberGraphic,
   MultiBrokerGraphic,
+  EventDropGraphic,
 } from '../components/TutorialGraphics';
 
 export type TutorialSlide = {
@@ -49,6 +50,12 @@ export const tutorials: TutorialDef[] = [
     key: 'firstDmq',
     slides: [
       { title: 'Dead Message Queue!', body: 'The DMQ catches dropped events as they fall. Connect its top port to a broker to retry them. Upgrade its width to catch more and value recovery to recoup more money.', graphic: DmqGraphic },
+    ],
+  },
+  {
+    key: 'firstDrop',
+    slides: [
+      { title: 'Event Dropped!', body: 'An event was lost because the component it reached was too busy to handle it. Upgrade that component\'s speed or capacity to prevent future drops — or add queues to buffer events when things get backed up.', graphic: EventDropGraphic },
     ],
   },
   {

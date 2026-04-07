@@ -635,6 +635,125 @@ export function MultiSubscriberGraphic() {
     </svg>
   );
 }
+export function EventDropGraphic() {
+  const subX = W / 2, subY = H / 2;
+  const subLeftEdge = subX - 36;
+  const dotStartX = 10;
+  const nW = 72, nH = 40;
+
+  // Single shared 5s cycle. All elements use times 0→1 with opacity
+  // to stay hidden during their "waiting" phase.
+  //
+  // t=0.00 (0.0s)  dot 1 appears at left, starts traveling
+  // t=0.16 (0.8s)  dot 1 arrives at subscriber, consumed; cooldown appears; dot 2 appears and starts traveling
+  // t=0.32 (1.6s)  dot 2 arrives, rejected — ✕ flash, turns red, falls
+  // t=0.42 (2.1s)  cooldown fully drained
+  // t=1.00 (5.0s)  cycle restarts
+
+  const D = 3.5;
+  const a = 0.16;  // dot 1 arrives (0.8s)
+  const b = 0.32;  // dot 2 arrives (1.6s)
+  const c = 0.42;  // cooldown drained (2.1s)
+
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderRadius: 8, background: C.bg }}>
+      {/* Connection line */}
+      <line x1={dotStartX} y1={subY} x2={subLeftEdge} y2={subY} stroke={C.line} strokeWidth={1.5} strokeDasharray="4 3" />
+      <polygon
+        points={`${subLeftEdge},${subY} ${subLeftEdge - 6},${subY - 4} ${subLeftEdge - 6},${subY + 4}`}
+        fill={C.line}
+      />
+
+      {/* Subscriber node */}
+      <NodeBox x={subX} y={subY} type="subscriber" label="Subscriber" />
+
+      {/* Cooldown bar: matches real game — dark overlay with clipPath inset draining from top */}
+      <motion.rect
+        x={subX - nW / 2}
+        y={subY - nH / 2}
+        width={nW}
+        height={nH}
+        rx={6}
+        fill="rgba(0,0,0,0.35)"
+        animate={{
+          clipPath: [
+            'inset(100% 0 0 0)',
+            'inset(100% 0 0 0)',
+            'inset(0% 0 0 0)',
+            'inset(100% 0 0 0)',
+            'inset(100% 0 0 0)',
+          ],
+        }}
+        transition={{
+          duration: D,
+          repeat: Infinity,
+          ease: 'linear',
+          times: [0, a - 0.005, a, c, 1],
+        }}
+      />
+
+      {/* Dot 1: travels from left to subscriber, then fades out (consumed) */}
+      <motion.circle
+        cy={subY}
+        r={3}
+        fill={C.dot}
+        filter={`drop-shadow(0 0 4px ${C.dotGlow})`}
+        animate={{
+          cx:      [dotStartX, subLeftEdge, subLeftEdge, subLeftEdge],
+          opacity: [1,         1,           0,           0],
+          r:       [3,         3,           0,           0],
+        }}
+        transition={{
+          duration: D,
+          repeat: Infinity,
+          ease: 'linear',
+          times: [0, a, a + 0.04, 1],
+        }}
+      />
+
+      {/* Dot 2: invisible until t=a, travels to subscriber, rejected at t=b, falls */}
+      <motion.circle
+        r={3}
+        filter={`drop-shadow(0 0 4px ${C.dotGlow})`}
+        animate={{
+          cx:      [dotStartX, dotStartX, dotStartX, subLeftEdge, subLeftEdge, subLeftEdge, subLeftEdge, subLeftEdge],
+          cy:      [subY,      subY,      subY,      subY,        subY,        subY + 55,   subY + 90,   subY + 90],
+          fill:    [C.dot,     C.dot,     C.dot,     C.dot,       '#ff4444',   '#ff4444',   '#ff4444',   '#ff4444'],
+          opacity: [0,         0,         1,         1,           1,           0.6,         0,           0],
+          r:       [0,         0,         3,         3,           3,           3,           2,           0],
+        }}
+        transition={{
+          duration: D,
+          repeat: Infinity,
+          ease: 'linear',
+          times: [0, a - 0.005, a, b, b + 0.01, 0.40, 0.48, 1],
+        }}
+      />
+
+      {/* ✕ flash at rejection */}
+      <motion.text
+        x={subLeftEdge}
+        textAnchor="middle"
+        fill="#ff4444"
+        fontSize={16}
+        fontWeight="800"
+        animate={{
+          y:       [subY - 12, subY - 12, subY - 12, subY - 24, subY - 24],
+          opacity: [0,         0,         1,         0,          0],
+        }}
+        transition={{
+          duration: D,
+          repeat: Infinity,
+          ease: 'easeOut',
+          times: [0, b, b + 0.01, b + 0.08, 1],
+        }}
+      >
+        ✕
+      </motion.text>
+    </svg>
+  );
+}
+
 export function MultiBrokerGraphic() {
   const b1X = 90, b2X = W - 90, bY = H / 2;
   return (

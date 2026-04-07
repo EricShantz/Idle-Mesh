@@ -18,6 +18,10 @@ const brokerRelayTimestamps = new Map<string, number[]>();
 /** Round-robin index per queue for competing consumer pattern */
 const queueRoundRobinIdx = new Map<string, number>();
 
+/** Timestamp of the first event drop (for tutorial trigger) */
+let firstDropTime: number | null = null;
+let firstDropTutorialShown = false;
+
 /** Smoothed FPS for adaptive coin pop throttling */
 let _smoothedFps = 60;
 const FPS_SMOOTH = 0.05; // low-pass filter weight (lower = smoother)
@@ -776,6 +780,16 @@ export function useGameLoop() {
           ...state,
           eventsDropped: state.eventsDropped + droppedCount,
         }));
+        // Track first drop time for tutorial
+        if (!firstDropTime && !firstDropTutorialShown) {
+          firstDropTime = Date.now();
+        }
+      }
+
+      // Show first-drop tutorial 1 second after the first drop
+      if (firstDropTime && !firstDropTutorialShown && Date.now() - firstDropTime >= 1000) {
+        firstDropTutorialShown = true;
+        useGameStore.getState().showTutorial('firstDrop');
       }
 
       // Add money for dots that reached 50% of animation
