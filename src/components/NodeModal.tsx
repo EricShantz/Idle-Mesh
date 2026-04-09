@@ -249,7 +249,7 @@ export function NodeModal() {
                 <div className="flex justify-between items-center">
                   <span className="font-bold">
                     {def.label}
-                    {['fasterConsumption', 'publishSpeed'].includes(def.key) && level > 0 && ` (${level * (level + 9) / 2}%)`}
+                    {['fasterConsumption', 'publishSpeed'].includes(def.key) && level > 0 && ` (${Math.min(level * (level + 9) / 2, 100)}%)`}
                     {def.key === 'eventValue' && level > 0 && ` ($${(1.0 + level * 0.45 + level * level * 0.05).toFixed(2)})`}
                     {def.key === 'consumptionValue' && level > 0 && ` (${(1.0 + level * 0.08 + level * level * 0.02).toFixed(2)}x)`}
                     {def.key === 'increaseThroughput' && ` (${8 + level * (level + 9) / 2}/sec)`}

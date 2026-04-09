@@ -91,6 +91,10 @@ export function NodeCard({ component }: Props) {
     if (lastFire === 0) return;
 
     const publishSpeedLevel = component.upgrades['publishSpeed'] ?? 0;
+    if (publishSpeedLevel >= 10) {
+      setCooldownPct(0);
+      return;
+    }
     const publishBoostPct = publishSpeedLevel * (publishSpeedLevel + 9) / 2;
     const duration = 1000 * (1 - publishBoostPct / 100);
 
@@ -114,6 +118,11 @@ export function NodeCard({ component }: Props) {
 
   useEffect(() => {
     if (!isSubscriber) return;
+    const fasterConsumptionLevel = component.upgrades['fasterConsumption'] ?? 0;
+    if (fasterConsumptionLevel >= 11) {
+      setSubscriberCooldownPct(0);
+      return;
+    }
 
     const tick = () => {
       const now = Date.now();
