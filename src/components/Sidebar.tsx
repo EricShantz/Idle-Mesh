@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useGameStore, getPermanentShopDiscount } from '../store/gameStore';
 import { globalUpgrades, getUpgradeCost } from '../store/upgradeConfig';
 import { formatMoney } from '../utils/formatMoney';
@@ -65,6 +65,30 @@ export function Sidebar() {
   const spend = useGameStore(s => s.spend);
   const purchaseGlobalUpgrade = useGameStore(s => s.purchaseGlobalUpgrade);
   const addComponent = useGameStore(s => s.addComponent);
+  const tutorialsSeen = useGameStore(s => s.tutorialsSeen);
+  const activeTutorial = useGameStore(s => s.activeTutorial);
+
+  const meshComponentsRef = useRef<HTMLDivElement>(null);
+  const [highlightComponents, setHighlightComponents] = useState(false);
+
+  // After brokerUpgrade tutorial is dismissed, scroll to Mesh Components and highlight
+  useEffect(() => {
+    if (tutorialsSeen['brokerUpgrade'] && !activeTutorial) {
+      setHighlightComponents(true);
+      const scrollTimer = setTimeout(() => {
+        meshComponentsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 300);
+      return () => clearTimeout(scrollTimer);
+    }
+  }, [tutorialsSeen['brokerUpgrade'], activeTutorial]);
+
+  // Clear highlight on any click
+  useEffect(() => {
+    if (!highlightComponents) return;
+    const handler = () => setHighlightComponents(false);
+    window.addEventListener('click', handler);
+    return () => window.removeEventListener('click', handler);
+  }, [highlightComponents]);
 
   // Calculate $/sec
   const now = Date.now();
@@ -226,8 +250,14 @@ export function Sidebar() {
       </CollapsibleSection>
       {/* Mesh Components */}
       {hasBroker && (
+        <div ref={meshComponentsRef}>
         <CollapsibleSection title="Mesh Components" defaultOpen={true}>
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5" style={highlightComponents ? {
+            borderRadius: 8,
+            boxShadow: '0 0 12px rgba(34,211,238,0.4), inset 0 0 8px rgba(34,211,238,0.1)',
+            padding: 4,
+            transition: 'box-shadow 0.5s ease',
+          } : undefined}>
             <button
               onClick={handleBuyQueue}
               disabled={!canAffordQueue}
@@ -304,6 +334,7 @@ export function Sidebar() {
             </button>
           </div>
         </CollapsibleSection>
+        </div>
       )}
     </div>
   );

@@ -17,10 +17,12 @@ const C = {
 const W = 380;
 const H = 160;
 
+type NodeType = 'publisher' | 'webhook' | 'broker' | 'queue' | 'subscriber' | 'dmq';
+
 function NodeBox({
   x, y, w = 72, h = 40, type, label,
 }: {
-  x: number; y: number; w?: number; h?: number; type: keyof typeof C; label: string;
+  x: number; y: number; w?: number; h?: number; type: NodeType; label: string;
 }) {
   const c = C[type];
   return (
@@ -770,6 +772,38 @@ export function MultiBrokerGraphic() {
       {/* Dots going both directions */}
       <TravelingDot x1={b1X + 36} y1={bY} x2={b2X - 36} y2={bY} duration={1.4} />
       <TravelingDot x1={b2X - 36} y1={bY} x2={b1X + 36} y2={bY} delay={0.7} duration={1.4} />
+    </svg>
+  );
+}
+
+/** New Components Available — full mesh: pub → broker → 2 queues → 2 subs, DMQ at bottom */
+export function NewComponentsGraphic() {
+  const px = 40, bx = 140, qx = 240, sx = 340;
+  const row1 = 45, row2 = 95, dmqY = 145;
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderRadius: 8, background: C.bg }}>
+      {/* Wires */}
+      <Wire x1={px + 36} y1={row1} x2={bx - 36} y2={row1} />
+      <Wire x1={bx + 36} y1={row1} x2={qx - 36} y2={row1} />
+      <Wire x1={bx + 36} y1={row1} x2={qx - 36} y2={row2} />
+      <Wire x1={qx + 36} y1={row1} x2={sx - 36} y2={row1} />
+      <Wire x1={qx + 36} y1={row2} x2={sx - 36} y2={row2} />
+      {/* DMQ → Broker */}
+      <Wire x1={bx - 36} y1={dmqY} x2={bx - 36} y2={row1 + 20} />
+      {/* Nodes */}
+      <NodeBox x={px} y={row1} type="publisher" label="Pub" />
+      <NodeBox x={bx} y={row1} type="broker" label="Broker" />
+      <NodeBox x={qx} y={row1} type="queue" label="Queue" />
+      <NodeBox x={qx} y={row2} type="queue" label="Queue" />
+      <NodeBox x={sx} y={row1} type="subscriber" label="Sub" />
+      <NodeBox x={sx} y={row2} type="subscriber" label="Sub" />
+      <NodeBox x={bx} y={dmqY} type="dmq" label="DMQ" />
+      {/* Traveling dots */}
+      <OrthoTravelingDot x1={px + 36} y1={row1} x2={bx - 36} y2={row1} duration={0.8} repeatDelay={3} />
+      <OrthoTravelingDot x1={bx + 36} y1={row1} x2={qx - 36} y2={row1} delay={0.9} duration={0.8} repeatDelay={3} />
+      <OrthoTravelingDot x1={bx + 36} y1={row1} x2={qx - 36} y2={row2} delay={0.9} duration={0.8} repeatDelay={3} />
+      <OrthoTravelingDot x1={qx + 36} y1={row1} x2={sx - 36} y2={row1} delay={1.8} duration={0.8} repeatDelay={3} />
+      <OrthoTravelingDot x1={qx + 36} y1={row2} x2={sx - 36} y2={row2} delay={1.8} duration={0.8} repeatDelay={3} />
     </svg>
   );
 }

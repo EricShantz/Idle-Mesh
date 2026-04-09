@@ -41,8 +41,9 @@
 - [ ] Tutorial/UI: explain competing consumers vs fan-out on queue (add info to queue card and/or "New Subscriber Added" tutorial slides — multiple subscribers round-robin by default, fan-out upgrade sends to all)
 - [x] Sidebar upgrades in dropdown menus (global upgrades dropdown, broker upgrades dropdown, etc.) to reduce scrolling
 - [x] Show a tutorial slide the first time an event drops - explaining what that means, and that the user needs to upgrade the component that the events are dropping off at
-- [ ] after the user upgrades the webhook to a broker, they get a broker tutorial slide. after they close that slide, the side menu should scroll down to show the new components. The new components should be highlighted and a new tutorial slide should pop up explaining that they now have new components they can add to their mesh, and to purchase one for more information on each one.
-
+- [x] after the user upgrades the webhook to a broker, they get a broker tutorial slide. after they close that slide, the side menu should scroll down to show the new components. The new components should be highlighted and a new tutorial slide should pop up explaining that they now have new components they can add to their mesh, and to purchase one for more information on each one.
+- [ ] explore if it would be a better gameplay experience to have upgrades such as "Event Value" and "Consumption Mulitplier" be made global upgrades instead of per/component. Would this be more convinient to the player? What are the pros and cons of each
+- [ ] Need to figure out the event propagation speed down the lines, should they be consistent at all times? or vary depending on line length so events reach the same endpoint at the same time?
 ---
 
 ## Clarification Needed

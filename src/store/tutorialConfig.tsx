@@ -11,6 +11,7 @@ import {
   MultiSubscriberGraphic,
   MultiBrokerGraphic,
   EventDropGraphic,
+  NewComponentsGraphic,
 } from '../components/TutorialGraphics';
 
 export type TutorialSlide = {
@@ -28,16 +29,17 @@ export const tutorials: TutorialDef[] = [
   {
     key: 'intro',
     slides: [
-      { title: 'Welcome to Idle Mesh!', body: 'Click the "Publisher" to send events into your event mesh.', graphic: PublisherGraphic },
-      { title: 'Events Flow Through the Mesh', body: 'Events travel from publishers to subscribers.', graphic: EventsFlowGraphic },
-      { title: 'Earn Money', body: 'When a subscriber consumes an event, you earn money. The amount depends on your publisher and subscriber upgrade levels.', graphic: EarnMoneyGraphic },
+      { title: 'Welcome to Idle Mesh!', body: 'Click the "Publisher" to generate "events".', graphic: PublisherGraphic },
+      { title: 'Events Flow Through the Mesh', body: 'Events travel from publishers --> subscribers.', graphic: EventsFlowGraphic },
+      { title: 'Earn Money', body: 'When a subscriber consumes an event, you earn money. Earn more more by upgrading your mesh.', graphic: EarnMoneyGraphic },
       { title: 'Upgrade & Expand', body: 'Click the ↑ icon on any component to upgrade it. Buy new components from the sidebar shop to grow your mesh.', graphic: UpgradeExpandGraphic },
     ],
   },
   {
     key: 'brokerUpgrade',
     slides: [
-      { title: 'Broker Unlocked!', body: 'Your webhook is now a broker — it routes events instantly with no slowdown. You can now buy queues from the shop to buffer events and prevent drops.', graphic: BrokerUpgradeGraphic },
+      { title: 'Broker Unlocked!', body: 'Your webhook is now a broker! A broker routes events instantly, but has a throughput limit. You can increase that limit by upgrading the component.', graphic: BrokerUpgradeGraphic },
+      { title: 'New Components Available!', body: 'Your broker has unlocked new mesh components in the shop. Purchase one to learn what it does and start expanding your event mesh!', graphic: NewComponentsGraphic },
     ],
   },
   {
