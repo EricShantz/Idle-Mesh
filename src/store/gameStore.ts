@@ -270,7 +270,7 @@ export const useGameStore = create<GameState>()(
     initCountersFromSaved(saved);
 
     return {
-      balance: saved?.balance ?? 0,
+      balance: saved?.balance ?? 10000,
       totalEarned: saved?.totalEarned ?? 0,
       eventsConsumed: saved?.eventsConsumed ?? 0,
       eventsDropped: saved?.eventsDropped ?? 0,

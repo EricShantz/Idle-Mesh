@@ -512,15 +512,17 @@ export function useGameLoop() {
           );
           const targetSub = subscriberComp ?? bakedSubscriber;
 
+          const hasFanOut = queueComp && (queueComp.upgrades['fanOut'] ?? 0) > 0;
+
           // Check if subscriber is free — gated by queue's Faster Release upgrade
           const releaseSpeedLevel = queueComp?.upgrades.queueReleaseSpeed ?? 0;
           const releaseBoostPct = releaseSpeedLevel * (releaseSpeedLevel + 9) / 2;
           const releaseThreshold = 1 - (releaseBoostPct / 100); // 0→1.0, 10→0.05
 
-          const isSubscriberBusy = !targetSub ? false : updated.some(d => {
+          const isSubBusy = (sub: { x: number; y: number }) => updated.some(d => {
             if (d.id === dot.id || d.path.length === 0) return false;
             const dEnd = d.path[d.path.length - 1];
-            if (Math.hypot(dEnd.x - targetSub.x, dEnd.y - targetSub.y) >= 50) return false;
+            if (Math.hypot(dEnd.x - sub.x, dEnd.y - sub.y) >= 50) return false;
             if (d.status === 'pausing' && !d.moneyAdded) return true;
             if (d.status === 'traveling') {
               // Only block if this dot is past all queues in its path (on the final segment to subscriber)
@@ -553,57 +555,46 @@ export function useGameLoop() {
             return false;
           });
 
-          // Check if queue currently has a connection to a subscriber
-          let hasSubscriber = false;
-          let pendingExtension: { target: { x: number; y: number } } | null = null;
-
-          // Always use current connections as source of truth
+          // Collect all connected subscribers early (needed for both busy check and release)
+          const allConnectedSubs: { x: number; y: number }[] = [];
           {
             const queue = state.components.find(c => c.id === queueId);
             if (queue) {
               const outConns = state.connections.filter(c => c.fromId === queueId);
               for (const conn of outConns) {
                 const target = state.components.find(c => c.id === conn.toId && c.type === 'subscriber');
-                if (target) {
-                  hasSubscriber = true;
-                  // Only need to extend path if it doesn't already end at this subscriber
-                  const alreadyHasPath = Math.abs(endPoint.x - target.x) < 1 && Math.abs(endPoint.y - target.y) < 1;
-                  if (!alreadyHasPath) {
-                    pendingExtension = { target: { x: target.x, y: target.y } };
-                  }
-                  break;
-                }
+                if (target) allConnectedSubs.push({ x: target.x, y: target.y });
               }
             }
+          }
+          // Fallback to baked path subscriber
+          if (allConnectedSubs.length === 0 && targetSub) {
+            allConnectedSubs.push({ x: targetSub.x, y: targetSub.y });
+          }
+
+          const hasSubscriber = allConnectedSubs.length > 0;
+
+          // With fanout: wait until ALL subscribers are free, then send copies to all
+          // Without fanout: wait until the round-robin target subscriber is free
+          let isSubscriberBusy: boolean;
+          if (hasFanOut) {
+            isSubscriberBusy = allConnectedSubs.some(sub => isSubBusy(sub));
+          } else {
+            isSubscriberBusy = !targetSub ? false : isSubBusy(targetSub);
           }
 
           if (hasSubscriber && !isSubscriberBusy) {
             releasedQueues.add(queueId);
             const queue = state.components.find(c => c.id === queueId);
-            const hasFanOut = queueComp && (queueComp.upgrades['fanOut'] ?? 0) > 0;
-
-            // Collect all connected subscribers
-            const allSubTargets: { x: number; y: number }[] = [];
-            if (queue) {
-              const outConns = state.connections.filter(c => c.fromId === queueId);
-              for (const conn of outConns) {
-                const sub = state.components.find(c => c.id === conn.toId && c.type === 'subscriber');
-                if (sub) allSubTargets.push({ x: sub.x, y: sub.y });
-              }
-            }
-            // Fallback to baked path subscriber
-            if (allSubTargets.length === 0 && targetSub) {
-              allSubTargets.push({ x: targetSub.x, y: targetSub.y });
-            }
 
             // Without fan-out, round-robin across subscribers (competing consumers)
             let targets: { x: number; y: number }[];
             if (hasFanOut) {
-              targets = allSubTargets;
+              targets = allConnectedSubs;
             } else {
-              const rrIdx = (queueRoundRobinIdx.get(queueId) ?? 0) % allSubTargets.length;
+              const rrIdx = (queueRoundRobinIdx.get(queueId) ?? 0) % allConnectedSubs.length;
               queueRoundRobinIdx.set(queueId, rrIdx + 1);
-              targets = [allSubTargets[rrIdx]];
+              targets = [allConnectedSubs[rrIdx]];
             }
 
             for (let ti = 0; ti < targets.length; ti++) {
