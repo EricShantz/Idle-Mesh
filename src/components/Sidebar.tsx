@@ -251,89 +251,89 @@ export function Sidebar() {
       {/* Mesh Components */}
       {hasBroker && (
         <div ref={meshComponentsRef}>
-        <CollapsibleSection title="Mesh Components" defaultOpen={true}>
-          <div className="flex flex-col gap-1.5" style={highlightComponents ? {
-            borderRadius: 8,
-            boxShadow: '0 0 12px rgba(34,211,238,0.4), inset 0 0 8px rgba(34,211,238,0.1)',
-            padding: 4,
-            transition: 'box-shadow 0.5s ease',
-          } : undefined}>
-            <button
-              onClick={handleBuyQueue}
-              disabled={!canAffordQueue}
-              className="text-left px-2 py-1.5 rounded text-xs border transition-colors cursor-pointer disabled:cursor-not-allowed"
-              style={{
-                borderColor: canAffordQueue ? '#a855f7' : '#374151',
-                background: canAffordQueue ? '#2e106522' : '#1f293744',
-                color: canAffordQueue ? '#e9d5ff' : '#6b7280',
-              }}
-            >
-              <div className="font-bold">Buy Queue</div>
-              <div className="opacity-60">Buffers events. Drag connections to wire it up.</div>
-              <div className="mt-0.5 font-mono">{formatMoney(queueCost)}</div>
-            </button>
-            {!hasDmq && (
+          <CollapsibleSection title="Mesh Components" defaultOpen={true}>
+            <div className="flex flex-col gap-1.5" style={highlightComponents ? {
+              borderRadius: 8,
+              boxShadow: '0 0 12px rgba(34,211,238,0.4), inset 0 0 8px rgba(34,211,238,0.1)',
+              padding: 4,
+              transition: 'box-shadow 0.5s ease',
+            } : undefined}>
               <button
-                onClick={handleBuyDmq}
-                disabled={!canAffordDmq}
+                onClick={handleBuyQueue}
+                disabled={!canAffordQueue}
                 className="text-left px-2 py-1.5 rounded text-xs border transition-colors cursor-pointer disabled:cursor-not-allowed"
                 style={{
-                  borderColor: canAffordDmq ? '#ef4444' : '#374151',
-                  background: canAffordDmq ? '#2a0a0a22' : '#1f293744',
-                  color: canAffordDmq ? '#fecaca' : '#6b7280',
+                  borderColor: canAffordQueue ? '#a855f7' : '#374151',
+                  background: canAffordQueue ? '#2e106522' : '#1f293744',
+                  color: canAffordQueue ? '#e9d5ff' : '#6b7280',
                 }}
               >
-                <div className="font-bold">Buy Dead Message Queue</div>
-                <div className="opacity-60">Catches dropped events and retries them through the broker.</div>
-                <div className="mt-0.5 font-mono">{formatMoney(dmqCost)}</div>
+                <div className="font-bold">Buy Queue</div>
+                <div className="opacity-60">Stores/Releases events based on subscriber availability.</div>
+                <div className="mt-0.5 font-mono">{formatMoney(queueCost)}</div>
               </button>
-            )}
-            <button
-              onClick={handleBuyPublisher}
-              disabled={!canAffordPublisher}
-              className="text-left px-2 py-1.5 rounded text-xs border transition-colors cursor-pointer disabled:cursor-not-allowed"
-              style={{
-                borderColor: canAffordPublisher ? '#22d3ee' : '#374151',
-                background: canAffordPublisher ? '#0e303822' : '#1f293744',
-                color: canAffordPublisher ? '#cffafe' : '#6b7280',
-              }}
-            >
-              <div className="font-bold">Buy Publisher</div>
-              <div className="opacity-60">Emits events on a unique topic. Connect to a broker.</div>
-              <div className="mt-0.5 font-mono">{formatMoney(publisherCost)}</div>
-            </button>
-            {hasQueue && (
+              {!hasDmq && (
+                <button
+                  onClick={handleBuyDmq}
+                  disabled={!canAffordDmq}
+                  className="text-left px-2 py-1.5 rounded text-xs border transition-colors cursor-pointer disabled:cursor-not-allowed"
+                  style={{
+                    borderColor: canAffordDmq ? '#ef4444' : '#374151',
+                    background: canAffordDmq ? '#2a0a0a22' : '#1f293744',
+                    color: canAffordDmq ? '#fecaca' : '#6b7280',
+                  }}
+                >
+                  <div className="font-bold">Buy Dead Message Queue</div>
+                  <div className="opacity-60">Catches dropped events and retries them through the broker.</div>
+                  <div className="mt-0.5 font-mono">{formatMoney(dmqCost)}</div>
+                </button>
+              )}
               <button
-                onClick={handleBuySubscriber}
-                disabled={!canAffordSubscriber}
+                onClick={handleBuyPublisher}
+                disabled={!canAffordPublisher}
                 className="text-left px-2 py-1.5 rounded text-xs border transition-colors cursor-pointer disabled:cursor-not-allowed"
                 style={{
-                  borderColor: canAffordSubscriber ? '#22c55e' : '#374151',
-                  background: canAffordSubscriber ? '#0a2e1a22' : '#1f293744',
-                  color: canAffordSubscriber ? '#bbf7d0' : '#6b7280',
+                  borderColor: canAffordPublisher ? '#22d3ee' : '#374151',
+                  background: canAffordPublisher ? '#0e303822' : '#1f293744',
+                  color: canAffordPublisher ? '#cffafe' : '#6b7280',
                 }}
               >
-                <div className="font-bold">Buy Subscriber</div>
-                <div className="opacity-60">Consumes events from queues for money.</div>
-                <div className="mt-0.5 font-mono">{formatMoney(subscriberCost)}</div>
+                <div className="font-bold">Buy Publisher</div>
+                <div className="opacity-60">Emits events on a unique topic. Must connect to a broker.</div>
+                <div className="mt-0.5 font-mono">{formatMoney(publisherCost)}</div>
               </button>
-            )}
-            <button
-              onClick={handleBuyBroker}
-              disabled={!canAffordBroker}
-              className="text-left px-2 py-1.5 rounded text-xs border transition-colors cursor-pointer disabled:cursor-not-allowed"
-              style={{
-                borderColor: canAffordBroker ? '#fb923c' : '#374151',
-                background: canAffordBroker ? '#2a160a22' : '#1f293744',
-                color: canAffordBroker ? '#fed7aa' : '#6b7280',
-              }}
-            >
-              <div className="font-bold">Buy Broker</div>
-              <div className="opacity-60">Routes events. Bridge to other brokers for mesh topology.</div>
-              <div className="mt-0.5 font-mono">{formatMoney(brokerCost)}</div>
-            </button>
-          </div>
-        </CollapsibleSection>
+              {hasQueue && (
+                <button
+                  onClick={handleBuySubscriber}
+                  disabled={!canAffordSubscriber}
+                  className="text-left px-2 py-1.5 rounded text-xs border transition-colors cursor-pointer disabled:cursor-not-allowed"
+                  style={{
+                    borderColor: canAffordSubscriber ? '#22c55e' : '#374151',
+                    background: canAffordSubscriber ? '#0a2e1a22' : '#1f293744',
+                    color: canAffordSubscriber ? '#bbf7d0' : '#6b7280',
+                  }}
+                >
+                  <div className="font-bold">Buy Subscriber</div>
+                  <div className="opacity-60">Consumes events from queues for money.</div>
+                  <div className="mt-0.5 font-mono">{formatMoney(subscriberCost)}</div>
+                </button>
+              )}
+              <button
+                onClick={handleBuyBroker}
+                disabled={!canAffordBroker}
+                className="text-left px-2 py-1.5 rounded text-xs border transition-colors cursor-pointer disabled:cursor-not-allowed"
+                style={{
+                  borderColor: canAffordBroker ? '#fb923c' : '#374151',
+                  background: canAffordBroker ? '#2a160a22' : '#1f293744',
+                  color: canAffordBroker ? '#fed7aa' : '#6b7280',
+                }}
+              >
+                <div className="font-bold">Buy Broker</div>
+                <div className="opacity-60">Routes events. Bridge to other brokers for mesh topology.</div>
+                <div className="mt-0.5 font-mono">{formatMoney(brokerCost)}</div>
+              </button>
+            </div>
+          </CollapsibleSection>
         </div>
       )}
     </div>

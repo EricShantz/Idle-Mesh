@@ -778,10 +778,11 @@ export function MultiBrokerGraphic() {
 
 /** New Components Available — full mesh: pub → broker → 2 queues → 2 subs, DMQ at bottom */
 export function NewComponentsGraphic() {
-  const px = 40, bx = 140, qx = 240, sx = 340;
-  const row1 = 45, row2 = 95, dmqY = 145;
+  const px = 50, bx = 170, qx = 290, sx = 410;
+  const row1 = 50, row2 = 110, dmqY = 170;
+  const vw = 460, vh = 200;
   return (
-    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderRadius: 8, background: C.bg }}>
+    <svg width={W} height={H} viewBox={`0 0 ${vw} ${vh}`} style={{ borderRadius: 8, background: C.bg }}>
       {/* Wires */}
       <Wire x1={px + 36} y1={row1} x2={bx - 36} y2={row1} />
       <Wire x1={bx + 36} y1={row1} x2={qx - 36} y2={row1} />
