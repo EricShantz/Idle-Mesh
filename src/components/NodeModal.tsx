@@ -146,6 +146,24 @@ export function NodeModal() {
     }
   };
 
+  const handleBuyMax = (def: UpgradeDef) => {
+    let level = node.upgrades[def.key] ?? 0;
+    const effectiveMax = def.key === 'dmqBufferSize'
+      ? getDmqBufferMaxLevel(node.upgrades['dmqWidth'] ?? 0)
+      : def.maxLevel;
+    let bought = 0;
+    while (true) {
+      if (effectiveMax && level >= effectiveMax) break;
+      const cost = getUpgradeCost(def, level, costReduction);
+      if (useGameStore.getState().balance < cost) break;
+      if (!spend(cost)) break;
+      upgradeComponent(node.id, def.key);
+      level++;
+      bought++;
+      if (bought > 100) break; // safety cap
+    }
+  };
+
   return (
     <AnimatePresence>
       <motion.div
@@ -231,6 +249,20 @@ export function NodeModal() {
             const cost = getUpgradeCost(def, level, costReduction);
             const canAfford = balance >= cost;
 
+            const showMaxBtn = !maxed && canAfford && effectiveMax !== 1;
+            let maxBuyCount = 0;
+            if (showMaxBtn) {
+              let lvl = level;
+              let bal = balance;
+              while ((!effectiveMax || lvl < effectiveMax) && maxBuyCount < 100) {
+                const c = getUpgradeCost(def, lvl, costReduction);
+                if (bal < c) break;
+                bal -= c;
+                lvl++;
+                maxBuyCount++;
+              }
+            }
+
             return (
               <button
                 key={def.key}
@@ -261,8 +293,17 @@ export function NodeModal() {
                 ) : !maxed && (
                   <div className="text-xs text-blue-300 mt-0.5">{getUpgradeValueDisplay(def.key, level, node.topic)}</div>
                 )}
-                <div className="mt-0.5">
-                  {maxed ? 'MAX' : formatMoney(cost)}
+                <div className="mt-0.5 flex items-center justify-between">
+                  <span>{maxed ? 'MAX' : formatMoney(cost)}</span>
+                  {showMaxBtn && (
+                    <span
+                      role="button"
+                      onClick={(e) => { e.stopPropagation(); handleBuyMax(def); }}
+                      className="px-1.5 py-0.5 rounded text-[9px] font-bold border border-emerald-500/50 bg-emerald-900/30 text-emerald-300 hover:bg-emerald-800/40 transition-colors"
+                    >
+                      MAX ×{maxBuyCount}
+                    </span>
+                  )}
                 </div>
                 {widthCapped && (
                   <div className="text-[10px] text-amber-400 mt-0.5">Increase Width to unlock more capacity</div>

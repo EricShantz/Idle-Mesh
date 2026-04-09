@@ -72,3 +72,4 @@ Global upgrades use the same `UpgradeDef` system as node upgrades — each is a 
 - Subscriber consumption is a non-linear multiplier: `1.0 + level*0.08 + level²*0.02` applied to the final dot value
 - Income Multiplier uses compounding: `1.4 + level * 0.1` per level (×1.5, ×1.6, ×1.7...)
 - All upgrade cards show `current → next (+delta)` format via `getUpgradeValueDisplay()` / `getGlobalUpgradeValueDisplay()`
+- Each upgrade card has a **"MAX ×N"** pill (bottom-right) that bulk-purchases all affordable levels in one click. Hidden for one-time upgrades (maxLevel === 1) and when the player can't afford any levels.
