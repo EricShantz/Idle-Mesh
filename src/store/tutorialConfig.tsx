@@ -2,6 +2,7 @@ import type { ComponentType, ReactNode } from 'react';
 import {
   PublisherGraphic,
   EventsFlowGraphic,
+  WebhookFlowGraphic,
   EarnMoneyGraphic,
   UpgradeExpandGraphic,
   BrokerUpgradeGraphic,
@@ -31,7 +32,7 @@ export const tutorials: TutorialDef[] = [
     key: 'intro',
     slides: [
       { title: 'Welcome to Idle Mesh!', body: 'Click the "Publisher" to generate "events".', graphic: PublisherGraphic },
-      { title: 'Events Flow Through the Mesh', body: 'Events travel from publishers --> subscribers.', graphic: EventsFlowGraphic },
+      { title: 'Events Flow Through the Mesh', body: 'Events travel from publishers --> subscribers.', graphic: WebhookFlowGraphic },
       { title: 'Earn Money', body: 'When a subscriber consumes an event, you earn money. Earn more more by upgrading your mesh.', graphic: EarnMoneyGraphic },
       { title: 'Upgrade & Expand', body: 'Click the ↑ icon on any component to upgrade it. Buy new components from the sidebar shop to grow your mesh.', graphic: UpgradeExpandGraphic },
     ],
@@ -46,7 +47,7 @@ export const tutorials: TutorialDef[] = [
   {
     key: 'firstQueue',
     slides: [
-      { title: 'Queue Added!', body: 'Queues buffer events so subscribers never miss them. Connect it between a broker and a subscriber using the output ports. Upgrade buffer size and release speed for higher throughput.', graphic: QueueGraphic },
+      { title: 'Queue Added!', body: 'Queues hold events so subscribers never miss them. Connect it between a broker and a subscriber using the output ports. Upgrade queue size and release speed for higher throughput.', graphic: QueueGraphic },
     ],
   },
   {
@@ -58,7 +59,7 @@ export const tutorials: TutorialDef[] = [
   {
     key: 'firstDrop',
     slides: [
-      { title: 'Event Dropped!', body: 'An event was lost because the component it reached was too busy to handle it. Upgrade that component\'s speed or capacity to prevent future drops — or add queues to buffer events when things get backed up.', graphic: EventDropGraphic },
+      { title: 'Event Dropped!', body: 'An event was lost because the component it reached was too busy to handle it. Upgrade that component\'s speed or capacity to prevent future drops — or add queues to hold events when things get backed up.', graphic: EventDropGraphic },
     ],
   },
   {

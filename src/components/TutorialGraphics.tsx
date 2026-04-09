@@ -196,6 +196,21 @@ export function EventsFlowGraphic() {
   );
 }
 
+export function WebhookFlowGraphic() {
+  const pubX = 50, webhookX = W / 2, subX = W - 50, y = H / 2;
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderRadius: 8, background: C.bg }}>
+      <line x1={pubX + 36} y1={y} x2={subX - 36} y2={y} stroke={C.line} strokeWidth={1.5} strokeDasharray="4 3" />
+      {[0, 1.5, 3.0].map((delay, i) => (
+        <TravelingDot key={i} x1={pubX + 30} y1={y} x2={subX - 36} y2={y} delay={delay} duration={2.0} repeatDelay={3.0} />
+      ))}
+      <NodeBox x={pubX} y={y} type="publisher" label="Publisher" />
+      <NodeBox x={webhookX} y={y} type="webhook" label="Webhook" />
+      <NodeBox x={subX} y={y} type="subscriber" label="Subscriber" />
+    </svg>
+  );
+}
+
 export function EarnMoneyGraphic() {
   const subX = W / 2, subY = H / 2;
   const subLeftEdge = subX - 36;

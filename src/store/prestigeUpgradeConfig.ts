@@ -32,9 +32,9 @@ export const prestigeNodes: PrestigeNode[] = [
   { key: 'brokerRouting', label: 'Smart Routing', description: '+25% event propagation speed through brokers', cost: 8, requires: 'brokerThroughput', position: { x: 1, y: -3 }, branch: 'broker' },
 
   // ── Queue Branch (southeast) ──
-  { key: 'queueRoot', label: 'Queue Affinity', description: '+2 base queue buffer size for all queues', cost: 2, requires: 'globalIncome', position: { x: 2, y: 1 }, branch: 'queue' },
+  { key: 'queueRoot', label: 'Queue Affinity', description: '+2 base queue size for all queues', cost: 2, requires: 'globalIncome', position: { x: 2, y: 1 }, branch: 'queue' },
   { key: 'queueFreeQueue', label: 'Queue Head Start', description: 'Start each run with 1 free queue', cost: 8, requires: 'queueRoot', position: { x: 3, y: 2 }, branch: 'queue' },
-  { key: 'queueBuffer', label: 'Deep Buffers', description: '+4 additional base queue buffer size', cost: 5, requires: 'queueRoot', position: { x: 2, y: 2 }, branch: 'queue' },
+  { key: 'queueBuffer', label: 'Deep Buffers', description: '+4 additional base queue size', cost: 5, requires: 'queueRoot', position: { x: 2, y: 2 }, branch: 'queue' },
   { key: 'queueBroaden', label: 'Wide Subscriptions', description: 'Start with Broaden Subscription lv1 on all queues', cost: 8, requires: 'queueBuffer', position: { x: 2, y: 3 }, branch: 'queue' },
   { key: 'queueBatchConsume', label: 'Prefetch', description: 'Subscribers consume up to 3 events per tick', cost: 14, requires: 'queueBroaden', position: { x: 2, y: 4 }, branch: 'queue' },
 

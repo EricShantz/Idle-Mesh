@@ -46,7 +46,7 @@
 - [x] after the user upgrades the webhook to a broker, they get a broker tutorial slide. after they close that slide, the side menu should scroll down to show the new components. The new components should be highlighted and a new tutorial slide should pop up explaining that they now have new components they can add to their mesh, and to purchase one for more information on each one.
 - [ ] should we add a "max" button to each upgrade so you dont have to click 10 times to max an upgrade when you have lots of money?
 - [ ] add an ! icon that explains why events are falling off and how to fix it (queue overload, publisher pushing events to broker, but broker has no matching queues, etc)
-
+- [ ] fix upgrade icons on components to not look bad
 ---
 
 ## Clarification Needed

@@ -9,7 +9,7 @@ import {
   QueueGraphic,
   DmqGraphic,
   MultiSubscriberGraphic,
-  EventsFlowGraphic,
+  WebhookFlowGraphic,
 } from './TutorialGraphics';
 
 type ComponentDetail = {
@@ -54,20 +54,19 @@ const componentDetails: ComponentDetail[] = [
     label: 'Webhook',
     unlockCheck: 'intro',
     color: '#a78bfa',
-    graphic: EventsFlowGraphic,
+    graphic: WebhookFlowGraphic,
     overview: 'The webhook is your starting relay — it passes events from publishers to subscribers, but adds a delay.',
     howItWorks: [
       'Events slow down as they pass through the webhook',
       'Only one event can occupy the webhook at a time',
       'If a second event arrives while one is passing through, it gets dropped',
-      'Upgrade to a Broker to remove the delay and unlock queues',
+      'Upgrade to a Broker to remove the delay.',
     ],
     upgrades: [
-      { name: 'Upgrade to Broker', effect: 'Converts the webhook into an instant-relay broker and unlocks the queue shop' },
+      { name: 'Upgrade to Broker', effect: 'Converts the webhook into an instant-relay broker and unlocks additional components in the shop' },
     ],
     tips: [
       'The webhook is your biggest bottleneck early on — upgrade to a broker as soon as you can afford it',
-      'Avoid running multiple auto-publishers into a webhook, events will drop constantly',
     ],
   },
   {
@@ -101,24 +100,24 @@ const componentDetails: ComponentDetail[] = [
     unlockCheck: 'firstQueue',
     color: '#facc15',
     graphic: QueueGraphic,
-    overview: 'Queues buffer events so nothing gets dropped while subscribers are busy. They\'re essential for reliable, high-throughput setups.',
+    overview: 'Queues hold events so nothing gets dropped while subscribers are busy. They\'re essential for reliable, high-throughput setups.',
     howItWorks: [
-      'Events enter the queue and wait in a buffer until a subscriber is free',
+      'Events enter the queue and wait until a subscriber is free',
       'Connected subscribers pull events one at a time from the queue',
-      'If the buffer is full, new events are dropped',
+      'If the queue is full, new events are dropped',
       'Topic filter determines which events the queue accepts from the broker',
       'Fan-out mode sends every event to ALL connected subscribers instead of just one',
     ],
     upgrades: [
       { name: 'Add Subscriber Slot', effect: 'Connect one more subscriber to this queue' },
       { name: 'Persistent Delivery (Fan-out)', effect: 'All connected subscribers receive every event (multiplies earnings)' },
-      { name: 'Increase Queue Size', effect: 'Adds more buffer slots before events drop (max 20 slots)' },
+      { name: 'Increase Queue Size', effect: 'Adds more queue slots before events drop (max 20 slots)' },
       { name: 'Broaden Subscription', effect: 'Widens the topic filter to accept events from more publishers (max 5 levels)' },
     ],
     tips: [
       'Fan-out is extremely powerful — each extra subscriber multiplies your income from that queue',
       'Broaden subscription early so your queue accepts events from multiple publishers',
-      'Buffer size prevents drops during traffic spikes — upgrade it if you see events falling',
+      'Queue size prevents drops during traffic spikes — upgrade it if you see events falling',
     ],
   },
   {
@@ -156,7 +155,7 @@ const componentDetails: ComponentDetail[] = [
       'Sits at the bottom of the screen and catches falling (dropped) events',
       'Caught events can be retried by connecting the DMQ\'s top port to a broker',
       'Retried events recover a percentage of their original value (based on Value Recovery level)',
-      'Has a buffer — if full, additional caught events overflow and are lost',
+      'Has a queue — if full, additional caught events overflow and are lost',
       'Width determines the physical catch zone',
     ],
     upgrades: [
@@ -258,11 +257,10 @@ export function HelpButton() {
                       <button
                         key={c.key}
                         onClick={() => setViewingComponent(viewingComponent === c.key ? null : c.key)}
-                        className={`text-left text-sm rounded px-2 py-1 transition-colors ${
-                          viewingComponent === c.key
-                            ? 'text-cyan-400 bg-gray-800'
-                            : 'text-gray-300 hover:text-cyan-400 hover:bg-gray-800'
-                        }`}
+                        className={`text-left text-sm rounded px-2 py-1 transition-colors ${viewingComponent === c.key
+                          ? 'text-cyan-400 bg-gray-800'
+                          : 'text-gray-300 hover:text-cyan-400 hover:bg-gray-800'
+                          }`}
                       >
                         {c.label}
                       </button>
