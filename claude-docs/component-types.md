@@ -2,7 +2,7 @@
 
 ## Publisher
 - Click target. Fires one event per click (subject to cooldown).
-- **Cooldown**: 1 second base, reduced by accelerating curve: `boostPct = level * (level + 9) / 2`, `cooldown = 1000 * (1 - boostPct/100)`. Max level 10 (95% reduction).
+- **Cooldown**: 1 second base, reduced by accelerating curve: `boostPct = level * (level + 9) / 2`, `cooldown = 1000 * (1 - boostPct/100)`. Max level 10 (95% reduction). At max level, cooldown bar animation is disabled (no RAF loop) for performance.
 - **Base event value**: $1.00, plus accelerating upgrade increments: `value = 1.0 + level * 0.45 + level² * 0.05`. No max level.
 - **Auto-Click** upgrade: one-time $300 purchase per publisher. Simulates manual clicking — respects cooldown and shows cooldown bar. Upgrade Publish Speed to increase auto-click rate.
 - Upgrades: Event Value (accelerating $), Publish Speed (accelerating % cooldown reduction), Auto-Click (one-time auto-fire)
@@ -20,7 +20,7 @@
 - **Bridge slot limit**: brokers start with 0 bridge slots (must upgrade via `addBridgeSlot`). Connecting two brokers consumes **one slot on each broker** — a single drag operation handles this automatically. Both brokers must have a free slot or the connection is rejected with a mesh error toast indicating which broker is full.
 - **Throughput cap (ingestion-only)**: each broker can ingest a limited number of events/sec from publishers. Base cap = 8 events/sec, increased by `increaseThroughput` upgrade (accelerating: `8 + level*(level+9)/2`). The cap only applies at the **first broker** a dot encounters (the publisher's directly-connected broker). Events relayed through bridges to downstream brokers do **not** count against those brokers' caps. Fan-out fork dots spawned at the ingestion broker DO count. When over capacity, events drop at the broker (gravity fall, catchable by DMQ). Tracked via a rolling 1-second window of `performance.now()` timestamps per broker in module-level state in `useGameLoop.ts` (not persisted).
 - **Throughput bar**: thin horizontal bar inside the broker node showing current utilization. Green → yellow (>70%) → red (>90%). Driven by `getBrokerUtilization()` exported from `useGameLoop.ts`.
-- Upgrades: Add Queue Slot (**functional**), Add Bridge Slot (**functional**), Increase Throughput (**functional**)
+- Upgrades: Add Queue Slot (**functional**), Add Bridge Slot (**functional**), Increase Throughput (**functional**, max level 10 = 103 events/sec)
 
 ## Queue
 - Purchased from the sidebar shop for $30 (requires broker)
@@ -51,6 +51,6 @@
 ## Subscriber
 - Consumes events. Pauses for ~1s while "processing" (shrink animation), then money increments.
 - **Coin pop animation**: when money is earned, a 🪙 coin icon with the earned amount floats upward from the subscriber and fades out over 1 second (Framer Motion `AnimatePresence` in `MeshCanvas.tsx`, state in `coinPops` array)
-- **Faster Consumption** upgrade: accelerating curve `boostPct = min(level * (level + 9) / 2, 100)`, `duration = 1000 * (1 - boostPct/100)`. Max level 11 (100% reduction = instant consumption).
+- **Faster Consumption** upgrade: accelerating curve `boostPct = min(level * (level + 9) / 2, 100)`, `duration = 1000 * (1 - boostPct/100)`. Max level 11 (100% reduction = instant consumption). At max level, cooldown bar animation is disabled (no RAF loop) for performance.
 - **Value calculation**: final event value = publisher value + subscriber value. Subscriber value uses same accelerating formula as publisher: `0.5 + level * 0.45 + level² * 0.05`. No max level.
 - Upgrades: Consumption Value, Faster Consumption (both **functional**)

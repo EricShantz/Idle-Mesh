@@ -74,6 +74,7 @@ export const brokerUpgrades: UpgradeDef[] = [
     description: 'Raises the max events/sec this broker can relay',
     baseCost: 100,
     costMultiplier: 2.2,
+    maxLevel: 10,
   },
 ];
 

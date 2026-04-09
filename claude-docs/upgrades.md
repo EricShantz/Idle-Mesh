@@ -18,12 +18,12 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 | Faster Routing +20% | Reduces webhook slowdown | $8, $16, $32 (max 3) |
 
 ### Broker
-| Upgrade | Effect | Base Cost | Multiplier |
-|---|---|---|---|
-| Add Queue Slot | **Functional**: max queue connections = 1 + level | $40 | ×2 |
-| Add Bridge Slot | **Functional**: max broker-to-broker connections = 0 + level. **Both brokers consume a slot** — a single drag connects them bidirectionally, but each broker's slot count is decremented. | $80 | ×2.5 |
-| Increase Throughput | **Functional**: raises ingestion cap = `8 + level*(level+9)/2` events/sec. Ingestion-only — bridged events don't count. | $100 | ×2.2 |
-| Topic Filter Boost | Hidden in UI (effect not yet defined) | $60 | ×2 |
+| Upgrade | Effect | Base Cost | Multiplier | Max Level |
+|---|---|---|---|---|
+| Add Queue Slot | **Functional**: max queue connections = 1 + level | $40 | ×2 | unlimited |
+| Add Bridge Slot | **Functional**: max broker-to-broker connections = 0 + level. **Both brokers consume a slot** — a single drag connects them bidirectionally, but each broker's slot count is decremented. | $80 | ×2.5 | unlimited |
+| Increase Throughput | **Functional**: raises ingestion cap = `8 + level*(level+9)/2` events/sec. Ingestion-only — bridged events don't count. | $100 | ×2.2 | 10 (103/sec) |
+| Topic Filter Boost | Hidden in UI (effect not yet defined) | $60 | ×2 | — |
 
 ### Queue
 | Upgrade | Effect | Base Cost | Multiplier |
