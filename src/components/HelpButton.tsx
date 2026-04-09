@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 import { tutorials } from '../store/tutorialConfig';
+import { getActiveDrops, type DropReason } from '../hooks/useGameLoop';
 import type { ComponentType, ReactNode } from 'react';
 import {
   PublisherGraphic,
@@ -183,6 +184,15 @@ const tutorialLabels: Record<string, string> = {
   firstBroker: 'Additional Broker',
 };
 
+const dropReasonMessages: Record<DropReason, { label: string; fix: string }> = {
+  'webhook-occupied': { label: 'Webhook is busy', fix: 'Upgrade to Broker to remove the bottleneck' },
+  'broker-capped': { label: 'Throughput limit reached', fix: 'Upgrade "Increase Throughput" on this broker' },
+  'queue-full': { label: 'Queue buffer is full', fix: 'Upgrade "Queue Size" or add more subscribers' },
+  'subscriber-occupied': { label: 'Subscriber is busy', fix: 'Upgrade "Faster Consumption" or add more subscribers' },
+  'path-incomplete': { label: 'No destination found', fix: 'Connect this node to a queue or subscriber' },
+  'path-invalid': { label: 'Connection broken', fix: 'Reconnect the missing path' },
+};
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="mb-4">
@@ -195,7 +205,16 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 export function HelpButton() {
   const [open, setOpen] = useState(false);
   const [viewingComponent, setViewingComponent] = useState<string | null>(null);
+  const [warningOpen, setWarningOpen] = useState(false);
+  const [activeDrops, setActiveDrops] = useState<Array<{ nodeId: string; nodeLabel: string; reason: DropReason }>>([]);
   const tutorialsSeen = useGameStore(s => s.tutorialsSeen);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setActiveDrops(getActiveDrops());
+    }, 500);
+    return () => clearInterval(interval);
+  }, []);
 
   const seenTutorials = tutorials.filter(t => tutorialsSeen[t.key]);
   const unlockedComponents = componentDetails.filter(c => tutorialsSeen[c.unlockCheck]);
@@ -207,7 +226,7 @@ export function HelpButton() {
     useGameStore.setState({ activeTutorial: key });
   };
 
-  const closeAll = () => { setOpen(false); setViewingComponent(null); };
+  const closeAll = () => { setOpen(false); setViewingComponent(null); setWarningOpen(false); };
 
   return (
     <>
@@ -336,13 +355,57 @@ export function HelpButton() {
       </AnimatePresence>
 
       {/* Click outside to close */}
-      {open && (
+      {(open || warningOpen) && (
         <div
           className="fixed inset-0"
           style={{ zIndex: 49 }}
           onClick={closeAll}
         />
       )}
+
+      {/* Warning "!" button */}
+      {activeDrops.length > 0 && (
+        <button
+          onClick={() => { setWarningOpen(o => !o); if (!warningOpen) { setOpen(false); setViewingComponent(null); } }}
+          className="fixed top-3 left-14 w-9 h-9 rounded-full border border-amber-500 bg-amber-900/50 hover:bg-amber-800/60 text-amber-400 hover:text-amber-300 flex items-center justify-center text-lg font-bold backdrop-blur-sm transition-colors animate-pulse"
+          style={{ zIndex: 50 }}
+          title="Events are dropping!"
+        >
+          !
+        </button>
+      )}
+
+      <AnimatePresence>
+        {warningOpen && activeDrops.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.15 }}
+            className="fixed top-14 left-14 w-72 rounded-lg border border-gray-700 bg-gray-900/95 backdrop-blur-sm shadow-xl overflow-hidden"
+            style={{ zIndex: 50 }}
+          >
+            <div className="p-3">
+              <h3 className="text-xs font-semibold text-amber-400 uppercase tracking-wider mb-2">Events Dropping</h3>
+              <div className="flex flex-col gap-2">
+                {activeDrops.map(drop => {
+                  const msg = dropReasonMessages[drop.reason];
+                  return (
+                    <div
+                      key={drop.nodeId}
+                      className="rounded px-2.5 py-1.5 bg-gray-800/60 border-l-2 border-amber-500"
+                    >
+                      <div className="text-sm font-medium text-gray-200">{drop.nodeLabel}</div>
+                      <div className="text-xs text-amber-300 mt-0.5">{msg.label}</div>
+                      <div className="text-xs text-gray-400 mt-0.5">{msg.fix}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   );
 }

@@ -22,6 +22,26 @@ const queueRoundRobinIdx = new Map<string, number>();
 let firstDropTime: number | null = null;
 let firstDropTutorialShown = false;
 
+/** Drop reason tracking for the warning "!" button */
+export type DropReason = 'path-invalid' | 'webhook-occupied' | 'broker-capped' | 'queue-full' | 'subscriber-occupied' | 'path-incomplete';
+
+const nodeDropTracker = new Map<string, { reason: DropReason; lastDropTime: number; nodeLabel: string }>();
+
+function recordDrop(nodeId: string, reason: DropReason, nodeLabel: string) {
+  nodeDropTracker.set(nodeId, { reason, lastDropTime: performance.now(), nodeLabel });
+}
+
+export function getActiveDrops(): Array<{ nodeId: string; nodeLabel: string; reason: DropReason }> {
+  const now = performance.now();
+  const active: Array<{ nodeId: string; nodeLabel: string; reason: DropReason }> = [];
+  for (const [nodeId, entry] of nodeDropTracker) {
+    if (now - entry.lastDropTime < 2000) {
+      active.push({ nodeId, nodeLabel: entry.nodeLabel, reason: entry.reason });
+    }
+  }
+  return active;
+}
+
 /** Smoothed FPS for adaptive coin pop throttling */
 let _smoothedFps = 60;
 const FPS_SMOOTH = 0.05; // low-pass filter weight (lower = smoother)
@@ -227,6 +247,8 @@ export function useGameLoop() {
             }
             if (pathInvalid) {
               droppedCount++;
+              const failComp = pathComps[0]?.comp;
+              if (failComp) recordDrop(failComp.id, 'path-invalid', failComp.label);
               updated.push({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: dropColor } as Dot);
               continue;
             }
@@ -249,6 +271,7 @@ export function useGameLoop() {
                 if (eventPos.x < leftEdge - 20) continue; // too far away to block
                 if (isComponentOccupied(comp.id)) {
                   droppedCount++;
+                  recordDrop(comp.id, 'webhook-occupied', comp.label);
                   updated.push({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: dropColor } as Dot);
                   blocked = true;
                   break;
@@ -271,6 +294,7 @@ export function useGameLoop() {
                 const cap = getBrokerCap(firstBroker.comp);
                 if (!tryBrokerRelay(firstBroker.comp.id, cap, now)) {
                   droppedCount++;
+                  recordDrop(firstBroker.comp.id, 'broker-capped', firstBroker.comp.label);
                   updated.push({ ...dot, status: 'dropped', dropX: firstBroker.comp.x, dropY: firstBroker.comp.y, dropVY: 0, color: dropColor } as Dot);
                   brokerCapped = true;
                 }
@@ -302,6 +326,7 @@ export function useGameLoop() {
                     const forkCap = getBrokerCap(forkComp);
                     if (!tryBrokerRelay(forkComp.id, forkCap, now)) {
                       droppedCount++;
+                      recordDrop(forkComp.id, 'broker-capped', forkComp.label);
                       updated.push({
                         id: forkDotId,
                         path: forkWaypoints,
@@ -361,6 +386,7 @@ export function useGameLoop() {
                   updated.push({ ...dot, status: 'queued', pauseStartTime: Date.now(), queuedAtNodeId: queue.id, progress: newProgress } as Dot);
                 } else {
                   droppedCount++;
+                  recordDrop(queue.id, 'queue-full', queue.label);
                   updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
                 }
                 queued = true;
@@ -393,6 +419,7 @@ export function useGameLoop() {
                   updated.push({ ...dot, status: 'pausing', pauseStartTime: Date.now(), progress: newProgress } as Dot);
                 } else {
                   droppedCount++;
+                  recordDrop(subscriber.id, 'subscriber-occupied', subscriber.label);
                   updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
                 }
                 continue;
@@ -402,6 +429,8 @@ export function useGameLoop() {
             if (newProgress >= 1) {
               const endPos = dot.path[dot.path.length - 1];
               droppedCount++;
+              const lastComp = pathComps[pathComps.length - 1]?.comp;
+              if (lastComp) recordDrop(lastComp.id, 'path-incomplete', lastComp.label);
               updated.push({ ...dot, status: 'dropped', dropX: endPos.x, dropY: endPos.y, dropVY: 0, color: dropColor } as Dot);
               continue;
             }

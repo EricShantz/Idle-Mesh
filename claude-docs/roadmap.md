@@ -43,7 +43,7 @@
 - [x] Show a tutorial slide the first time an event drops - explaining what that means, and that the user needs to upgrade the component that the events are dropping off at
 - [x] after the user upgrades the webhook to a broker, they get a broker tutorial slide. after they close that slide, the side menu should scroll down to show the new components. The new components should be highlighted and a new tutorial slide should pop up explaining that they now have new components they can add to their mesh, and to purchase one for more information on each one.
 - [x] "MAX ×N" pill on each upgrade card — bulk-purchases all affordable levels in one click
-- [ ] add an ! icon that explains why events are falling off and how to fix it (queue overload, publisher pushing events to broker, but broker has no matching queues, etc)
+- [x] "!" warning button (top-left, next to help) — shows active drop reasons per node with fix suggestions, auto-decays after 2s
 - [ ] fix upgrade icons on components to not look bad
 - [ ] make prestige cards bigger so you can actually read whats on them
 - [ ] add delete button to all purchased component upgrade modals (except the default publisher, webhook, broker, and subscriber. We dont want users to delete these and get soft locked if they dont have any money left)
