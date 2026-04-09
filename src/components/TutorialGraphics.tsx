@@ -848,3 +848,53 @@ export function FanOutGraphic() {
     </svg>
   );
 }
+
+/* ── Prestige Tree ── */
+export function PrestigeTreeGraphic() {
+  const cx = W / 2;
+  const cy = H / 2;
+  // Branch colors from prestigeUpgradeConfig
+  const branches = [
+    { color: '#06b6d4', dim: '#06b6d466', nodes: [{ x: -50, y: -30 }, { x: -90, y: -55 }] },  // publisher (NW)
+    { color: '#a855f7', dim: '#a855f766', nodes: [{ x: 50, y: -30 }, { x: 90, y: -55 }] },     // broker (NE)
+    { color: '#f97316', dim: '#f9731666', nodes: [{ x: 50, y: 30 }, { x: 90, y: 55 }] },        // queue (SE)
+    { color: '#22c55e', dim: '#22c55e66', nodes: [{ x: -50, y: 30 }, { x: -90, y: 55 }] },      // subscriber (SW)
+  ];
+  const centerColor = '#f59e0b';
+
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderRadius: 8, background: C.bg }}>
+      {/* Branch lines and nodes */}
+      {branches.map((b, bi) => (
+        <g key={bi}>
+          {/* Line from center to first node */}
+          <line x1={cx} y1={cy} x2={cx + b.nodes[0].x} y2={cy + b.nodes[0].y} stroke={b.dim} strokeWidth={1.5} />
+          {/* Line from first to second node */}
+          <line x1={cx + b.nodes[0].x} y1={cy + b.nodes[0].y} x2={cx + b.nodes[1].x} y2={cy + b.nodes[1].y} stroke={b.dim} strokeWidth={1.5} />
+          {/* Nodes */}
+          {b.nodes.map((n, ni) => (
+            <motion.circle
+              key={ni}
+              cx={cx + n.x} cy={cy + n.y} r={8}
+              fill={C.bg}
+              stroke={b.color}
+              strokeWidth={1.5}
+              animate={{ filter: [`drop-shadow(0 0 2px ${b.dim})`, `drop-shadow(0 0 6px ${b.color})`, `drop-shadow(0 0 2px ${b.dim})`] }}
+              transition={{ duration: 2, delay: bi * 0.3 + ni * 0.2, repeat: Infinity }}
+            />
+          ))}
+        </g>
+      ))}
+      {/* Center node (global) — pulsing */}
+      <motion.circle
+        cx={cx} cy={cy} r={12}
+        fill={C.bg}
+        stroke={centerColor}
+        strokeWidth={2}
+        animate={{ filter: [`drop-shadow(0 0 4px ${centerColor}88)`, `drop-shadow(0 0 10px ${centerColor})`, `drop-shadow(0 0 4px ${centerColor}88)`] }}
+        transition={{ duration: 2, repeat: Infinity }}
+      />
+      <text x={cx} y={cy + 3.5} textAnchor="middle" fill={centerColor} fontSize={10} fontWeight="700">✦</text>
+    </svg>
+  );
+}

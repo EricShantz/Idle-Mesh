@@ -366,7 +366,7 @@ export const useGameStore = create<GameState>()(
 
     return {
       balance: saved?.balance ?? 0,
-      totalEarned: saved?.totalEarned ?? 0,
+      totalEarned: saved?.totalEarned ?? 999999,
       eventsConsumed: saved?.eventsConsumed ?? 0,
       eventsDropped: saved?.eventsDropped ?? 0,
 
@@ -607,6 +607,9 @@ export const useGameStore = create<GameState>()(
           const earned = value * draft.upgrades.globalValueMultiplier * permMult;
           draft.balance += earned;
           draft.totalEarned += earned;
+          if (draft.totalEarned >= 1_000_000 && !draft.tutorialsSeen['prestigeAvailable'] && !draft.activeTutorial) {
+            draft.activeTutorial = 'prestigeAvailable';
+          }
           draft.eventsConsumed += 1;
           draft.recentEarnings.push({ time: Date.now(), amount: earned });
           const sub = draft.components.find(c => c.id === subscriberId);
@@ -680,6 +683,9 @@ export const useGameStore = create<GameState>()(
         set(draft => {
           draft.balance += amount;
           draft.totalEarned += amount;
+          if (draft.totalEarned >= 1_000_000 && !draft.tutorialsSeen['prestigeAvailable'] && !draft.activeTutorial) {
+            draft.activeTutorial = 'prestigeAvailable';
+          }
           draft.recentEarnings.push({ time: Date.now(), amount });
         });
       },

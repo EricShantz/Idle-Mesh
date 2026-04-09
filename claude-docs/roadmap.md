@@ -37,8 +37,7 @@
 ---
 
 ## Nice-to-Have / Polish
-- [ ] Tutorial: prestige availability notification when $1M first reached
-- [ ] Tutorial: prestige tree explanation on first visit
+- [x] Tutorial: prestige availability notification when $1M first reached
 - [x] Tutorial/UI: explain competing consumers vs fan-out on queue — `firstFanOut` tutorial triggers on first Persistent Delivery purchase
 - [x] Sidebar upgrades in dropdown menus (global upgrades dropdown, broker upgrades dropdown, etc.) to reduce scrolling
 - [x] Show a tutorial slide the first time an event drops - explaining what that means, and that the user needs to upgrade the component that the events are dropping off at
@@ -48,6 +47,7 @@
 - [ ] fix upgrade icons on components to not look bad
 - [ ] make prestige cards bigger so you can actually read whats on them
 - [ ] add delete button to all purchased component upgrade modals (except the default publisher, webhook, broker, and subscriber. We dont want users to delete these and get soft locked if they dont have any money left)
+- [ ] the monetary requirement to gain prestige points should scale upwards in how expensive they are
 ---
 
 ## Clarification Needed

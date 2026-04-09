@@ -14,6 +14,7 @@ import {
   EventDropGraphic,
   NewComponentsGraphic,
   FanOutGraphic,
+  PrestigeTreeGraphic,
 } from '../components/TutorialGraphics';
 
 export type TutorialSlide = {
@@ -84,6 +85,12 @@ export const tutorials: TutorialDef[] = [
     key: 'firstBroker',
     slides: [
       { title: 'Additional Broker!', body: 'Bridge brokers together to create a full event mesh. Use the bridge slot upgrade to connect brokers and route events across multiple paths.', graphic: MultiBrokerGraphic },
+    ],
+  },
+  {
+    key: 'prestigeAvailable',
+    slides: [
+      { title: 'Schema Registry Available!', body: 'You\'ve earned enough to register your first schema! Open the Schema Registry in the sidebar to reset your progress in exchange for permanent upgrades that carry over between runs.', graphic: PrestigeTreeGraphic },
     ],
   },
 ];
