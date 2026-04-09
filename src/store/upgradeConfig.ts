@@ -43,14 +43,6 @@ export const webhookUpgrades: UpgradeDef[] = [
     costMultiplier: 1,
     maxLevel: 1,
   },
-  {
-    key: 'fasterRouting',
-    label: 'Faster Routing +20%',
-    description: 'Reduces travel time through this hop',
-    baseCost: 8,
-    costMultiplier: 2,
-    maxLevel: 3,
-  },
 ];
 
 export const brokerUpgrades: UpgradeDef[] = [

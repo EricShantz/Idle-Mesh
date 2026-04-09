@@ -235,9 +235,7 @@ export function useGameLoop() {
 
             const webhookComponent = state.components.find(c => c.type === 'webhook');
             if (webhookComponent && dotTouchesNode(eventPos.x, eventPos.y, webhookComponent.x, webhookComponent.y)) {
-              const fasterRoutingLevel = webhookComponent.upgrades['fasterRouting'] ?? 0;
-              const slowFactor = Math.min(1.0, 0.4 + fasterRoutingLevel * 0.2);
-              actualSpeed *= slowFactor;
+              actualSpeed *= 0.4;
             }
             const blockRadius = NODE_HALF_W + DOT_RADIUS + 15; // detect approaching dots before they enter the node
 

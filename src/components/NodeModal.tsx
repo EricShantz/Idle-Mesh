@@ -74,9 +74,6 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number, topic?
     }
     case 'autoPub':
       return 'Off → On';
-    case 'fasterRouting':
-      return `${currentLevel * 20}% → ${nextLevel * 20}%`;
-
     // Queue slot upgrade
     case 'addQueueSlot':
       return `${1 + currentLevel} → ${1 + nextLevel}`;
