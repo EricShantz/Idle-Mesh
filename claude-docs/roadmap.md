@@ -31,7 +31,9 @@
 ## Known Bugs / Technical Debt
 - [ ] Bridge rendering glitch: dots released from a queue behind a bridge appear to start halfway down the queue->subscriber segment at max propagation speed
 - [ ] Topic pool cycles back after 24th publisher (4 clusters of 6)
-
+- [ ] **Performance degradation in mid/late game** — frame rate suffers when many nodes, connections, and event dots are active simultaneously
+- [ ] **Queue overflow with fanout + broadened subscriptions** — queues drop excessive events when subscriptions accept from multiple publishers, even at max subscriber consumption speed
+- [ ] when upgrading to a broker, make it so either the user HAS to add a queue (first one for free). Or in eda do you actually need a queue?
 ---
 
 ## Nice-to-Have / Polish

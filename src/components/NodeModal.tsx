@@ -108,7 +108,7 @@ export function NodeModal() {
   const balance = useGameStore(s => s.balance);
   const costReduction = useGameStore(s => {
     const p = s.prestige.permanentUpgradeLevels;
-    const permCost = (['costRed1', 'costRed2'] as const).filter(k => (p[k] ?? 0) > 0).length * 0.05;
+    const permCost = (p['globalCostRed'] ?? 0) > 0 ? 0.10 : 0;
     return s.upgrades.costReduction + permCost;
   });
   const spend = useGameStore(s => s.spend);

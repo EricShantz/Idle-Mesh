@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { motion } from 'framer-motion';
-import { type GameComponent, useGameStore } from '../store/gameStore';
+import { type GameComponent, useGameStore, getPermanentQueueBufferBonus } from '../store/gameStore';
 import { interpolatePath } from '../utils/pathUtils';
 import { getBrokerUtilization } from '../hooks/useGameLoop';
 import {
@@ -49,7 +49,7 @@ export function NodeCard({ component }: Props) {
   const balance = useGameStore(s => s.balance);
   const costReduction = useGameStore(s => {
     const p = s.prestige.permanentUpgradeLevels;
-    const permCost = (['costRed1', 'costRed2'] as const).filter(k => (p[k] ?? 0) > 0).length * 0.05;
+    const permCost = (p['globalCostRed'] ?? 0) > 0 ? 0.10 : 0;
     return s.upgrades.costReduction + permCost;
   });
   const moveComponent = useGameStore(s => s.moveComponent);
@@ -496,7 +496,8 @@ export function NodeCard({ component }: Props) {
         {component.type === 'queue' && (
           <div className="flex flex-col gap-1 mt-1 items-center">
             {(() => {
-              const capacity = 3 + (component.upgrades['bufferSize'] ?? 0);
+              const prestige = useGameStore.getState().prestige;
+              const capacity = 3 + (component.upgrades['bufferSize'] ?? 0) + getPermanentQueueBufferBonus({ prestige });
               const queuedDots = eventDots
                 .filter(d => d.status === 'queued' && d.queuedAtNodeId === component.id)
                 .sort((a, b) => (a.pauseStartTime ?? 0) - (b.pauseStartTime ?? 0));

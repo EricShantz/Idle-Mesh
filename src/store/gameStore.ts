@@ -139,27 +139,51 @@ export type GameState = {
 // Permanent prestige speed multiplier (count of purchased speed nodes)
 function getPermanentSpeedMult(state: Pick<GameState, 'prestige'>): number {
   const p = state.prestige.permanentUpgradeLevels;
-  const speedNodes = ['speed1', 'speed2', 'speed3'].filter(k => (p[k] ?? 0) > 0).length;
+  const speedNodes = ['globalSpeed1', 'globalSpeed2'].filter(k => (p[k] ?? 0) > 0).length;
   return 1 + speedNodes * 0.15;
 }
 
-// Permanent prestige cost reduction (count of purchased cost reduction nodes)
-function getPermanentCostReduction(state: Pick<GameState, 'prestige'>): number {
-  const p = state.prestige.permanentUpgradeLevels;
-  const costNodes = ['costRed1', 'costRed2'].filter(k => (p[k] ?? 0) > 0).length;
-  return costNodes * 0.05;
+// Permanent prestige cost reduction
+export function getPermanentCostReduction(state: Pick<GameState, 'prestige'>): number {
+  return (state.prestige.permanentUpgradeLevels['globalCostRed'] ?? 0) > 0 ? 0.10 : 0;
 }
 
 // Permanent shop discount
 export function getPermanentShopDiscount(state: Pick<GameState, 'prestige'>): number {
-  return (state.prestige.permanentUpgradeLevels['shopDiscount'] ?? 0) > 0 ? 0.15 : 0;
+  return (state.prestige.permanentUpgradeLevels['globalShopDiscount'] ?? 0) > 0 ? 0.15 : 0;
 }
 
 // Permanent value boost (count of purchased value nodes × $0.50)
 export function getPermanentValueBoost(state: Pick<GameState, 'prestige'>): number {
   const p = state.prestige.permanentUpgradeLevels;
-  const valueNodes = ['value1', 'value2'].filter(k => (p[k] ?? 0) > 0).length;
+  const valueNodes = ['subValue1', 'subValue2'].filter(k => (p[k] ?? 0) > 0).length;
   return valueNodes * 0.50;
+}
+
+// Permanent publisher rate multiplier (pubRoot)
+export function getPermanentPubRateMult(state: Pick<GameState, 'prestige'>): number {
+  return (state.prestige.permanentUpgradeLevels['pubRoot'] ?? 0) > 0 ? 1.2 : 1.0;
+}
+
+// Permanent subscriber payout multiplier (subRoot)
+export function getPermanentSubPayoutMult(state: Pick<GameState, 'prestige'>): number {
+  return (state.prestige.permanentUpgradeLevels['subRoot'] ?? 0) > 0 ? 1.25 : 1.0;
+}
+
+// Permanent broker routing speed multiplier (brokerRouting)
+export function getPermanentBrokerSpeedMult(state: Pick<GameState, 'prestige'>): number {
+  return (state.prestige.permanentUpgradeLevels['brokerRouting'] ?? 0) > 0 ? 1.25 : 1.0;
+}
+
+// Permanent queue buffer bonus (queueRoot + queueBuffer)
+export function getPermanentQueueBufferBonus(state: Pick<GameState, 'prestige'>): number {
+  const p = state.prestige.permanentUpgradeLevels;
+  return ((p['queueRoot'] ?? 0) > 0 ? 2 : 0) + ((p['queueBuffer'] ?? 0) > 0 ? 4 : 0);
+}
+
+// Whether batch consume (prefetch) is active
+export function hasPermanentBatchConsume(state: Pick<GameState, 'prestige'>): boolean {
+  return (state.prestige.permanentUpgradeLevels['queueBatchConsume'] ?? 0) > 0;
 }
 
 let dotIdCounter = 0;
@@ -240,6 +264,77 @@ function loadSavedState(): Partial<GameState> | null {
   return null;
 }
 
+// Migrate old prestige keys to new tree structure
+function migratePrestigeKeys(prestige: GameState['prestige']): GameState['prestige'] {
+  const p = prestige.permanentUpgradeLevels;
+  // Detect old format: 'income' key existed in old tree but not new
+  if (!((p['income'] ?? 0) > 0) && !((p['speed1'] ?? 0) > 0) && !((p['costRed1'] ?? 0) > 0)) {
+    return prestige; // already new format or empty
+  }
+
+  const migrated = { ...prestige, permanentUpgradeLevels: { ...p } };
+  const m = migrated.permanentUpgradeLevels;
+  let refundedPoints = 0;
+
+  // Simple renames
+  const renames: [string, string][] = [
+    ['income', 'globalIncome'],
+    ['speed1', 'globalSpeed1'],
+    ['speed2', 'globalSpeed2'],
+    ['shopDiscount', 'globalShopDiscount'],
+    ['pubSpeed', 'pubSpeed'],
+  ];
+  for (const [oldKey, newKey] of renames) {
+    if ((p[oldKey] ?? 0) > 0) {
+      m[newKey] = 1;
+      if (oldKey !== newKey) delete m[oldKey];
+    }
+  }
+
+  // costRed1 + costRed2 → single globalCostRed (refund costRed2)
+  if ((p['costRed1'] ?? 0) > 0) {
+    m['globalCostRed'] = 1;
+    delete m['costRed1'];
+  }
+  if ((p['costRed2'] ?? 0) > 0) {
+    refundedPoints += 6; // costRed2 cost was 6
+    delete m['costRed2'];
+  }
+
+  // speed3 removed (refund)
+  if ((p['speed3'] ?? 0) > 0) {
+    refundedPoints += 7;
+    delete m['speed3'];
+  }
+
+  // Publisher branch: autoPub1/2 → pubAutoPub1/2, grant pubRoot free
+  if ((p['autoPub1'] ?? 0) > 0 || (p['pubSpeed'] ?? 0) > 0) {
+    m['pubRoot'] = 1;
+  }
+  if ((p['autoPub1'] ?? 0) > 0) { m['pubAutoPub1'] = 1; delete m['autoPub1']; }
+  if ((p['autoPub2'] ?? 0) > 0) { m['pubAutoPub2'] = 1; delete m['autoPub2']; }
+  if ((p['batchStart'] ?? 0) > 0) { m['pubBatchStart'] = 1; delete m['batchStart']; }
+
+  // Subscriber branch: value1/2 → subValue1/2, grant subRoot free
+  if ((p['value1'] ?? 0) > 0 || (p['consumeSpeed'] ?? 0) > 0 || (p['subValue'] ?? 0) > 0) {
+    m['subRoot'] = 1;
+  }
+  if ((p['value1'] ?? 0) > 0) { m['subValue1'] = 1; delete m['value1']; }
+  if ((p['value2'] ?? 0) > 0) { m['subValue2'] = 1; delete m['value2']; }
+  if ((p['consumeSpeed'] ?? 0) > 0) { m['subConsumeSpeed'] = 1; delete m['consumeSpeed']; }
+  if ((p['subValue'] ?? 0) > 0) { m['subConsumeValue'] = 1; delete m['subValue']; }
+
+  // Queue branch: queueStart → queueFreeQueue, grant queueRoot free
+  if ((p['queueStart'] ?? 0) > 0) {
+    m['queueRoot'] = 1;
+    m['queueFreeQueue'] = 1;
+    delete m['queueStart'];
+  }
+
+  migrated.points += refundedPoints;
+  return migrated;
+}
+
 function migrateGlobalUpgradeLevels(upgrades: GameState['upgrades'] | undefined): Record<string, number> {
   if (!upgrades) return {};
   const levels: Record<string, number> = {};
@@ -314,7 +409,7 @@ export const useGameStore = create<GameState>()(
       draggingNodeId: null,
       showPrestigeTree: false,
 
-      prestige: saved?.prestige ?? { points: 0, totalPoints: 0, count: 0, permanentUpgradeLevels: {} },
+      prestige: migratePrestigeKeys(saved?.prestige ?? { points: 0, totalPoints: 0, count: 0, permanentUpgradeLevels: {} }),
 
       tutorialsSeen: saved?.tutorialsSeen ?? {},
       activeTutorial: null,
@@ -329,7 +424,7 @@ export const useGameStore = create<GameState>()(
         const publishSpeedLevel = pub.upgrades['publishSpeed'] ?? 0;
         const baseCooldown = 1000; // 1 second base cooldown
         const publishBoostPct = publishSpeedLevel * (publishSpeedLevel + 9) / 2;
-        const cooldownDuration = baseCooldown * (1 - publishBoostPct / 100);
+        const cooldownDuration = baseCooldown * (1 - publishBoostPct / 100) / getPermanentPubRateMult(state);
         if (Date.now() - lastFireTime < cooldownDuration) return;
 
         const allPaths = state._getAllPathsWithNodes(publisherId);
@@ -507,8 +602,8 @@ export const useGameStore = create<GameState>()(
 
       consumeEvent: (_dotId: string, value: number, subscriberId: string) => {
         set(draft => {
-          const hasIncome = (draft.prestige.permanentUpgradeLevels['income'] ?? 0) > 0;
-          const permMult = hasIncome ? 1.1 : 1.0;
+          const hasIncome = (draft.prestige.permanentUpgradeLevels['globalIncome'] ?? 0) > 0;
+          const permMult = (hasIncome ? 1.1 : 1.0) * getPermanentSubPayoutMult(draft);
           const earned = value * draft.upgrades.globalValueMultiplier * permMult;
           draft.balance += earned;
           draft.totalEarned += earned;
@@ -1125,63 +1220,74 @@ export const useGameStore = create<GameState>()(
           // Apply permanent node effects
           const p = draft.prestige.permanentUpgradeLevels;
 
-          // Auto-publisher + publish speed
+          // --- Publisher branch ---
           const pub = draft.components.find(c => c.type === 'publisher');
           if (pub) {
-            if ((p['autoPub2'] ?? 0) > 0) pub.upgrades['autoPub'] = 2;
-            else if ((p['autoPub1'] ?? 0) > 0) pub.upgrades['autoPub'] = 1;
+            if ((p['pubAutoPub2'] ?? 0) > 0) pub.upgrades['autoPub'] = 2;
+            else if ((p['pubAutoPub1'] ?? 0) > 0) pub.upgrades['autoPub'] = 1;
             if ((p['pubSpeed'] ?? 0) > 0) pub.upgrades['publishSpeed'] = 1;
           }
-
-          // Batch start
-          if ((p['batchStart'] ?? 0) > 0) {
+          if ((p['pubBatchStart'] ?? 0) > 0) {
             draft.upgrades.batchFire = 2; // level 1 = 2 events/click
             draft.globalUpgradeLevels['batchFire'] = 1;
           }
 
-          // Faster consumption head start
-          if ((p['consumeSpeed'] ?? 0) > 0) {
+          // --- Broker branch ---
+          if ((p['brokerRoot'] ?? 0) > 0) {
+            const webhook = draft.components.find(c => c.type === 'webhook');
+            if (webhook) {
+              webhook.type = 'broker';
+              webhook.label = 'Broker';
+              webhook.upgrades['upgradeToBroker'] = 1;
+            }
+          }
+          const broker = draft.components.find(c => c.type === 'broker');
+          if (broker) {
+            if ((p['brokerThroughput'] ?? 0) > 0) broker.upgrades['increaseThroughput'] = 1;
+            if ((p['brokerBridge'] ?? 0) > 0) broker.upgrades['addBridgeSlot'] = 1;
+          }
+
+          // --- Subscriber branch ---
+          if ((p['subConsumeSpeed'] ?? 0) > 0) {
             const sub = draft.components.find(c => c.type === 'subscriber');
             if (sub) sub.upgrades['fasterConsumption'] = 1;
           }
-
-          // Subscriber value head start
-          if ((p['subValue'] ?? 0) > 0) {
+          if ((p['subConsumeValue'] ?? 0) > 0) {
             const sub = draft.components.find(c => c.type === 'subscriber');
             if (sub) sub.upgrades['consumptionValue'] = 1;
           }
 
-          // Queue head start — add a free queue connected to the webhook/broker
-          if ((p['queueStart'] ?? 0) > 0) {
-            const broker = draft.components.find(c => c.type === 'broker' || c.type === 'webhook');
-            if (broker) {
-              const qx = Math.round(broker.x + 150);
-              const qy = 300 + 140;
-              draft.components.push({
-                id: 'comp-10',
-                type: 'queue',
-                x: qx,
-                y: qy,
-                label: 'Queue',
-                tags: {},
-                upgrades: {},
-              });
-              draft.connections.push({
-                id: 'conn-10',
-                fromId: broker.id,
-                toId: 'comp-10',
-              });
-              componentIdCounter = 11;
-              connectionIdCounter = 11;
-            }
+          // --- Queue branch ---
+          const brokerOrWebhook = draft.components.find(c => c.type === 'broker' || c.type === 'webhook');
+          if ((p['queueFreeQueue'] ?? 0) > 0 && brokerOrWebhook) {
+            const qx = Math.round(brokerOrWebhook.x + 150);
+            const qy = 300 + 140;
+            const queueUpgrades: Record<string, number> = {};
+            if ((p['queueBroaden'] ?? 0) > 0) queueUpgrades['subscriptionBroaden'] = 1;
+            draft.components.push({
+              id: 'comp-10',
+              type: 'queue',
+              x: qx,
+              y: qy,
+              label: 'Queue',
+              tags: {},
+              upgrades: queueUpgrades,
+            });
+            draft.connections.push({
+              id: 'conn-10',
+              fromId: brokerOrWebhook.id,
+              toId: 'comp-10',
+            });
+            componentIdCounter = 11;
+            connectionIdCounter = 11;
           }
 
           // Show prestige tree
           draft.showPrestigeTree = true;
         });
 
-        // Reset ID counters (unless queueStart bumped them)
-        if (!((get().prestige.permanentUpgradeLevels['queueStart'] ?? 0) > 0)) {
+        // Reset ID counters (unless queueFreeQueue bumped them)
+        if (!((get().prestige.permanentUpgradeLevels['queueFreeQueue'] ?? 0) > 0)) {
           componentIdCounter = 10;
           connectionIdCounter = 10;
         }

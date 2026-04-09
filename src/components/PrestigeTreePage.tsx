@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { useGameStore } from '../store/gameStore';
-import { prestigeNodes, isNodePurchased, isNodeAvailable } from '../store/prestigeUpgradeConfig';
+import { prestigeNodes, isNodePurchased, isNodeAvailable, branchColors } from '../store/prestigeUpgradeConfig';
+import type { PrestigeBranch } from '../store/prestigeUpgradeConfig';
 import { ViewportContext, useViewportApi } from '../hooks/useViewport';
 
 const GRID_SPACING = 160;
@@ -11,18 +12,37 @@ const MAX_ZOOM = 3;
 function clamp(v: number, min: number, max: number) { return Math.min(max, Math.max(min, v)); }
 
 function getNodeIcon(key: string): string {
-  if (key === 'income') return '$';
-  if (key.startsWith('speed')) return '\u26A1';
-  if (key === 'batchStart') return '\u2728';
-  if (key.startsWith('autoPub')) return '\u2699';
+  // Global
+  if (key === 'globalIncome') return '$';
+  if (key.startsWith('globalSpeed')) return '\u26A1';
+  if (key === 'globalCostRed') return '\u{1F3F7}';
+  if (key === 'globalShopDiscount') return '\u{1F6D2}';
+  // Publisher
+  if (key === 'pubRoot') return '\u{1F4E4}';
   if (key === 'pubSpeed') return '\u{1F680}';
-  if (key.startsWith('costRed')) return '\u{1F3F7}';
-  if (key === 'shopDiscount') return '\u{1F6D2}';
-  if (key.startsWith('value')) return '\u{1F4B0}';
-  if (key === 'subValue') return '\u{1F4B5}';
-  if (key === 'queueStart') return '\u{1F4E6}';
-  if (key === 'consumeSpeed') return '\u{23E9}';
+  if (key.startsWith('pubAutoPub')) return '\u2699';
+  if (key === 'pubBatchStart') return '\u2728';
+  // Broker
+  if (key === 'brokerRoot') return '\u{1F310}';
+  if (key === 'brokerThroughput') return '\u{1F4CA}';
+  if (key === 'brokerBridge') return '\u{1F309}';
+  if (key === 'brokerRouting') return '\u{1F9ED}';
+  // Queue
+  if (key === 'queueRoot') return '\u{1F4E6}';
+  if (key === 'queueFreeQueue') return '\u{1F381}';
+  if (key === 'queueBuffer') return '\u{1F4DA}';
+  if (key === 'queueBroaden') return '\u{1F4E1}';
+  if (key === 'queueBatchConsume') return '\u{1F500}';
+  // Subscriber
+  if (key === 'subRoot') return '\u{1F4E5}';
+  if (key === 'subConsumeSpeed') return '\u{23E9}';
+  if (key.startsWith('subValue')) return '\u{1F4B0}';
+  if (key === 'subConsumeValue') return '\u{1F4B5}';
   return '?';
+}
+
+function getBranchColor(branch: PrestigeBranch) {
+  return branchColors[branch];
 }
 
 export function PrestigeTreePage() {
@@ -163,7 +183,8 @@ function PrestigeTreeInner({ viewport }: { viewport: ReturnType<typeof useViewpo
 
               const parentOwned = isNodePurchased(parent.key, purchased);
               const childOwned = isNodePurchased(n.key, purchased);
-              const lineColor = childOwned ? '#f59e0b' : parentOwned ? '#f59e0b88' : '#374151';
+              const colors = getBranchColor(n.branch);
+              const lineColor = childOwned ? colors.primary : parentOwned ? colors.dim : '#374151';
 
               return (
                 <line
@@ -191,6 +212,7 @@ function PrestigeTreeInner({ viewport }: { viewport: ReturnType<typeof useViewpo
           const available = isNodeAvailable(n, purchased);
           const canAfford = available && prestige.points >= n.cost;
           const locked = !isPurchasedNode && !available;
+          const colors = getBranchColor(n.branch);
 
           let borderColor = '#374151';
           let bgColor = '#111827';
@@ -198,19 +220,19 @@ function PrestigeTreeInner({ viewport }: { viewport: ReturnType<typeof useViewpo
           let glowStyle = {};
 
           if (isPurchasedNode) {
-            borderColor = '#f59e0b';
-            bgColor = '#78350f';
+            borderColor = colors.primary;
+            bgColor = colors.bgActive;
             textColor = '#fef3c7';
-            glowStyle = { boxShadow: '0 0 12px #f59e0b44' };
+            glowStyle = { boxShadow: `0 0 12px ${colors.dim}` };
           } else if (canAfford) {
-            borderColor = '#f59e0b';
-            bgColor = '#1c1307';
+            borderColor = colors.primary;
+            bgColor = colors.bg;
             textColor = '#fef3c7';
-            glowStyle = { boxShadow: '0 0 8px #f59e0b33' };
+            glowStyle = { boxShadow: `0 0 8px ${colors.dim}` };
           } else if (available) {
-            borderColor = '#92400e';
-            bgColor = '#1c1307';
-            textColor = '#d97706';
+            borderColor = colors.dim;
+            bgColor = colors.bg;
+            textColor = colors.primary;
           }
 
           return (

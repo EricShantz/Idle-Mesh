@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useGameStore, nextDotId } from '../store/gameStore';
+import { useGameStore, nextDotId, getPermanentQueueBufferBonus, hasPermanentBatchConsume } from '../store/gameStore';
 import { interpolatePath, normalizedSpeed } from '../utils/pathUtils';
 
 // Node card dimensions: positioned at left: x-60, top: y-28
@@ -353,7 +353,7 @@ export function useGameLoop() {
             if (nextInteractable && nextInteractable.comp.type === 'queue') {
               const queue = nextInteractable.comp;
               if (dotTouchesNode(newPos.x, newPos.y, queue.x, queue.y)) {
-                const bufferSize = 3 + (queue.upgrades['bufferSize'] ?? 0);
+                const bufferSize = 3 + (queue.upgrades['bufferSize'] ?? 0) + getPermanentQueueBufferBonus(state);
                 // Count from the already-processed updated array for accurate counts
                 const queuedCount = updated.filter(d =>
                   d.status === 'queued' && d.queuedAtNodeId === queue.id
@@ -480,13 +480,16 @@ export function useGameLoop() {
           }
         }
 
-        // --- Pass 2: auto-release ONE queued dot per queue if subscriber is free ---
-        const releasedQueues = new Set<string>();
+        // --- Pass 2: auto-release queued dots (1 per queue, or up to 3 with Prefetch prestige) ---
+        const batchConsume = hasPermanentBatchConsume(state);
+        const maxReleasesPerQueue = batchConsume ? 3 : 1;
+        const queueReleaseCounts = new Map<string, number>();
 
         for (let i = 0; i < updated.length; i++) {
           let dot = updated[i];
           if (dot.status !== 'queued' || !dot.queuedAtNodeId) continue;
-          if (releasedQueues.has(dot.queuedAtNodeId)) continue;
+          const releasedSoFar = queueReleaseCounts.get(dot.queuedAtNodeId) ?? 0;
+          if (releasedSoFar >= maxReleasesPerQueue) continue;
 
           const queueId = dot.queuedAtNodeId;
 
@@ -664,7 +667,7 @@ export function useGameLoop() {
           const canRelease = releaseData.every(rd => shouldReleaseTo(rd.sub, rd.path, rd.progress));
 
           if (canRelease) {
-            releasedQueues.add(queueId);
+            queueReleaseCounts.set(queueId, (queueReleaseCounts.get(queueId) ?? 0) + 1);
 
             for (let ti = 0; ti < releaseData.length; ti++) {
               const { path: releasePath, progress: releaseProgress } = releaseData[ti];
@@ -768,7 +771,7 @@ export function useGameLoop() {
                     return d.path.some(p => Math.hypot(p.x - targetComp!.x, p.y - targetComp!.y) < 50);
                   }).length;
                   const bufferLevel = queueComp?.upgrades['bufferSize'] ?? 0;
-                  const capacity = 3 + bufferLevel;
+                  const capacity = 3 + bufferLevel + getPermanentQueueBufferBonus(state);
                   canRelease = (queuedCount + inFlightToQueue) < capacity;
                 } else {
                   // Subscriber — predictive timing (same logic as queue release)

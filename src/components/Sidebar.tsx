@@ -60,7 +60,7 @@ export function Sidebar() {
   const components = useGameStore(s => s.components);
   const upgrades = useGameStore(s => s.upgrades);
   const prestige = useGameStore(s => s.prestige);
-  const effectiveCostReduction = upgrades.costReduction + (['costRed1', 'costRed2'] as const).filter(k => (prestige.permanentUpgradeLevels[k] ?? 0) > 0).length * 0.05;
+  const effectiveCostReduction = upgrades.costReduction + ((prestige.permanentUpgradeLevels['globalCostRed'] ?? 0) > 0 ? 0.10 : 0);
   const globalUpgradeLevels = useGameStore(s => s.globalUpgradeLevels);
   const spend = useGameStore(s => s.spend);
   const purchaseGlobalUpgrade = useGameStore(s => s.purchaseGlobalUpgrade);

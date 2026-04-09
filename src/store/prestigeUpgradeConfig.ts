@@ -1,3 +1,5 @@
+export type PrestigeBranch = 'global' | 'publisher' | 'broker' | 'queue' | 'subscriber';
+
 export type PrestigeNode = {
   key: string;
   label: string;
@@ -5,38 +7,43 @@ export type PrestigeNode = {
   cost: number;            // prestige points
   requires: string | null; // parent node key, null = root (always available)
   position: { x: number; y: number }; // grid units from center, converted to px in UI
+  branch: PrestigeBranch;
 };
 
 export const prestigeNodes: PrestigeNode[] = [
-  // Center — root node
-  { key: 'income', label: 'Income Boost', description: '×1.1 permanent income multiplier', cost: 1, requires: null, position: { x: 0, y: 0 } },
+  // ── Global Branch (center) ──
+  { key: 'globalIncome', label: 'Income Boost', description: '×1.1 permanent income multiplier', cost: 1, requires: null, position: { x: 0, y: 0 }, branch: 'global' },
+  { key: 'globalSpeed1', label: 'Event Speed I', description: '+15% event propagation speed', cost: 3, requires: 'globalIncome', position: { x: 0, y: -1 }, branch: 'global' },
+  { key: 'globalSpeed2', label: 'Event Speed II', description: '+15% event propagation speed', cost: 6, requires: 'globalSpeed1', position: { x: 0, y: -2 }, branch: 'global' },
+  { key: 'globalCostRed', label: 'Discount', description: '-10% permanent upgrade cost reduction', cost: 4, requires: 'globalIncome', position: { x: -1, y: 0 }, branch: 'global' },
+  { key: 'globalShopDiscount', label: 'Cheaper Components', description: '-15% component shop prices', cost: 4, requires: 'globalIncome', position: { x: 1, y: 0 }, branch: 'global' },
 
-  // Up branch — Speed (main trunk + sub-branch)
-  { key: 'speed1', label: 'Event Speed I', description: '+15% event propagation speed', cost: 2, requires: 'income', position: { x: 0, y: -1 } },
-  { key: 'speed2', label: 'Event Speed II', description: '+15% event propagation speed', cost: 4, requires: 'speed1', position: { x: 0, y: -2 } },
-  { key: 'speed3', label: 'Event Speed III', description: '+15% event propagation speed', cost: 7, requires: 'speed2', position: { x: 0, y: -3 } },
-  { key: 'batchStart', label: 'Batch Start', description: 'Start each run with Event Batching lv1', cost: 12, requires: 'speed3', position: { x: 0, y: -4 } },
-  // Sub-branch off speed2: faster consumption
-  { key: 'consumeSpeed', label: 'Quick Consume', description: 'Start with Faster Consumption lv1', cost: 6, requires: 'speed2', position: { x: -1, y: -3 } },
+  // ── Publisher Branch (northwest) ──
+  { key: 'pubRoot', label: 'Publisher Affinity', description: '+20% publish rate for all publishers', cost: 2, requires: 'globalIncome', position: { x: -2, y: -1 }, branch: 'publisher' },
+  { key: 'pubSpeed', label: 'Quick Publish', description: 'Start each run with Publish Speed lv1', cost: 5, requires: 'pubRoot', position: { x: -3, y: -2 }, branch: 'publisher' },
+  { key: 'pubAutoPub1', label: 'Auto-Publisher I', description: 'Start each run with Auto-Click lv1', cost: 5, requires: 'pubRoot', position: { x: -2, y: -2 }, branch: 'publisher' },
+  { key: 'pubAutoPub2', label: 'Auto-Publisher II', description: 'Start each run with Auto-Click lv2', cost: 10, requires: 'pubAutoPub1', position: { x: -2, y: -3 }, branch: 'publisher' },
+  { key: 'pubBatchStart', label: 'Batch Fire', description: 'Start each run with Event Batching lv1', cost: 12, requires: 'pubAutoPub2', position: { x: -2, y: -4 }, branch: 'publisher' },
 
-  // Right branch — Auto-Publisher (main trunk + sub-branch)
-  { key: 'autoPub1', label: 'Auto-Publisher I', description: 'Start each run with Auto-Publisher lv1 (5s)', cost: 5, requires: 'income', position: { x: 1, y: 0 } },
-  { key: 'autoPub2', label: 'Auto-Publisher II', description: 'Start each run with Auto-Publisher lv2 (3s)', cost: 10, requires: 'autoPub1', position: { x: 2, y: 0 } },
-  // Sub-branch off autoPub1: publish speed head start
-  { key: 'pubSpeed', label: 'Quick Publish', description: 'Start with Publish Speed lv1', cost: 6, requires: 'autoPub1', position: { x: 1, y: 1 } },
+  // ── Broker Branch (northeast) ──
+  { key: 'brokerRoot', label: 'Broker Affinity', description: 'Start with webhook auto-upgraded to broker', cost: 3, requires: 'globalIncome', position: { x: 2, y: -1 }, branch: 'broker' },
+  { key: 'brokerThroughput', label: 'Throughput Boost', description: 'Start with Increase Throughput lv1 on broker', cost: 6, requires: 'brokerRoot', position: { x: 2, y: -2 }, branch: 'broker' },
+  { key: 'brokerBridge', label: 'Bridge Ready', description: 'Start with 1 free Bridge Slot on broker', cost: 10, requires: 'brokerThroughput', position: { x: 3, y: -3 }, branch: 'broker' },
+  { key: 'brokerRouting', label: 'Smart Routing', description: '+25% event propagation speed through brokers', cost: 8, requires: 'brokerThroughput', position: { x: 1, y: -3 }, branch: 'broker' },
 
-  // Left branch — Cost Reduction (main trunk + sub-branch)
-  { key: 'costRed1', label: 'Discount I', description: '-5% permanent upgrade cost reduction', cost: 3, requires: 'income', position: { x: -1, y: 0 } },
-  { key: 'costRed2', label: 'Discount II', description: '-5% permanent upgrade cost reduction', cost: 6, requires: 'costRed1', position: { x: -2, y: 0 } },
-  // Sub-branch off costRed1: cheaper shop items
-  { key: 'shopDiscount', label: 'Cheaper Components', description: '-15% component shop prices', cost: 5, requires: 'costRed1', position: { x: -1, y: -1 } },
+  // ── Queue Branch (southeast) ──
+  { key: 'queueRoot', label: 'Queue Affinity', description: '+2 base queue buffer size for all queues', cost: 2, requires: 'globalIncome', position: { x: 2, y: 1 }, branch: 'queue' },
+  { key: 'queueFreeQueue', label: 'Queue Head Start', description: 'Start each run with 1 free queue', cost: 8, requires: 'queueRoot', position: { x: 3, y: 2 }, branch: 'queue' },
+  { key: 'queueBuffer', label: 'Deep Buffers', description: '+4 additional base queue buffer size', cost: 5, requires: 'queueRoot', position: { x: 2, y: 2 }, branch: 'queue' },
+  { key: 'queueBroaden', label: 'Wide Subscriptions', description: 'Start with Broaden Subscription lv1 on all queues', cost: 8, requires: 'queueBuffer', position: { x: 2, y: 3 }, branch: 'queue' },
+  { key: 'queueBatchConsume', label: 'Prefetch', description: 'Subscribers consume up to 3 events per tick', cost: 14, requires: 'queueBroaden', position: { x: 2, y: 4 }, branch: 'queue' },
 
-  // Down branch — Value (main trunk + sub-branch)
-  { key: 'value1', label: 'Value Boost I', description: '+$0.50 base event value', cost: 3, requires: 'income', position: { x: 0, y: 1 } },
-  { key: 'value2', label: 'Value Boost II', description: '+$0.50 base event value', cost: 6, requires: 'value1', position: { x: 0, y: 2 } },
-  { key: 'queueStart', label: 'Queue Head Start', description: 'Start each run with 1 free queue', cost: 10, requires: 'value2', position: { x: 0, y: 3 } },
-  // Sub-branch off value2: subscriber value head start
-  { key: 'subValue', label: 'Sub Value Boost', description: 'Start with Consumption Value lv1', cost: 5, requires: 'value2', position: { x: -1, y: 2 } },
+  // ── Subscriber Branch (southwest) ──
+  { key: 'subRoot', label: 'Subscriber Affinity', description: '+25% consumption payout for all subscribers', cost: 2, requires: 'globalIncome', position: { x: -2, y: 1 }, branch: 'subscriber' },
+  { key: 'subConsumeSpeed', label: 'Quick Consume', description: 'Start each run with Faster Consumption lv1', cost: 5, requires: 'subRoot', position: { x: -3, y: 2 }, branch: 'subscriber' },
+  { key: 'subValue1', label: 'Value Boost I', description: '+$0.50 permanent base event value', cost: 3, requires: 'subRoot', position: { x: -2, y: 2 }, branch: 'subscriber' },
+  { key: 'subValue2', label: 'Value Boost II', description: '+$0.50 permanent base event value', cost: 6, requires: 'subValue1', position: { x: -2, y: 3 }, branch: 'subscriber' },
+  { key: 'subConsumeValue', label: 'Consumption Head Start', description: 'Start with Consumption Multiplier lv1', cost: 8, requires: 'subValue2', position: { x: -2, y: 4 }, branch: 'subscriber' },
 ];
 
 // Helper: check if a node is purchased
@@ -50,3 +57,12 @@ export function isNodeAvailable(node: PrestigeNode, purchased: Record<string, nu
   if (node.requires === null) return true;
   return isNodePurchased(node.requires, purchased);
 }
+
+// Branch color palette
+export const branchColors: Record<PrestigeBranch, { primary: string; dim: string; bg: string; bgActive: string }> = {
+  global:     { primary: '#f59e0b', dim: '#f59e0b88', bg: '#1c1307', bgActive: '#78350f' },
+  publisher:  { primary: '#06b6d4', dim: '#06b6d488', bg: '#0c1a1f', bgActive: '#164e63' },
+  broker:     { primary: '#a855f7', dim: '#a855f788', bg: '#1a0f24', bgActive: '#581c87' },
+  queue:      { primary: '#f97316', dim: '#f9731688', bg: '#1c1207', bgActive: '#7c2d12' },
+  subscriber: { primary: '#22c55e', dim: '#22c55e88', bg: '#0c1a10', bgActive: '#166534' },
+};
