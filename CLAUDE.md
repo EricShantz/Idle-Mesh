@@ -53,7 +53,7 @@ src/
 5. Upgrade webhook → broker ($75) to unlock queues
 6. Buy queues, wire connections via drag-to-connect
 7. Automation via per-publisher auto-fire upgrades
-8. Smart routing: broker routes to queue with most free buffer space
+8. Broker fan-out: broker sends events to ALL connected queues with matching topics
 9. Prestige ("Schema Registry") at $1M for permanent upgrades
 
 ## Key Conventions

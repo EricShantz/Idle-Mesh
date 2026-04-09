@@ -41,7 +41,7 @@
 
 ## Smart Routing & Fan-out
 - `_getAllPathsWithNodes()` does DFS returning paths with both waypoints and node IDs. Bridge connections traversed bidirectionally.
-- `fireEvent()` groups paths by broker, deduplicates by queue. Without fan-out: picks queue with most free space. With fan-out on all queues: one dot per unique queue.
+- `fireEvent()` groups paths by broker, deduplicates by queue. Broker always fans out to ALL matching queues — one dot per unique queue per broker.
 - Queue-level fan-out (Persistent Delivery) handled at release time in Pass 2. Broker never duplicates per-subscriber; only per-queue.
 
 ## Path Deduplication

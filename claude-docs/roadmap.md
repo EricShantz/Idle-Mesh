@@ -44,9 +44,9 @@
 - [x] Sidebar upgrades in dropdown menus (global upgrades dropdown, broker upgrades dropdown, etc.) to reduce scrolling
 - [x] Show a tutorial slide the first time an event drops - explaining what that means, and that the user needs to upgrade the component that the events are dropping off at
 - [x] after the user upgrades the webhook to a broker, they get a broker tutorial slide. after they close that slide, the side menu should scroll down to show the new components. The new components should be highlighted and a new tutorial slide should pop up explaining that they now have new components they can add to their mesh, and to purchase one for more information on each one.
-- [ ] explore if it would be a better gameplay experience to have upgrades such as "Event Value" and "Consumption Mulitplier" be made global upgrades instead of per/component. Would this be more convinient to the player? What are the pros and cons of each
-- [ ] Need to figure out the event propagation speed down the lines, should they be consistent at all times? or vary depending on line length so events reach the same endpoint at the same time?
-- [ ] make autoclicker a 1 time upgrade per publisher, then have it act like a normal user click (cooldown timer etc), then upgrade the autoclick speed by upgrading the publish speed
+- [ ] should we add a "max" button to each upgrade so you dont have to click 10 times to max an upgrade when you have lots of money?
+- [ ] add an ! icon that explains why events are falling off and how to fix it (queue overload, publisher pushing events to broker, but broker has no matching queues, etc)
+
 ---
 
 ## Clarification Needed

@@ -86,7 +86,7 @@ Queue subscribed to `acme/orders/created/na/electronics/SKU001`:
 
 ## Routing Integration
 
-Topic filtering inserted in `fireEvent` between path discovery and smart routing. Filters `validPaths` to only those where the destination queue's `subscriptionTopic` matches the publisher's topic via `topicMatches()`. Queues without `subscriptionTopic` match everything (backward compat).
+Topic filtering inserted in `fireEvent` between path discovery and broker fan-out. Filters `validPaths` to only those where the destination queue's `subscriptionTopic` matches the publisher's topic via `topicMatches()`. Queues without `subscriptionTopic` match everything (backward compat).
 
 ## Queue Subscription Assignment
 

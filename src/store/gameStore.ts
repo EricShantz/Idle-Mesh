@@ -527,7 +527,7 @@ export const useGameStore = create<GameState>()(
           return;
         }
 
-        // Smart routing: without fan-out, pick the queue with most free buffer space
+        // Broker fan-out: send to ALL matching queues (one path per unique queue per broker)
         // Group paths by their broker (the node before the queue where paths diverge)
         const selectedPaths: typeof validPaths = [];
         const groupedByBroker = new Map<string, typeof validPaths>();

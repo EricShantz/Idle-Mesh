@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { MeshCanvas } from './components/MeshCanvas';
 import { Sidebar } from './components/Sidebar';
 import { TutorialModal } from './components/TutorialModal';
+import { HelpButton } from './components/HelpButton';
 import { PrestigeTreePage } from './components/PrestigeTreePage';
 import { useGameLoop, useAutoPublisher } from './hooks/useGameLoop';
 import { useGameStore } from './store/gameStore';
@@ -23,6 +24,7 @@ function App() {
       <MeshCanvas />
       <Sidebar />
       <TutorialModal />
+      <HelpButton />
     </div>
   );
 }
