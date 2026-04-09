@@ -37,7 +37,6 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 | Upgrade | Effect | Base Cost | Multiplier | Max Level |
 |---|---|---|---|---|
 | Increase Width +40px | Wider catch zone (base 120px) | $15 | ×1.2 | unlimited |
-| Faster Release | Accelerating: `level*(level+9)/2`% release threshold reduction | $40 | ×1.8 | 10 (95%) |
 | Increase Buffer Size | Buffer capacity = 3 + level, max depends on width (2 rows of `8 + widthLevel*3`) | $10 | ×1.2 | width-dependent |
 | Value Recovery +10% | Retry value = (10% + 10%/level) of original, max 100% | $50 | ×2 | 9 |
 

@@ -676,28 +676,7 @@ export function useGameLoop() {
             : null;
 
           if (brokerTarget) {
-            // Only release if no previously-released DMQ dot is still traveling on the DMQ→broker segment
-            const releaseSpeedLevel = dmqComp.upgrades.dmqReleaseSpeed ?? 0;
-            const releaseBoostPct = releaseSpeedLevel * (releaseSpeedLevel + 9) / 2;
-            const releaseThreshold = 1 - (releaseBoostPct / 100);
-            const dmqLineBusy = updated.some(d => {
-              if (d.status !== 'traveling' || !d.isRetry) return false;
-              // Check if this dot's path starts at DMQ and it hasn't reached the broker yet
-              if (d.path.length < 2) return false;
-              const startsAtDmq = Math.abs(d.path[0].x - dmqComp.x) < 1 && Math.abs(d.path[0].y - dmqComp.y) < 1;
-              if (!startsAtDmq) return false;
-              // Find broker waypoint progress — if dot is before it, the line is busy
-              for (let pi = 0; pi < d.path.length; pi++) {
-                if (Math.abs(d.path[pi].x - brokerTarget.x) < 1 && Math.abs(d.path[pi].y - brokerTarget.y) < 1) {
-                  const brokerProgress = pi / (d.path.length - 1);
-                  return d.progress < brokerProgress * releaseThreshold;
-                }
-              }
-              return false;
-            });
-
-            if (!dmqLineBusy) {
-              // Find the first queued dot in DMQ
+              // Find the first queued dot in DMQ and use predictive timing to decide release
               for (let i = 0; i < updated.length; i++) {
                 const dot = updated[i];
                 if (dot.status !== 'queued' || dot.queuedAtNodeId !== dmqComp.id) continue;
@@ -714,10 +693,10 @@ export function useGameLoop() {
                 const nodeIdsFromBroker = brokerIdx >= 0 ? origNodeIds.slice(brokerIdx) : [brokerTarget.id];
 
                 // Build fresh waypoints from current positions: broker → ... → subscriber
-                const routeNodes: { x: number; y: number; type: string }[] = [];
+                const routeNodes: { x: number; y: number; type: string; id: string }[] = [];
                 for (const nid of nodeIdsFromBroker) {
                   const comp = state.components.find(c => c.id === nid);
-                  if (comp) routeNodes.push({ x: comp.x, y: comp.y, type: comp.type });
+                  if (comp) routeNodes.push({ x: comp.x, y: comp.y, type: comp.type, id: comp.id });
                 }
 
                 // Expand to orthogonal waypoints
@@ -745,7 +724,64 @@ export function useGameLoop() {
                 // Combine: DMQ → broker → original route from broker
                 const fullPath = [...dmqToBroker, ...pathFromBroker];
 
+                // --- Predictive timing: find the first queue or subscriber on the retry path ---
+                let targetComp: { x: number; y: number; type: string; id: string } | null = null;
+                for (let ni = 1; ni < routeNodes.length; ni++) {
+                  if (routeNodes[ni].type === 'queue' || routeNodes[ni].type === 'subscriber') {
+                    targetComp = routeNodes[ni];
+                    break;
+                  }
+                }
+
+                if (!targetComp) continue;
+
                 const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, fullPath);
+
+                let canRelease = false;
+                if (targetComp.type === 'queue') {
+                  // Check if queue has buffer space, counting both queued and in-flight dots
+                  const queueComp = state.components.find(c => c.id === targetComp!.id);
+                  const queuedCount = updated.filter(d => d.status === 'queued' && d.queuedAtNodeId === targetComp!.id).length;
+                  const inFlightToQueue = updated.filter(d => {
+                    if (d.id === dot.id || d.status !== 'traveling' || d.path.length === 0) return false;
+                    // Check if this dot's path passes through the target queue
+                    return d.path.some(p => Math.hypot(p.x - targetComp!.x, p.y - targetComp!.y) < 50);
+                  }).length;
+                  const bufferLevel = queueComp?.upgrades['bufferSize'] ?? 0;
+                  const capacity = 3 + bufferLevel;
+                  canRelease = (queuedCount + inFlightToQueue) < capacity;
+                } else {
+                  // Subscriber — predictive timing (same logic as queue release)
+                  const actualSpeed = speed * state.upgrades.propagationSpeed;
+                  const travelTime = actualSpeed > 0 ? 1 / actualSpeed : Infinity;
+
+                  const subComp = state.components.find(c => c.id === targetComp!.id);
+                  const fcLevel = subComp?.upgrades['fasterConsumption'] ?? 0;
+                  const boostPct = Math.min(fcLevel * (fcLevel + 9) / 2, 100);
+                  const consumeDuration = 1000 * (1 - boostPct / 100);
+
+                  let latestSlotOpen = 0;
+                  for (const d of updated) {
+                    if (d.id === dot.id || d.path.length === 0) continue;
+                    const dEnd = d.path[d.path.length - 1];
+                    if (Math.hypot(dEnd.x - targetComp!.x, dEnd.y - targetComp!.y) >= 50) continue;
+
+                    if (d.status === 'pausing' && !d.moneyAdded) {
+                      const elapsed = Date.now() - (d.pauseStartTime ?? Date.now());
+                      const remaining = Math.max(consumeDuration - elapsed, 0);
+                      latestSlotOpen = Math.max(latestSlotOpen, remaining);
+                    }
+
+                    if (d.status === 'traveling') {
+                      const arrivalTime = (1 - d.progress) / (d.speed * state.upgrades.propagationSpeed);
+                      latestSlotOpen = Math.max(latestSlotOpen, arrivalTime + consumeDuration);
+                    }
+                  }
+
+                  canRelease = latestSlotOpen <= travelTime;
+                }
+
+                if (!canRelease) break; // Only attempt the oldest queued dot — if it can't release, wait
 
                 updated[i] = {
                   ...dot,
@@ -767,7 +803,6 @@ export function useGameLoop() {
                 } as Dot;
                 break; // Only release one per frame
               }
-            } // end !dmqLineBusy
           }
         }
 

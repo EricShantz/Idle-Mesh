@@ -127,14 +127,6 @@ export const dmqUpgrades: UpgradeDef[] = [
     costMultiplier: 1.2,
   },
   {
-    key: 'dmqReleaseSpeed',
-    label: 'Faster Release',
-    description: 'Accelerating release speed for queued events',
-    baseCost: 40,
-    costMultiplier: 1.8,
-    maxLevel: 10,
-  },
-  {
     key: 'dmqValueRecovery',
     label: 'Value Recovery +10%',
     description: 'Retry events recover more of their original value',

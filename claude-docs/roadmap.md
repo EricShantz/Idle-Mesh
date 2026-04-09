@@ -44,6 +44,7 @@
 - [x] after the user upgrades the webhook to a broker, they get a broker tutorial slide. after they close that slide, the side menu should scroll down to show the new components. The new components should be highlighted and a new tutorial slide should pop up explaining that they now have new components they can add to their mesh, and to purchase one for more information on each one.
 - [ ] explore if it would be a better gameplay experience to have upgrades such as "Event Value" and "Consumption Mulitplier" be made global upgrades instead of per/component. Would this be more convinient to the player? What are the pros and cons of each
 - [ ] Need to figure out the event propagation speed down the lines, should they be consistent at all times? or vary depending on line length so events reach the same endpoint at the same time?
+- [ ] make autoclicker a 1 time upgrade per publisher, then have it act like a normal user click (cooldown timer etc), then upgrade the autoclick speed by upgrading the publish speed
 ---
 
 ## Clarification Needed

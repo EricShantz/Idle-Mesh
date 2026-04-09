@@ -67,7 +67,7 @@
 
 ## DMQ Mechanics
 - DMQ catch detection runs inside the `dropped` dot branch of Pass 1 — checks `!dot.isRetry` to prevent infinite loops.
-- DMQ release (Pass 3) gates on `dmqLineBusy`. Retry paths rebuilt at release time from `dot.originalNodeIds` using current positions.
+- DMQ release (Pass 3) uses predictive timing: if the retry path's first target is a queue, checks buffer space; if a subscriber, predicts when it will be free (same logic as queue release). Retry paths rebuilt at release time from `dot.originalNodeIds` using current positions.
 - DMQ width for collision = `(120 + dmqWidthLevel * 40) / 2` as half-width.
 
 ## Adaptive Coin Pop Throttling
