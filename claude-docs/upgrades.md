@@ -30,14 +30,14 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 |---|---|---|---|
 | Add Subscriber Slot | **Functional**: max subscriber connections = 1 + level | $30 | ×2 |
 | Persistent Delivery (`fanOut`) | **Functional**: queue duplicates events at release time to all connected subscribers | $200 (one-time) |  |
-| Increase Buffer Size | **Functional**: buffer capacity = 3 + level (max 20 slots) | $10 | ×1.2 | 17 |
+| Increase Queue Size | **Functional**: queue capacity = 3 + level (max 20 slots) | $10 | ×1.2 | 17 |
 | Broaden Subscription | **Functional**: widens topic filter each level (specific → `*` → `>` across segments) | $40 | ×2 | 5 |
 
 ### Dead Message Queue (DMQ)
 | Upgrade | Effect | Base Cost | Multiplier | Max Level |
 |---|---|---|---|---|
 | Increase Width +40px | Wider catch zone (base 120px) | $15 | ×1.2 | unlimited |
-| Increase Buffer Size | Buffer capacity = 3 + level, max depends on width (2 rows of `8 + widthLevel*3`) | $10 | ×1.2 | width-dependent |
+| Increase Queue Size | Queue capacity = 3 + level, max depends on width (2 rows of `8 + widthLevel*3`) | $10 | ×1.2 | width-dependent |
 | Value Recovery +10% | Retry value = (10% + 10%/level) of original, max 100% | $50 | ×2 | 9 |
 
 ### Subscriber

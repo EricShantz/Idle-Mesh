@@ -33,11 +33,10 @@
 - [ ] Topic pool cycles back after 24th publisher (4 clusters of 6)
 - [ ] **Performance degradation in mid/late game** — frame rate suffers when many nodes, connections, and event dots are active simultaneously
 - [ ] **Queue overflow with fanout + broadened subscriptions** — queues drop excessive events when subscriptions accept from multiple publishers, even at max subscriber consumption speed
-- [ ] when upgrading to a broker, make it so either the user HAS to add a queue (first one for free). Or in eda do you actually need a queue?
+
 ---
 
 ## Nice-to-Have / Polish
-- [ ] Replay/undo button for failed topology experiments
 - [ ] Tutorial: prestige availability notification when $1M first reached
 - [ ] Tutorial: prestige tree explanation on first visit
 - [x] Tutorial/UI: explain competing consumers vs fan-out on queue — `firstFanOut` tutorial triggers on first Persistent Delivery purchase
@@ -47,6 +46,8 @@
 - [ ] should we add a "max" button to each upgrade so you dont have to click 10 times to max an upgrade when you have lots of money?
 - [ ] add an ! icon that explains why events are falling off and how to fix it (queue overload, publisher pushing events to broker, but broker has no matching queues, etc)
 - [ ] fix upgrade icons on components to not look bad
+- [ ] make prestige cards bigger so you can actually read whats on them
+- [ ] add delete button to all purchased component upgrade modals (except the default publisher, webhook, broker, and subscriber. We dont want users to delete these and get soft locked if they dont have any money left)
 ---
 
 ## Clarification Needed

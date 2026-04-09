@@ -45,7 +45,7 @@
 - Queue-level fan-out (Persistent Delivery) handled at release time in Pass 2. Broker never duplicates per-subscriber; only per-queue.
 
 ## Path Deduplication
-- `dedupeConsecutiveWaypoints()` removes consecutive duplicate waypoints (within 1px) from rebuilt paths in Pass 2 queue release. Without this, when queue and subscriber share the same x-coordinate, `isPastAllQueues` fails and queues drain buffers at ~60×/s.
+- `dedupeConsecutiveWaypoints()` removes consecutive duplicate waypoints (within 1px) from rebuilt paths in Pass 2 queue release. Without this, when queue and subscriber share the same x-coordinate, `isPastAllQueues` fails and queues drain at ~60×/s.
 
 ## Connection-Aware Dot Lifecycle
 - Traveling dots validate their remaining path against the current connection graph each frame — if a connection was removed, the dot drops immediately.
@@ -70,7 +70,7 @@
 
 ## DMQ Mechanics
 - DMQ catch detection runs inside the `dropped` dot branch of Pass 1 — checks `!dot.isRetry` to prevent infinite loops.
-- DMQ release (Pass 3) uses predictive timing: if the retry path's first target is a queue, checks buffer space; if a subscriber, predicts when it will be free (same logic as queue release, including `getArrivalProgress` for collision-aware travel time). Retry paths rebuilt at release time from `dot.originalNodeIds` using current positions.
+- DMQ release (Pass 3) uses predictive timing: if the retry path's first target is a queue, checks queue space; if a subscriber, predicts when it will be free (same logic as queue release, including `getArrivalProgress` for collision-aware travel time). Retry paths rebuilt at release time from `dot.originalNodeIds` using current positions.
 - DMQ width for collision = `(120 + dmqWidthLevel * 40) / 2` as half-width.
 
 ## Adaptive Coin Pop Throttling
