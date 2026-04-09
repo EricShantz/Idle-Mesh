@@ -9,7 +9,7 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 |---|---|---|---|---|
 | Event Value | Accelerating: `$1.00 + level*0.45 + level²*0.05` (+$0.10 more each level) | $5 | ×1.8 | unlimited |
 | Publish Speed | Accelerating: `level*(level+9)/2`% cooldown reduction | $4 | ×1.8 | 10 (95%) |
-| Auto-Publisher | Per-publisher auto-fire: 5s, 3s, 1s, 0.75s, 0.5s, 0.25s, 0.1s | $150 | ×2.5 | 7 |
+| Auto-Click | Automatically clicks this publisher, respecting cooldown | $300 | — | 1 (one-time) |
 
 ### Webhook
 | Upgrade | Effect | Cost |

@@ -26,11 +26,11 @@ export const publisherUpgrades: UpgradeDef[] = [
   },
   {
     key: 'autoPub',
-    label: 'Auto-Publisher',
-    description: 'Automatically publishes events at increasing speed',
-    baseCost: 150,
-    costMultiplier: 2.5,
-    maxLevel: 7,
+    label: 'Auto-Click',
+    description: 'Automatically clicks this publisher',
+    baseCost: 300,
+    costMultiplier: 1,
+    maxLevel: 1,
   },
 ];
 

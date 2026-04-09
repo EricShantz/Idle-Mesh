@@ -872,53 +872,20 @@ export function useGameLoop() {
   }, []);
 }
 
-const AUTO_PUB_INTERVALS = [5000, 3000, 1000, 750, 500, 250, 100];
-
 export function useAutoPublisher() {
-  const timersRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
-
   useEffect(() => {
-    // Poll publisher autoPub levels and manage per-publisher timers
-    const check = setInterval(() => {
+    // Poll every 100ms and attempt to fire for each auto-click publisher
+    // The cooldown check inside fireEvent naturally gates the rate
+    const timer = setInterval(() => {
       const state = useGameStore.getState();
       const publishers = state.components.filter(c => c.type === 'publisher');
-      const activeIds = new Set<string>();
-
       for (const pub of publishers) {
-        const level = pub.upgrades['autoPub'] ?? 0;
-        if (level === 0) continue;
-        activeIds.add(pub.id);
-        const interval = AUTO_PUB_INTERVALS[Math.min(level - 1, AUTO_PUB_INTERVALS.length - 1)];
-
-        // Check if timer exists with correct interval (stored as data attribute)
-        const existing = timersRef.current.get(pub.id);
-        const existingInterval = (timersRef.current as any)[`${pub.id}_ms`];
-        if (existing && existingInterval === interval) continue;
-
-        // Clear old timer and set new one
-        if (existing) clearInterval(existing);
-        const timer = setInterval(() => {
-          const s = useGameStore.getState();
-          s.fireEvent(pub.id, true);
-        }, interval);
-        timersRef.current.set(pub.id, timer);
-        (timersRef.current as any)[`${pub.id}_ms`] = interval;
-      }
-
-      // Clean up timers for removed or downgraded publishers
-      for (const [id, timer] of timersRef.current.entries()) {
-        if (!activeIds.has(id)) {
-          clearInterval(timer);
-          timersRef.current.delete(id);
-          delete (timersRef.current as any)[`${id}_ms`];
+        if ((pub.upgrades['autoPub'] ?? 0) >= 1) {
+          state.fireEvent(pub.id);
         }
       }
-    }, 500);
+    }, 100);
 
-    return () => {
-      clearInterval(check);
-      for (const timer of timersRef.current.values()) clearInterval(timer);
-      timersRef.current.clear();
-    };
+    return () => clearInterval(timer);
   }, []);
 }

@@ -100,7 +100,7 @@ export type GameState = {
   showPrestigeTree: boolean;
 
   // Actions
-  fireEvent: (publisherId: string, skipCooldown?: boolean) => void;
+  fireEvent: (publisherId: string) => void;
   consumeEvent: (dotId: string, value: number, subscriberId: string) => void;
   removeCoinPop: (id: string) => void;
   dropEvent: (dotId: string) => void;
@@ -319,20 +319,18 @@ export const useGameStore = create<GameState>()(
       tutorialsSeen: saved?.tutorialsSeen ?? {},
       activeTutorial: null,
 
-      fireEvent: (publisherId: string, skipCooldown?: boolean) => {
+      fireEvent: (publisherId: string) => {
         const state = get();
         const pub = state.components.find(c => c.id === publisherId);
         if (!pub) return;
 
-        // Check cooldown (skipped for auto-publisher)
-        if (!skipCooldown) {
-          const lastFireTime = state.publisherCooldowns[publisherId] ?? 0;
-          const publishSpeedLevel = pub.upgrades['publishSpeed'] ?? 0;
-          const baseCooldown = 1000; // 1 second base cooldown
-          const publishBoostPct = publishSpeedLevel * (publishSpeedLevel + 9) / 2;
-          const cooldownDuration = baseCooldown * (1 - publishBoostPct / 100);
-          if (Date.now() - lastFireTime < cooldownDuration) return;
-        }
+        // Check cooldown
+        const lastFireTime = state.publisherCooldowns[publisherId] ?? 0;
+        const publishSpeedLevel = pub.upgrades['publishSpeed'] ?? 0;
+        const baseCooldown = 1000; // 1 second base cooldown
+        const publishBoostPct = publishSpeedLevel * (publishSpeedLevel + 9) / 2;
+        const cooldownDuration = baseCooldown * (1 - publishBoostPct / 100);
+        if (Date.now() - lastFireTime < cooldownDuration) return;
 
         const allPaths = state._getAllPathsWithNodes(publisherId);
         const allValidPaths = allPaths.filter(p => p.waypoints.length >= 2);
@@ -356,9 +354,7 @@ export const useGameStore = create<GameState>()(
           const value = state.getEventValue(publisherId);
           const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state), truncatedWaypoints);
           set(draft => {
-            if (!skipCooldown) {
-              draft.publisherCooldowns[publisherId] = Date.now();
-            }
+            draft.publisherCooldowns[publisherId] = Date.now();
             const fireCount = state.upgrades.batchFire > 0 ? state.upgrades.batchFire : 1;
             for (let batch = 0; batch < fireCount; batch++) {
               const dotId = `dot-${++dotIdCounter}`;
@@ -413,9 +409,7 @@ export const useGameStore = create<GameState>()(
               const value = state.getEventValue(publisherId);
               const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state), truncatedWaypoints);
               set(draft => {
-                if (!skipCooldown) {
-                  draft.publisherCooldowns[publisherId] = Date.now();
-                }
+                draft.publisherCooldowns[publisherId] = Date.now();
                 const fireCount = state.upgrades.batchFire > 0 ? state.upgrades.batchFire : 1;
                 for (let batch = 0; batch < fireCount; batch++) {
                   const dotId = `dot-${++dotIdCounter}`;
@@ -485,9 +479,7 @@ export const useGameStore = create<GameState>()(
         }
 
         set(draft => {
-          if (!skipCooldown) {
-            draft.publisherCooldowns[publisherId] = Date.now();
-          }
+          draft.publisherCooldowns[publisherId] = Date.now();
           const fireCount = state.upgrades.batchFire > 0 ? state.upgrades.batchFire : 1;
           for (let batch = 0; batch < fireCount; batch++) {
             for (const [brokerId, group] of forkGroups) {

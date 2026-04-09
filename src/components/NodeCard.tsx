@@ -91,7 +91,8 @@ export function NodeCard({ component }: Props) {
     if (lastFire === 0) return;
 
     const publishSpeedLevel = component.upgrades['publishSpeed'] ?? 0;
-    const duration = 1000 * Math.pow(0.95, publishSpeedLevel);
+    const publishBoostPct = publishSpeedLevel * (publishSpeedLevel + 9) / 2;
+    const duration = 1000 * (1 - publishBoostPct / 100);
 
     const tick = () => {
       const elapsed = Date.now() - lastFire;
