@@ -189,7 +189,7 @@ const dropReasonMessages: Record<DropReason, { label: string; fix: string }> = {
   'broker-capped': { label: 'Throughput limit reached', fix: 'Upgrade "Increase Throughput" on this broker' },
   'queue-full': { label: 'Queue buffer is full', fix: 'Upgrade "Queue Size" or add more subscribers' },
   'subscriber-occupied': { label: 'Subscriber is busy', fix: 'Upgrade "Faster Consumption" or add more subscribers' },
-  'path-incomplete': { label: 'No destination found', fix: 'Connect this node to a queue or subscriber' },
+  'path-incomplete': { label: 'No matching destination', fix: 'Connect the broker to a queue with a matching topic subscription' },
   'path-invalid': { label: 'Connection broken', fix: 'Reconnect the missing path' },
 };
 
