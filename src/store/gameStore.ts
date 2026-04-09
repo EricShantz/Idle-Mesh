@@ -617,6 +617,10 @@ export const useGameStore = create<GameState>()(
                 draft.activeTutorial = 'brokerUpgrade';
               }
             }
+            // Tutorial for first fan-out purchase
+            if (upgradeKey === 'fanOut' && !draft.tutorialsSeen['firstFanOut']) {
+              draft.activeTutorial = 'firstFanOut';
+            }
             // Broaden queue subscription topic
             if (upgradeKey === 'subscriptionBroaden' && comp.subscriptionSegments) {
               const level = comp.upgrades[upgradeKey]; // already incremented above

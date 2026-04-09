@@ -38,7 +38,7 @@
 - [ ] Replay/undo button for failed topology experiments
 - [ ] Tutorial: prestige availability notification when $1M first reached
 - [ ] Tutorial: prestige tree explanation on first visit
-- [ ] Tutorial/UI: explain competing consumers vs fan-out on queue (add info to queue card and/or "New Subscriber Added" tutorial slides — multiple subscribers round-robin by default, fan-out upgrade sends to all)
+- [x] Tutorial/UI: explain competing consumers vs fan-out on queue — `firstFanOut` tutorial triggers on first Persistent Delivery purchase
 - [x] Sidebar upgrades in dropdown menus (global upgrades dropdown, broker upgrades dropdown, etc.) to reduce scrolling
 - [x] Show a tutorial slide the first time an event drops - explaining what that means, and that the user needs to upgrade the component that the events are dropping off at
 - [x] after the user upgrades the webhook to a broker, they get a broker tutorial slide. after they close that slide, the side menu should scroll down to show the new components. The new components should be highlighted and a new tutorial slide should pop up explaining that they now have new components they can add to their mesh, and to purchase one for more information on each one.

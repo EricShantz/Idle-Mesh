@@ -94,7 +94,7 @@
 
 ## Tutorial System
 - `tutorialsSeen: Record<string, boolean>` persists which tutorials dismissed. `activeTutorial: string | null` (transient).
-- Triggers: `intro` on first mount via `App.tsx`, `brokerUpgrade` inside `upgradeComponent` (2 slides: broker info + new components available), component-type tutorials inside `addComponent`, `firstDrop` from `useGameLoop.ts` 1 second after the first event drop. Publisher/subscriber tutorials trigger on 2nd instance.
+- Triggers: `intro` on first mount via `App.tsx`, `brokerUpgrade` inside `upgradeComponent` (2 slides: broker info + new components available), `firstFanOut` inside `upgradeComponent` on first Persistent Delivery purchase, component-type tutorials inside `addComponent`, `firstDrop` from `useGameLoop.ts` 1 second after the first event drop. Publisher/subscriber tutorials trigger on 2nd instance.
 - Post-broker-upgrade flow: after the `brokerUpgrade` tutorial is dismissed, `Sidebar.tsx` scrolls to the "Mesh Components" section and applies a cyan glow highlight. The glow persists until the user clicks anywhere (global click listener).
 - Content in `tutorialConfig.tsx` (note: `.tsx` — file uses JSX for rich body content); UI in `TutorialModal.tsx` (z-index 60).
 - `TutorialSlide.body` is typed as `ReactNode`, so slide bodies can be plain strings or JSX (e.g. `<span style={{color: ...}}>` for inline color). `TutorialModal` renders it directly inside a `<p>`.

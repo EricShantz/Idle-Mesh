@@ -701,9 +701,9 @@ export function EventDropGraphic() {
         fill={C.dot}
         filter={`drop-shadow(0 0 4px ${C.dotGlow})`}
         animate={{
-          cx:      [dotStartX, subLeftEdge, subLeftEdge, subLeftEdge],
-          opacity: [1,         1,           0,           0],
-          r:       [3,         3,           0,           0],
+          cx: [dotStartX, subLeftEdge, subLeftEdge, subLeftEdge],
+          opacity: [1, 1, 0, 0],
+          r: [3, 3, 0, 0],
         }}
         transition={{
           duration: D,
@@ -718,11 +718,11 @@ export function EventDropGraphic() {
         r={3}
         filter={`drop-shadow(0 0 4px ${C.dotGlow})`}
         animate={{
-          cx:      [dotStartX, dotStartX, dotStartX, subLeftEdge, subLeftEdge, subLeftEdge, subLeftEdge, subLeftEdge],
-          cy:      [subY,      subY,      subY,      subY,        subY,        subY + 55,   subY + 90,   subY + 90],
-          fill:    [C.dot,     C.dot,     C.dot,     C.dot,       '#ff4444',   '#ff4444',   '#ff4444',   '#ff4444'],
-          opacity: [0,         0,         1,         1,           1,           0.6,         0,           0],
-          r:       [0,         0,         3,         3,           3,           3,           2,           0],
+          cx: [dotStartX, dotStartX, dotStartX, subLeftEdge, subLeftEdge, subLeftEdge, subLeftEdge, subLeftEdge],
+          cy: [subY, subY, subY, subY, subY, subY + 55, subY + 90, subY + 90],
+          fill: [C.dot, C.dot, C.dot, C.dot, '#ff4444', '#ff4444', '#ff4444', '#ff4444'],
+          opacity: [0, 0, 1, 1, 1, 0.6, 0, 0],
+          r: [0, 0, 3, 3, 3, 3, 2, 0],
         }}
         transition={{
           duration: D,
@@ -740,8 +740,8 @@ export function EventDropGraphic() {
         fontSize={16}
         fontWeight="800"
         animate={{
-          y:       [subY - 12, subY - 12, subY - 12, subY - 24, subY - 24],
-          opacity: [0,         0,         1,         0,          0],
+          y: [subY - 12, subY - 12, subY - 12, subY - 24, subY - 24],
+          opacity: [0, 0, 1, 0, 0],
         }}
         transition={{
           duration: D,
@@ -805,6 +805,31 @@ export function NewComponentsGraphic() {
       <OrthoTravelingDot x1={bx + 36} y1={row1} x2={qx - 36} y2={row2} delay={0.9} duration={0.8} repeatDelay={3} />
       <OrthoTravelingDot x1={qx + 36} y1={row1} x2={sx - 36} y2={row1} delay={1.8} duration={0.8} repeatDelay={3} />
       <OrthoTravelingDot x1={qx + 36} y1={row2} x2={sx - 36} y2={row2} delay={1.8} duration={0.8} repeatDelay={3} />
+    </svg>
+  );
+}
+
+export function FanOutGraphic() {
+  const qX = 100, sX = W - 80;
+  const row1 = H / 2 - 44, row2 = H / 2, row3 = H / 2 + 44;
+  const qNodeW = 72, qNodeH = 40;
+
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderRadius: 8, background: C.bg }}>
+      {/* Wires from queue to each subscriber */}
+      <Wire x1={qX + qNodeW / 2} y1={row2} x2={sX - 36} y2={row1} />
+      <Wire x1={qX + qNodeW / 2} y1={row2} x2={sX - 36} y2={row2} />
+      <Wire x1={qX + qNodeW / 2} y1={row2} x2={sX - 36} y2={row3} />
+      {/* Queue */}
+      <NodeBox x={qX} y={row2} type="queue" label="Queue" />
+      {/* Subscribers */}
+      <NodeBox x={sX} y={row1} type="subscriber" label="Subscriber" />
+      <NodeBox x={sX} y={row2} type="subscriber" label="Subscriber" />
+      <NodeBox x={sX} y={row3} type="subscriber" label="Subscriber" />
+      {/* One dot fans out to all three subscribers */}
+      <OrthoTravelingDot x1={qX + qNodeW / 2} y1={row2} x2={sX - 36} y2={row1} duration={1.2} repeatDelay={2.8} />
+      <OrthoTravelingDot x1={qX + qNodeW / 2} y1={row2} x2={sX - 36} y2={row2} duration={1.2} repeatDelay={2.8} />
+      <OrthoTravelingDot x1={qX + qNodeW / 2} y1={row2} x2={sX - 36} y2={row3} duration={1.2} repeatDelay={2.8} />
     </svg>
   );
 }

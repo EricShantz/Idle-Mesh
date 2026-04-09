@@ -12,6 +12,7 @@ import {
   MultiBrokerGraphic,
   EventDropGraphic,
   NewComponentsGraphic,
+  FanOutGraphic,
 } from '../components/TutorialGraphics';
 
 export type TutorialSlide = {
@@ -70,6 +71,12 @@ export const tutorials: TutorialDef[] = [
     key: 'firstSubscriber',
     slides: [
       { title: 'New Subscriber!', body: 'Additional subscribers can consume events in parallel. Connect them to queues to increase your throughput and earnings.', graphic: MultiSubscriberGraphic },
+    ],
+  },
+  {
+    key: 'firstFanOut',
+    slides: [
+      { title: 'Persistent Delivery!', body: 'This queue now sends every event to ALL connected subscribers (instead of just one). Add more subscribers to multiply your earnings!', graphic: FanOutGraphic },
     ],
   },
   {
