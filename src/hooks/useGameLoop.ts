@@ -377,12 +377,20 @@ export function useGameLoop() {
 
               if (dotTouchesNode(newPos.x, newPos.y, subscriber.x, subscriber.y)) {
                 // Check updated array for accurate subscriber occupancy
-                const isSubscriberOccupied = updated.some(d =>
-                  d.status === 'pausing' &&
-                  !d.moneyAdded &&
-                  d.path.length > 0 &&
-                  Math.hypot(d.path[d.path.length - 1].x - lastPathPoint.x, d.path[d.path.length - 1].y - lastPathPoint.y) < 50
+                // A subscriber is occupied only if the consuming dot still has time remaining
+                const subscriberForOccupancy = state.components.find(c =>
+                  c.type === 'subscriber' && Math.hypot(c.x - lastPathPoint.x, c.y - lastPathPoint.y) < 50
                 );
+                const occFcLevel = subscriberForOccupancy?.upgrades['fasterConsumption'] ?? 0;
+                const occBoostPct = Math.min(occFcLevel * (occFcLevel + 9) / 2, 100);
+                const occConsumeDuration = 1000 * (1 - occBoostPct / 100);
+                const isSubscriberOccupied = updated.some(d => {
+                  if (d.status !== 'pausing' || d.moneyAdded || d.path.length === 0) return false;
+                  if (Math.hypot(d.path[d.path.length - 1].x - lastPathPoint.x, d.path[d.path.length - 1].y - lastPathPoint.y) >= 50) return false;
+                  const elapsed = Date.now() - (d.pauseStartTime ?? Date.now());
+                  // Allow arrival within 50ms of consumption finishing to account for frame timing
+                  return elapsed < occConsumeDuration - 50;
+                });
                 if (!isSubscriberOccupied) {
                   updated.push({ ...dot, status: 'pausing', pauseStartTime: Date.now(), progress: newProgress } as Dot);
                 } else {
@@ -514,48 +522,7 @@ export function useGameLoop() {
 
           const hasFanOut = queueComp && (queueComp.upgrades['fanOut'] ?? 0) > 0;
 
-          // Check if subscriber is free — gated by queue's Faster Release upgrade
-          const releaseSpeedLevel = queueComp?.upgrades.queueReleaseSpeed ?? 0;
-          const releaseBoostPct = releaseSpeedLevel * (releaseSpeedLevel + 9) / 2;
-          const releaseThreshold = 1 - (releaseBoostPct / 100); // 0→1.0, 10→0.05
-
-          const isSubBusy = (sub: { x: number; y: number }) => updated.some(d => {
-            if (d.id === dot.id || d.path.length === 0) return false;
-            const dEnd = d.path[d.path.length - 1];
-            if (Math.hypot(dEnd.x - sub.x, dEnd.y - sub.y) >= 50) return false;
-            if (d.status === 'pausing' && !d.moneyAdded) return true;
-            if (d.status === 'traveling') {
-              // Only block if this dot is past all queues in its path (on the final segment to subscriber)
-              const isPastAllQueues = !d.path.some((wp, idx) => {
-                if (idx >= d.path.length - 1) return false; // skip last waypoint
-                const q = state.components.find(c =>
-                  c.type === 'queue' && Math.abs(c.x - wp.x) < 1 && Math.abs(c.y - wp.y) < 1
-                );
-                if (!q) return false;
-                const queueProgress = idx / (d.path.length - 1);
-                return d.progress <= queueProgress + 0.01;
-              });
-              if (!isPastAllQueues) return false;
-              // With Faster Release, allow next release once previous dot has traveled
-              // far enough past the queue on the queue→subscriber segment
-              // Find queue waypoint progress and subscriber (end) progress
-              let queueWpProgress = 0;
-              for (let pi = d.path.length - 2; pi >= 0; pi--) {
-                const wp = d.path[pi];
-                const q = state.components.find(c =>
-                  c.type === 'queue' && Math.abs(c.x - wp.x) < 1 && Math.abs(c.y - wp.y) < 1
-                );
-                if (q) { queueWpProgress = pi / (d.path.length - 1); break; }
-              }
-              const segmentProgress = queueWpProgress < 1
-                ? (d.progress - queueWpProgress) / (1 - queueWpProgress)
-                : 1;
-              return segmentProgress < releaseThreshold;
-            }
-            return false;
-          });
-
-          // Collect all connected subscribers early (needed for both busy check and release)
+          // Collect all connected subscribers (needed for busy check and release)
           const allConnectedSubs: { x: number; y: number }[] = [];
           {
             const queue = state.components.find(c => c.id === queueId);
@@ -573,77 +540,119 @@ export function useGameLoop() {
           }
 
           const hasSubscriber = allConnectedSubs.length > 0;
+          if (!hasSubscriber) continue;
 
-          // With fanout: wait until ALL subscribers are free, then send copies to all
-          // Without fanout: wait until the round-robin target subscriber is free
-          let isSubscriberBusy: boolean;
-          if (hasFanOut) {
-            isSubscriberBusy = allConnectedSubs.some(sub => isSubBusy(sub));
-          } else {
-            isSubscriberBusy = !targetSub ? false : isSubBusy(targetSub);
-          }
+          const queue = state.components.find(c => c.id === queueId);
 
-          if (hasSubscriber && !isSubscriberBusy) {
-            releasedQueues.add(queueId);
-            const queue = state.components.find(c => c.id === queueId);
-
-            // Without fan-out, round-robin across subscribers (competing consumers)
-            let targets: { x: number; y: number }[];
-            if (hasFanOut) {
-              targets = allConnectedSubs;
-            } else {
-              const rrIdx = (queueRoundRobinIdx.get(queueId) ?? 0) % allConnectedSubs.length;
-              queueRoundRobinIdx.set(queueId, rrIdx + 1);
-              targets = [allConnectedSubs[rrIdx]];
+          // Pre-build release paths for all connected subscribers
+          const buildReleasePath = (subTarget: { x: number; y: number }) => {
+            if (!queue) return { path: dot.path, progress: dot.progress };
+            let bestIdx = 0;
+            let bestDist = Infinity;
+            for (let pi = 0; pi < dot.path.length; pi++) {
+              const d = Math.hypot(dot.path[pi].x - queue.x, dot.path[pi].y - queue.y);
+              if (d < bestDist) { bestDist = d; bestIdx = pi; }
             }
+            const queuePoint = { x: queue.x, y: queue.y };
+            const extension: { x: number; y: number }[] = [];
+            if (Math.abs(queue.y - subTarget.y) >= 1) {
+              const qHalfW = 70;
+              const sHalfW = 60;
+              const midX = (queue.x + qHalfW + 24 + subTarget.x - sHalfW - 2) / 2;
+              extension.push({ x: midX, y: queue.y });
+              extension.push({ x: midX, y: subTarget.y });
+            }
+            extension.push({ x: subTarget.x, y: subTarget.y });
+            const releasePath = dedupeConsecutiveWaypoints([queuePoint, ...extension]);
+            const totalSegments = releasePath.length - 1;
+            let releaseProgress = 0;
+            if (totalSegments > 0) {
+              const from = releasePath[0];
+              const to = releasePath[1];
+              const segLen = Math.hypot(to.x - from.x, to.y - from.y);
+              const clearanceFraction = segLen > 0 ? (NODE_HALF_W + DOT_RADIUS + 2) / segLen : 1;
+              releaseProgress = Math.min(clearanceFraction / totalSegments, 1);
+            }
+            return { path: releasePath, progress: releaseProgress };
+          };
 
-            for (let ti = 0; ti < targets.length; ti++) {
-              const subTarget = targets[ti];
-              let releaseDot = { ...dot };
-              let releaseProgress = dot.progress;
+          // Predictive release: release when the dot would arrive as the subscriber finishes consuming
+          const shouldReleaseTo = (sub: { x: number; y: number }, releasePath: { x: number; y: number }[], startProgress: number) => {
+            const baseSpeed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, releasePath);
+            // During movement, dot.speed is multiplied by propagationSpeed again (line 234)
+            const actualSpeed = baseSpeed * state.upgrades.propagationSpeed;
+            const travelTime = actualSpeed > 0 ? (1 - startProgress) / actualSpeed : Infinity;
 
-              if (queue) {
-                // Find the queue's waypoint index in the baked path
-                let bestIdx = 0;
-                let bestDist = Infinity;
-                for (let pi = 0; pi < releaseDot.path.length; pi++) {
-                  const d = Math.hypot(releaseDot.path[pi].x - queue.x, releaseDot.path[pi].y - queue.y);
-                  if (d < bestDist) { bestDist = d; bestIdx = pi; }
-                }
-                // Truncate path at the queue and rebuild queue→subscriber with current positions
-                const pathBeforeQueue = releaseDot.path.slice(0, bestIdx);
-                const queuePoint = { x: queue.x, y: queue.y };
+            const subComp = state.components.find(c =>
+              c.type === 'subscriber' && Math.hypot(c.x - sub.x, c.y - sub.y) < 50
+            );
+            const fcLevel = subComp?.upgrades['fasterConsumption'] ?? 0;
+            const boostPct = Math.min(fcLevel * (fcLevel + 9) / 2, 100);
+            const consumeDuration = 1000 * (1 - boostPct / 100);
 
-                const extension: { x: number; y: number }[] = [];
-                if (Math.abs(queue.y - subTarget.y) >= 1) {
-                  const qHalfW = 70; // queues always 70
-                  const sHalfW = 60; // subscribers always 60
-                  const midX = (queue.x + qHalfW + 24 + subTarget.x - sHalfW - 2) / 2;
-                  extension.push({ x: midX, y: queue.y });
-                  extension.push({ x: midX, y: subTarget.y });
-                }
-                extension.push({ x: subTarget.x, y: subTarget.y });
-                // Only use queue→subscriber as the release path (not the full path from publisher)
-                const releasePath = dedupeConsecutiveWaypoints([queuePoint, ...extension]);
-                releaseDot = { ...releaseDot, path: releasePath };
-                const totalSegments = releasePath.length - 1;
-                if (totalSegments > 0) {
-                  const from = releasePath[0];
-                  const to = releasePath[1];
-                  const segLen = Math.hypot(to.x - from.x, to.y - from.y);
-                  const clearanceFraction = segLen > 0 ? (NODE_HALF_W + DOT_RADIUS + 2) / segLen : 1;
-                  releaseProgress = Math.min(clearanceFraction / totalSegments, 1);
-                } else {
-                  releaseProgress = 0;
-                }
+            let latestSlotOpen = 0; // 0 = subscriber is free now
+
+            for (const d of updated) {
+              if (d.id === dot.id || d.path.length === 0) continue;
+              const dEnd = d.path[d.path.length - 1];
+              if (Math.hypot(dEnd.x - sub.x, dEnd.y - sub.y) >= 50) continue;
+
+              if (d.status === 'pausing' && !d.moneyAdded) {
+                const elapsed = Date.now() - (d.pauseStartTime ?? Date.now());
+                const remaining = Math.max(consumeDuration - elapsed, 0);
+                latestSlotOpen = Math.max(latestSlotOpen, remaining);
               }
 
-              const releaseSpeed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, releaseDot.path);
+              if (d.status === 'traveling') {
+                // Only count dots past all queues (on final segment to subscriber)
+                const isPastAllQueues = !d.path.some((wp, idx) => {
+                  if (idx >= d.path.length - 1) return false;
+                  const q = state.components.find(c =>
+                    c.type === 'queue' && Math.abs(c.x - wp.x) < 1 && Math.abs(c.y - wp.y) < 1
+                  );
+                  if (!q) return false;
+                  const queueProgress = idx / (d.path.length - 1);
+                  return d.progress <= queueProgress + 0.01;
+                });
+                if (!isPastAllQueues) continue;
+                const inFlightActualSpeed = d.speed * state.upgrades.propagationSpeed;
+                const arrivalTime = inFlightActualSpeed > 0 ? (1 - d.progress) / inFlightActualSpeed : Infinity;
+                latestSlotOpen = Math.max(latestSlotOpen, arrivalTime + consumeDuration);
+              }
+            }
+
+            return latestSlotOpen <= travelTime;
+          };
+
+          // Without fan-out, determine round-robin target
+          let targets: { x: number; y: number }[];
+          if (hasFanOut) {
+            targets = allConnectedSubs;
+          } else {
+            const rrIdx = (queueRoundRobinIdx.get(queueId) ?? 0) % allConnectedSubs.length;
+            queueRoundRobinIdx.set(queueId, rrIdx + 1);
+            targets = [allConnectedSubs[rrIdx]];
+          }
+
+          // Build release paths and check timing for each target
+          const releaseData = targets.map(sub => ({
+            sub,
+            ...buildReleasePath(sub),
+          }));
+
+          // With fanout: all subscribers must be ready; without: just the target
+          const canRelease = releaseData.every(rd => shouldReleaseTo(rd.sub, rd.path, rd.progress));
+
+          if (canRelease) {
+            releasedQueues.add(queueId);
+
+            for (let ti = 0; ti < releaseData.length; ti++) {
+              const { path: releasePath, progress: releaseProgress } = releaseData[ti];
+              const releaseDot = { ...dot, path: releasePath };
+              const releaseSpeed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, releasePath);
               if (ti === 0) {
-                // Update the original dot in place
                 updated[i] = { ...releaseDot, status: 'traveling', progress: releaseProgress, speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined } as Dot;
               } else {
-                // Fan-out: create a copy for additional subscribers
                 updated.push({
                   ...releaseDot,
                   id: nextDotId(),

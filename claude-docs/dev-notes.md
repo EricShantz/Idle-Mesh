@@ -57,6 +57,9 @@
 - `nextDotId()` exported from `gameStore.ts` for use in `useGameLoop.ts` when spawning fork dots.
 - `pauseStartTime` uses `Date.now()` (Unix epoch). The RAF `time` argument is a different clock — don't mix them.
 
+## Speed Double-Application
+- `dot.speed` is set to `normalizedSpeed(0.0007 * propagationSpeed, path)` at creation/release. During movement (line 234), `actualSpeed = dot.speed * propagationSpeed`. This means `propagationSpeed` is applied **twice** (squared). Any code predicting travel time must account for this: `travelTime = (1 - progress) / (dot.speed * propagationSpeed)`.
+
 ## Upgrade Implementation
 - Most per-component upgrade effects are read in `useGameLoop.ts` by looking up the component by position from the dot's path array. Global upgrade effects applied in `purchaseGlobalUpgrade` in `gameStore.ts`.
 - `getUpgradesForType` is duplicated in `NodeModal.tsx` and `NodeCard.tsx` — keep both in sync when adding new component types.

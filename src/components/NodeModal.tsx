@@ -48,8 +48,7 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number, topic?
       return `${10 + currentLevel * 10}% → ${10 + nextLevel * 10}%`;
 
     // Release speed (DMQ and Queue)
-    case 'dmqReleaseSpeed':
-    case 'queueReleaseSpeed': {
+    case 'dmqReleaseSpeed': {
       const curPct = currentLevel * (currentLevel + 9) / 2;
       const nxtPct = nextLevel * (nextLevel + 9) / 2;
       return `${curPct}% → ${nxtPct}% (+${nxtPct - curPct}%)`;

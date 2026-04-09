@@ -42,7 +42,7 @@ When multiple downstream paths exist (fan-out or bridge), `fireEvent` creates on
 - `traveling` → slows through webhook when dot visually overlaps the webhook node, drops near webhook/broker if component is occupied
 - `traveling` → on collision with next queue on path, always transitions to `queued` if buffer has space, otherwise drops
 - `traveling` → on collision with next subscriber on path (only if no queue ahead), transitions to `pausing` if subscriber is free, otherwise drops
-- `queued` → auto-released one per queue per frame when queue has active connection to subscriber and subscriber is free. Without fan-out, checks the round-robin target subscriber; with fan-out, waits until ALL connected subscribers are free, then sends copies to all. Path dynamically rebuilt as queue→subscriber at release time.
+- `queued` → predictive auto-release: one per queue per frame. Queue computes travel time to the target subscriber and when the subscriber will be free (`latestSlotOpen`). Releases when `latestSlotOpen <= travelTime` so the dot arrives exactly as the subscriber finishes consuming. Without fan-out, checks the round-robin target; with fan-out, waits until ALL connected subscribers satisfy the timing condition. Path dynamically rebuilt as queue→subscriber at release time. 50ms tolerance margin at subscriber arrival prevents frame-timing drops.
 - `pausing` → at end of consume duration (1s base), value is passed directly to `consumeEvent(id, value)` and dot is removed from array
 - `dropped` → gravity fall + fade over 1.2s; position is where the blockage occurred. Non-retry dots can be caught by the DMQ. Retry dots turn dark grey and cannot be re-caught. `eventsDropped` counter incremented via batch `setState` after the dot loop.
 

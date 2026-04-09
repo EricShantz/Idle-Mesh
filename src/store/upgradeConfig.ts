@@ -94,14 +94,6 @@ export const queueUpgrades: UpgradeDef[] = [
     maxLevel: 1,
   },
   {
-    key: 'queueReleaseSpeed',
-    label: 'Faster Release',
-    description: 'Accelerating release speed — next event releases before the previous one reaches the subscriber',
-    baseCost: 35,
-    costMultiplier: 1.8,
-    maxLevel: 10,
-  },
-  {
     key: 'bufferSize',
     label: 'Increase Queue Size',
     description: 'Allows more in-flight events before dropping (max 20 slots)',

@@ -30,7 +30,6 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 |---|---|---|---|
 | Add Subscriber Slot | **Functional**: max subscriber connections = 1 + level | $30 | ×2 |
 | Persistent Delivery (`fanOut`) | **Functional**: queue duplicates events at release time to all connected subscribers | $200 (one-time) |  |
-| Faster Release | **Functional**: Accelerating `level*(level+9)/2`% release threshold reduction | $35 | ×1.8 | 10 (95%) |
 | Increase Buffer Size | **Functional**: buffer capacity = 3 + level (max 20 slots) | $10 | ×1.2 | 17 |
 | Broaden Subscription | **Functional**: widens topic filter each level (specific → `*` → `>` across segments) | $40 | ×2 | 5 |
 
