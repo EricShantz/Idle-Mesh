@@ -35,7 +35,7 @@ export const tutorials: TutorialDef[] = [
       { title: 'Welcome to Idle Mesh!', body: 'Click the "Publisher" to generate "events".', graphic: PublisherGraphic },
       { title: 'Events Flow Through the Mesh', body: 'Events travel from publishers --> subscribers.', graphic: WebhookFlowGraphic },
       { title: 'Earn Money', body: 'When a subscriber consumes an event, you earn money. Earn more more by upgrading your mesh.', graphic: EarnMoneyGraphic },
-      { title: 'Upgrade & Expand', body: 'Click the ↑ icon on any component to upgrade it. Buy new components from the sidebar shop to grow your mesh.', graphic: UpgradeExpandGraphic },
+      { title: 'Upgrade & Expand', body: 'Click the ⌃ tab above any component to upgrade it. Buy new components from the sidebar shop to grow your mesh.', graphic: UpgradeExpandGraphic },
     ],
   },
   {

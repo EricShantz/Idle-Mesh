@@ -371,6 +371,26 @@ export function NodeCard({ component }: Props) {
         transformOrigin: 'top left',
       }}
     >
+      <div className="relative" style={{ width: isDmq ? dmqNodeWidth : 120 }}>
+      <button
+        onClick={handleUpgradeClick}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="absolute px-1.5 py-0.5 rounded-t cursor-pointer"
+        style={{
+          top: -16,
+          right: 8,
+          zIndex: affordableUpgradeCount > 0 ? 1 : -1,
+          borderTop: `1px solid ${affordableUpgradeCount > 0 ? colors.border : '#374151'}`,
+          borderLeft: `1px solid ${affordableUpgradeCount > 0 ? colors.border : '#374151'}`,
+          borderRight: `1px solid ${affordableUpgradeCount > 0 ? colors.border : '#374151'}`,
+          borderBottom: 'none',
+          background: affordableUpgradeCount > 0 ? `${colors.border}15` : '#1f2937',
+        }}
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke={affordableUpgradeCount > 0 ? colors.border : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M2 8L6 4L10 8" />
+        </svg>
+      </button>
       <motion.div
         whileHover={cursorGrabbing || !isPublisher ? undefined : { scale: 1.05 }}
         whileTap={cursorGrabbing || !isPublisher ? undefined : { scale: 0.95 }}
@@ -438,15 +458,6 @@ export function NodeCard({ component }: Props) {
             />
           </svg>
         )}
-        <button
-          onClick={handleUpgradeClick}
-          onPointerDown={(e) => e.stopPropagation()}
-          className="absolute top-1 right-1 w-4 h-4 flex items-center justify-center rounded-md hover:bg-gray-600"
-          style={{ color: colors.border, fontSize: '11px', border: `1px solid ${colors.border}88` }}
-          title="Upgrades"
-        >
-          ↑
-        </button>
         <div>{component.label}</div>
         {component.type === 'broker' && (
           <div className="w-full mt-1 h-1 rounded-full overflow-hidden" style={{ background: '#1e293b' }}>
@@ -525,13 +536,6 @@ export function NodeCard({ component }: Props) {
             })()}
           </div>
         )}
-        {affordableUpgradeCount > 0 && (
-          <div
-            className="absolute -top-2 -left-2 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center"
-          >
-            {affordableUpgradeCount > 99 ? '99+' : affordableUpgradeCount}
-          </div>
-        )}
         {/* Output port for creating connections — Boomi-style arrow circle */}
         {hasOutput && (
           <div
@@ -566,6 +570,7 @@ export function NodeCard({ component }: Props) {
           </div>
         )}
       </motion.div>
+      </div>
       {component.type === 'publisher' && component.topicSegments && (
         <div className="text-[8px] text-gray-500 font-mono text-center" style={{ maxWidth: 140, wordBreak: 'break-all' }}>
           {component.topicSegments.join('/')}

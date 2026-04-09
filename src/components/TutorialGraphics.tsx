@@ -252,9 +252,9 @@ export function UpgradeExpandGraphic() {
   // Shift node left to leave room for the upgrade panel on the right
   const cx = W / 2 - 70;
   const nodeW = 72, nodeH = 40;
-  // Badge at top-right corner of node, matching NodeCard's top-1 right-1 button
-  const badgeX = cx + nodeW / 2 - 8;
-  const badgeY = H / 2 - nodeH / 2 + 8;
+  // Chevron tab above top-right of node, matching folder-tab style
+  const tabX = cx + nodeW / 2 - 14;
+  const tabY = H / 2 - nodeH / 2 - 14;
 
   // Upgrade modal dimensions
   const modalX = W - 160;
@@ -286,22 +286,20 @@ export function UpgradeExpandGraphic() {
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderRadius: 8, background: C.bg }}>
       <NodeBox x={cx} y={H / 2} type="queue" label="Queue" />
-      {/* Upgrade badge with pulsing scale effect */}
+      {/* Chevron tab above node with pulsing effect */}
       <motion.g
         animate={{ scale: [1, 1.15, 1] }}
         transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
-        style={{ transformOrigin: `${badgeX}px ${badgeY}px` }}
+        style={{ transformOrigin: `${tabX + 10}px ${tabY + 7}px` }}
       >
         <rect
-          x={badgeX - 7} y={badgeY - 7} width={14} height={14} rx={3}
+          x={tabX} y={tabY} width={20} height={14} rx={3} ry={3}
           fill="#0e3a3e" stroke="#22d3ee" strokeWidth={0.8}
         />
-        <text
-          x={badgeX} y={badgeY}
-          textAnchor="middle" dominantBaseline="middle" fill="#22d3ee" fontSize={9} fontWeight="800"
-        >
-          ↑
-        </text>
+        <path
+          d={`M${tabX + 5} ${tabY + 10} L${tabX + 10} ${tabY + 5} L${tabX + 15} ${tabY + 10}`}
+          fill="none" stroke="#22d3ee" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"
+        />
       </motion.g>
 
       {/* Queue upgrade modal container */}
