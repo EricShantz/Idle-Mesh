@@ -58,7 +58,10 @@
 - `pauseStartTime` uses `Date.now()` (Unix epoch). The RAF `time` argument is a different clock — don't mix them.
 
 ## Speed Double-Application
-- `dot.speed` is set to `normalizedSpeed(0.0007 * propagationSpeed, path)` at creation/release. During movement (line 234), `actualSpeed = dot.speed * propagationSpeed`. This means `propagationSpeed` is applied **twice** (squared). Any code predicting travel time must account for this: `travelTime = (1 - progress) / (dot.speed * propagationSpeed)`.
+- `dot.speed` is set to `normalizedSpeed(0.0007 * propagationSpeed, path)` at creation/release. During movement (line 234), `actualSpeed = dot.speed * propagationSpeed`. This means `propagationSpeed` is applied **twice** (squared). Any code predicting travel time must account for this: `travelTime = (arrivalProgress - progress) / (dot.speed * propagationSpeed)`.
+
+## Arrival Progress & Collision Box
+- `dotTouchesNode` catches dots before they reach progress 1.0 — the subscriber's bounding box (NODE_HALF_W=60, NODE_TOP_OFFSET=28) extends well beyond its center point. Predictive timing uses `getArrivalProgress(path)` to compute the actual progress at which a dot enters the subscriber's collision box, based on the last segment's direction: horizontal approach catches at `NODE_HALF_W + DOT_RADIUS` (66px), vertical at `NODE_TOP_OFFSET + DOT_RADIUS` (34px). Using `1.0` instead of `arrivalProgress` overestimates travel time and causes premature queue releases at high propagation speeds.
 
 ## Upgrade Implementation
 - Most per-component upgrade effects are read in `useGameLoop.ts` by looking up the component by position from the dot's path array. Global upgrade effects applied in `purchaseGlobalUpgrade` in `gameStore.ts`.
@@ -67,7 +70,7 @@
 
 ## DMQ Mechanics
 - DMQ catch detection runs inside the `dropped` dot branch of Pass 1 — checks `!dot.isRetry` to prevent infinite loops.
-- DMQ release (Pass 3) uses predictive timing: if the retry path's first target is a queue, checks buffer space; if a subscriber, predicts when it will be free (same logic as queue release). Retry paths rebuilt at release time from `dot.originalNodeIds` using current positions.
+- DMQ release (Pass 3) uses predictive timing: if the retry path's first target is a queue, checks buffer space; if a subscriber, predicts when it will be free (same logic as queue release, including `getArrivalProgress` for collision-aware travel time). Retry paths rebuilt at release time from `dot.originalNodeIds` using current positions.
 - DMQ width for collision = `(120 + dmqWidthLevel * 40) / 2` as half-width.
 
 ## Adaptive Coin Pop Throttling

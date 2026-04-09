@@ -384,7 +384,7 @@ export function useGameLoop() {
                 const occFcLevel = subscriberForOccupancy?.upgrades['fasterConsumption'] ?? 0;
                 const occBoostPct = Math.min(occFcLevel * (occFcLevel + 9) / 2, 100);
                 const occConsumeDuration = 1000 * (1 - occBoostPct / 100);
-                const isSubscriberOccupied = updated.some(d => {
+                const isSubscriberOccupied = [...updated, ...dots.slice(i + 1)].some(d => {
                   if (d.status !== 'pausing' || d.moneyAdded || d.path.length === 0) return false;
                   if (Math.hypot(d.path[d.path.length - 1].x - lastPathPoint.x, d.path[d.path.length - 1].y - lastPathPoint.y) >= 50) return false;
                   const elapsed = Date.now() - (d.pauseStartTime ?? Date.now());
@@ -577,11 +577,30 @@ export function useGameLoop() {
           };
 
           // Predictive release: release when the dot would arrive as the subscriber finishes consuming
+          // Calculate the progress at which a dot enters a subscriber's collision box
+          // (dotTouchesNode triggers before progress 1.0 due to the node's bounding rectangle)
+          const getArrivalProgress = (path: { x: number; y: number }[]) => {
+            if (path.length < 2) return 1;
+            const last = path[path.length - 1];
+            const prev = path[path.length - 2];
+            const dx = last.x - prev.x;
+            const dy = last.y - prev.y;
+            const lastSegLen = Math.hypot(dx, dy);
+            if (lastSegLen === 0) return 1;
+            // Catch distance depends on approach direction (horizontal vs vertical)
+            const catchDist = Math.abs(dx) >= Math.abs(dy)
+              ? NODE_HALF_W + DOT_RADIUS
+              : NODE_TOP_OFFSET + DOT_RADIUS;
+            const totalSegments = path.length - 1;
+            return Math.max(0, 1 - catchDist / (lastSegLen * totalSegments));
+          };
+
           const shouldReleaseTo = (sub: { x: number; y: number }, releasePath: { x: number; y: number }[], startProgress: number) => {
             const baseSpeed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, releasePath);
             // During movement, dot.speed is multiplied by propagationSpeed again (line 234)
             const actualSpeed = baseSpeed * state.upgrades.propagationSpeed;
-            const travelTime = actualSpeed > 0 ? (1 - startProgress) / actualSpeed : Infinity;
+            const arrivalProg = getArrivalProgress(releasePath);
+            const travelTime = actualSpeed > 0 ? (Math.max(arrivalProg, startProgress) - startProgress) / actualSpeed : Infinity;
 
             const subComp = state.components.find(c =>
               c.type === 'subscriber' && Math.hypot(c.x - sub.x, c.y - sub.y) < 50
@@ -616,7 +635,8 @@ export function useGameLoop() {
                 });
                 if (!isPastAllQueues) continue;
                 const inFlightActualSpeed = d.speed * state.upgrades.propagationSpeed;
-                const arrivalTime = inFlightActualSpeed > 0 ? (1 - d.progress) / inFlightActualSpeed : Infinity;
+                const dArrivalProg = getArrivalProgress(d.path);
+                const arrivalTime = inFlightActualSpeed > 0 ? (Math.max(dArrivalProg, d.progress) - d.progress) / inFlightActualSpeed : Infinity;
                 latestSlotOpen = Math.max(latestSlotOpen, arrivalTime + consumeDuration);
               }
             }
@@ -753,7 +773,8 @@ export function useGameLoop() {
                 } else {
                   // Subscriber — predictive timing (same logic as queue release)
                   const actualSpeed = speed * state.upgrades.propagationSpeed;
-                  const travelTime = actualSpeed > 0 ? 1 / actualSpeed : Infinity;
+                  const dmqArrivalProg = getArrivalProgress(fullPath);
+                  const travelTime = actualSpeed > 0 ? dmqArrivalProg / actualSpeed : Infinity;
 
                   const subComp = state.components.find(c => c.id === targetComp!.id);
                   const fcLevel = subComp?.upgrades['fasterConsumption'] ?? 0;
@@ -773,7 +794,8 @@ export function useGameLoop() {
                     }
 
                     if (d.status === 'traveling') {
-                      const arrivalTime = (1 - d.progress) / (d.speed * state.upgrades.propagationSpeed);
+                      const dArrProg = getArrivalProgress(d.path);
+                      const arrivalTime = (Math.max(dArrProg, d.progress) - d.progress) / (d.speed * state.upgrades.propagationSpeed);
                       latestSlotOpen = Math.max(latestSlotOpen, arrivalTime + consumeDuration);
                     }
                   }
