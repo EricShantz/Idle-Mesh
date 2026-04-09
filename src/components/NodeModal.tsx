@@ -171,9 +171,7 @@ export function NodeModal() {
           top: modalY,
           zIndex: 30,
           background: '#111827',
-          minWidth: 220,
-          transform: `scale(${zoom})`,
-          transformOrigin: 'top left',
+          width: 360,
         }}
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}

@@ -103,7 +103,7 @@ export const queueUpgrades: UpgradeDef[] = [
   },
   {
     key: 'bufferSize',
-    label: 'Increase Buffer Size',
+    label: 'Increase Queue Size',
     description: 'Allows more in-flight events before dropping (max 20 slots)',
     baseCost: 10,
     costMultiplier: 1.2,
@@ -129,7 +129,7 @@ export const dmqUpgrades: UpgradeDef[] = [
   },
   {
     key: 'dmqBufferSize',
-    label: 'Increase Buffer Size',
+    label: 'Increase Queue Size',
     description: 'Hold more events before overflow',
     baseCost: 10,
     costMultiplier: 1.2,
