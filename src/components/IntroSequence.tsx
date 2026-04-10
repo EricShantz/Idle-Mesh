@@ -157,7 +157,7 @@ function SpaghettiDiagram() {
 
 // Pixel art developer character (32px style, SVG rects)
 const PX = 4;
-function PixelCharacter({ frustrated }: { frustrated: boolean }) {
+export function PixelCharacter({ frustrated }: { frustrated: boolean }) {
   const skin = '#fbbf24';
   const hair = '#92400e';
   const hoodie = '#3b82f6';
