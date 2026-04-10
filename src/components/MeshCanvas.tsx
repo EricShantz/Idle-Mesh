@@ -61,20 +61,20 @@ function MeshCanvasInner({ viewport }: { viewport: ReturnType<typeof useViewport
       e.preventDefault();
       const v = viewport.ref.current;
 
-      if (e.ctrlKey || e.metaKey) {
-        // Pinch-to-zoom on trackpad or Ctrl/Cmd+scroll on mouse → zoom toward cursor
-        const rect = el.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
-        const oldZoom = v.zoom;
-        const newZoom = clamp(oldZoom * (1 - e.deltaY * 0.01), MIN_ZOOM, MAX_ZOOM);
-        v.panX = mx - (mx - v.panX) * (newZoom / oldZoom);
-        v.panY = my - (my - v.panY) * (newZoom / oldZoom);
-        v.zoom = newZoom;
-      } else {
-        // Scroll / two-finger drag → pan
+      // Zoom toward cursor on any scroll (deltaY)
+      const rect = el.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const oldZoom = v.zoom;
+      const zoomSpeed = (e.ctrlKey || e.metaKey) ? 0.01 : 0.003;
+      const newZoom = clamp(oldZoom * (1 - e.deltaY * zoomSpeed), MIN_ZOOM, MAX_ZOOM);
+      v.panX = mx - (mx - v.panX) * (newZoom / oldZoom);
+      v.panY = my - (my - v.panY) * (newZoom / oldZoom);
+      v.zoom = newZoom;
+
+      // Also pan horizontally for trackpad two-finger swipe
+      if (e.deltaX) {
         v.panX -= e.deltaX;
-        v.panY -= e.deltaY;
       }
       viewport.notify();
     };
