@@ -104,8 +104,10 @@
 - `interpolatePath()` clamps negative progress to path start. Old boolean saves migrated to level 1.
 
 ## Topic Subscription Picker
-- `getAvailableTopics(queueId)` walks broker connections (including bridges) to find all reachable publishers, broadened to queue's current `subscriptionBroaden` level. Deduplicates by broadened topic string.
+- `getAvailableTopics(queueId)` walks broker connections (including bridges) to find all reachable publishers. Returns ALL broadening levels (0 through queue's current `subscriptionBroaden` level) for each publisher, deduplicated by broadened topic string.
 - `setQueueSubscription(queueId, topic, segments, broadenLevel)` updates atomically. UI in `NodeModal.tsx`. Picker state resets on node switch via `key={node.id}`.
+- Picker groups topics by domain (segment index 1), sorted alphabetically; cross-domain topics (e.g. `acme/>`) appear last. Within each group, topics sort specific→broad (by `broadenLevel`), then by last segment with numeric-aware comparison (SKU001, SKU002, …).
+- Picker uses `data-scroll-trap` attribute so wheel events scroll the list instead of zooming the viewport (MeshCanvas wheel handler checks for this).
 
 ## Tutorial System
 - `tutorialsSeen: Record<string, boolean>` persists which tutorials dismissed. `activeTutorial: string | null` (transient).
