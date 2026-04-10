@@ -848,6 +848,148 @@ export function FanOutGraphic() {
 }
 
 /* ── Prestige Tree ── */
+/* ── Connection Management ── */
+export function ConnectionManageGraphic() {
+  // Layout: Broker on left, Queue A (top-right), Queue B (bottom-right)
+  const brokerX = 100, brokerY = H / 2;
+  const queueAX = 280, queueAY = 50;
+  const queueBX = 280, queueBY = 115;
+
+  // Port positions (right side of broker, left side of queues)
+  const fromX = brokerX + 36 + 16; // half-width 36 + port offset
+  const fromY = brokerY;
+  const toAX = queueAX - 36 - 2;
+  const toAY = queueAY;
+  const toBX = queueBX - 36 - 2;
+  const toBY = queueBY;
+
+  // Orthogonal path helpers
+  const mxA = (fromX + toAX) / 2;
+  const pathA = `M ${fromX} ${fromY} L ${mxA} ${fromY} L ${mxA} ${toAY} L ${toAX} ${toAY}`;
+  const mxB = (fromX + toBX) / 2;
+  const pathB = `M ${fromX} ${fromY} L ${mxB} ${fromY} L ${mxB} ${toBY} L ${toBX} ${toBY}`;
+
+  // Animation: 5s total cycle
+  // Phase 1 (0-0.8s): Line A visible, highlight it (hover → cyan)
+  // Phase 2 (0.8-1.2s): Line A fades, cursor appears at midpoint of A
+  // Phase 3 (1.2-3.0s): Cursor drags from Queue A endpoint toward Queue B, preview line follows
+  // Phase 4 (3.0-3.5s): Snap to Queue B — line B appears
+  // Phase 5 (3.5-5.0s): Pause with line B, then reset
+  const dur = 5;
+
+  // Cursor (fake pointer) keyframes — moves from path A endpoint to path B endpoint
+  const cursorKeyframes = {
+    cx: [toAX - 10, toAX - 10, toAX - 10, toBX - 10, toBX - 10, toBX - 10, toBX - 10],
+    cy: [toAY, toAY, toAY, toBY, toBY, toBY, toBY],
+    r: [0, 5, 5, 5, 5, 0, 0],
+  };
+  const cursorTimes = [0, 0.16, 0.24, 0.6, 0.7, 0.7, 1]; // proportional to dur
+
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderRadius: 8, background: C.bg }}>
+      {/* Nodes */}
+      <NodeBox x={brokerX} y={brokerY} type="broker" label="Broker" />
+      <NodeBox x={queueAX} y={queueAY} type="queue" label="Queue A" />
+      <NodeBox x={queueBX} y={queueBY} type="queue" label="Queue B" />
+
+      {/* Static line A — fades out when "detached" */}
+      <motion.path
+        d={pathA}
+        fill="none"
+        strokeWidth={1.5}
+        strokeDasharray="4 3"
+        animate={{
+          stroke: [C.line, C.line, '#22d3ee', '#22d3ee', 'transparent', 'transparent', 'transparent', 'transparent', C.line],
+          opacity: [1, 1, 1, 1, 0, 0, 0, 0, 1],
+        }}
+        transition={{
+          duration: dur,
+          times: [0, 0.1, 0.14, 0.2, 0.24, 0.6, 0.7, 0.95, 1],
+          repeat: Infinity,
+          ease: 'linear',
+        }}
+      />
+      {/* Arrowhead for line A */}
+      <motion.polygon
+        points={`${toAX},${toAY} ${toAX - 6},${toAY - 4} ${toAX - 6},${toAY + 4}`}
+        animate={{
+          fill: [C.line, C.line, '#22d3ee', '#22d3ee', 'transparent', 'transparent', C.line],
+          opacity: [1, 1, 1, 1, 0, 0, 1],
+        }}
+        transition={{
+          duration: dur,
+          times: [0, 0.1, 0.14, 0.2, 0.24, 0.95, 1],
+          repeat: Infinity,
+          ease: 'linear',
+        }}
+      />
+
+      {/* Preview drag line — appears during drag phase, morphs from A→B */}
+      <motion.path
+        fill="none"
+        stroke="#22d3ee"
+        strokeWidth={1.5}
+        strokeDasharray="6 3"
+        animate={{
+          d: [pathA, pathA, pathA, pathB, pathB, pathB, pathB],
+          opacity: [0, 0, 1, 1, 1, 0, 0],
+        }}
+        transition={{
+          duration: dur,
+          times: [0, 0.22, 0.24, 0.6, 0.68, 0.7, 1],
+          repeat: Infinity,
+          ease: 'linear',
+        }}
+      />
+
+      {/* Line B — appears after snap */}
+      <motion.path
+        d={pathB}
+        fill="none"
+        strokeWidth={1.5}
+        strokeDasharray="4 3"
+        animate={{
+          stroke: [C.line, C.line],
+          opacity: [0, 0, 0, 0, 1, 1, 0],
+        }}
+        transition={{
+          duration: dur,
+          times: [0, 0.24, 0.6, 0.68, 0.7, 0.95, 1],
+          repeat: Infinity,
+          ease: 'linear',
+        }}
+      />
+      {/* Arrowhead for line B */}
+      <motion.polygon
+        points={`${toBX},${toBY} ${toBX - 6},${toBY - 4} ${toBX - 6},${toBY + 4}`}
+        animate={{
+          fill: [C.line, C.line],
+          opacity: [0, 0, 1, 1, 0],
+        }}
+        transition={{
+          duration: dur,
+          times: [0, 0.68, 0.7, 0.95, 1],
+          repeat: Infinity,
+          ease: 'linear',
+        }}
+      />
+
+      {/* Cursor dot — simulates user dragging */}
+      <motion.circle
+        fill="#ffffff"
+        filter="drop-shadow(0 0 4px rgba(255,255,255,0.6))"
+        animate={cursorKeyframes}
+        transition={{
+          duration: dur,
+          times: cursorTimes,
+          repeat: Infinity,
+          ease: 'linear',
+        }}
+      />
+    </svg>
+  );
+}
+
 export function PrestigeTreeGraphic() {
   const cx = W / 2;
   const cy = H / 2;

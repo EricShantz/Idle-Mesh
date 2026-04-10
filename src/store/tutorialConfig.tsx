@@ -14,6 +14,7 @@ import {
   NewComponentsGraphic,
   FanOutGraphic,
   PrestigeTreeGraphic,
+  ConnectionManageGraphic,
 } from '../components/TutorialGraphics';
 
 export type TutorialSlide = {
@@ -35,6 +36,7 @@ export const tutorials: TutorialDef[] = [
       { title: 'Events Flow Through the Mesh', body: 'Events travel from publishers --> subscribers.', graphic: WebhookFlowGraphic },
       { title: 'Earn Money', body: 'When a subscriber consumes an event, you earn money. Earn more more by upgrading your mesh.', graphic: EarnMoneyGraphic },
       { title: 'Upgrade & Expand', body: 'Click the ⌃ tab above any component to upgrade it. Buy new components from the sidebar shop to grow your mesh.', graphic: UpgradeExpandGraphic },
+      { title: 'Managing Connections', body: (<><strong>Click any connection line</strong> to detach it, then drag to a new target — or release on empty space to delete it.</>), graphic: ConnectionManageGraphic },
     ],
   },
   {
