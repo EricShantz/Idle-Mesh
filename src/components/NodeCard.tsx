@@ -182,9 +182,9 @@ export function NodeCard({ component }: Props) {
   // Valid target highlighting during drag
   const isValidTarget = draggingConnection && component.type !== 'publisher'
     ? canConnect(
-        useGameStore.getState().components.find(c => c.id === draggingConnection.fromId)?.type ?? 'publisher',
-        component.type
-      ) && component.id !== draggingConnection.fromId
+      useGameStore.getState().components.find(c => c.id === draggingConnection.fromId)?.type ?? 'publisher',
+      component.type
+    ) && component.id !== draggingConnection.fromId
     : false;
 
   // Broker throughput utilization (0-1)
@@ -344,7 +344,7 @@ export function NodeCard({ component }: Props) {
       const state = useGameStore.getState();
       const conns = state.connections;
       const comps = state.components;
-      const SNAP_THRESHOLD = 5;
+      const SNAP_THRESHOLD = 10;
       let closestDy = Infinity;
       let snapY: number | null = null;
       for (const conn of conns) {
@@ -397,204 +397,204 @@ export function NodeCard({ component }: Props) {
       }}
     >
       <div className="relative" style={{ width: isDmq ? dmqNodeWidth : 120 }}>
-      <button
-        onClick={handleUpgradeClick}
-        onPointerDown={(e) => e.stopPropagation()}
-        className="absolute px-1.5 py-0.5 rounded-t cursor-pointer"
-        style={{
-          top: -16,
-          right: 8,
-          zIndex: affordableUpgradeCount > 0 ? 1 : -1,
-          borderTop: `1px solid ${affordableUpgradeCount > 0 ? colors.border : '#374151'}`,
-          borderLeft: `1px solid ${affordableUpgradeCount > 0 ? colors.border : '#374151'}`,
-          borderRight: `1px solid ${affordableUpgradeCount > 0 ? colors.border : '#374151'}`,
-          borderBottom: 'none',
-          background: affordableUpgradeCount > 0 ? `${colors.border}15` : '#1f2937',
-        }}
-      >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke={affordableUpgradeCount > 0 ? colors.border : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M2 8L6 4L10 8" />
-        </svg>
-      </button>
-      <motion.div
-        whileHover={cursorGrabbing || !isPublisher ? undefined : { scale: 1.05 }}
-        whileTap={cursorGrabbing || !isPublisher ? undefined : { scale: 0.95 }}
-        className="px-4 py-2 rounded-lg font-mono text-sm select-none relative flex flex-col items-center"
-        style={{
-          border: `1.5px solid ${isValidTarget ? '#22d3ee' : colors.border}`,
-          background: colors.bg,
-          boxShadow: isValidTarget
-            ? '0 0 16px rgba(34,211,238,0.6), 0 0 30px rgba(34,211,238,0.3)'
-            : isSelected
-              ? `${colors.glow}, 0 0 20px ${colors.border}44`
-              : colors.glow,
-          color: colors.border,
-          cursor: cursorGrabbing ? 'grabbing' : (isPublisher ? 'pointer' : 'default'),
-          width: isDmq ? dmqNodeWidth : 120,
-          minHeight: 56,
-          textAlign: 'center',
-          justifyContent: 'center',
-          pointerEvents: cursorGrabbing ? 'none' : 'auto',
-          transition: 'border-color 0.15s, box-shadow 0.15s',
-        }}
-      >
-        {/* Cooldown overlay for publisher */}
-        {isPublisher && cooldownPct > 0 && (
-          <div
-            className="absolute inset-0 rounded-lg pointer-events-none"
-            style={{
-              background: 'rgba(0, 0, 0, 0.35)',
-              clipPath: `inset(${(1 - cooldownPct) * 100}% 0 0 0)`,
-            }}
-          />
-        )}
-        {/* Cooldown overlay for subscriber (consuming) */}
-        {isSubscriber && subscriberCooldownPct > 0 && (
-          <div
-            className="absolute inset-0 rounded-lg pointer-events-none"
-            style={{
-              background: 'rgba(0, 0, 0, 0.35)',
-              clipPath: `inset(${(1 - subscriberCooldownPct) * 100}% 0 0 0)`,
-            }}
-          />
-        )}
-        {/* Processing border animation for webhook/broker — RAF-driven, always mounted */}
-        {isWebhook && (
-          <svg
-            ref={svgRef}
-            className="absolute inset-0 pointer-events-none"
-            width="100%"
-            height="100%"
-            style={{ overflow: 'visible' }}
-          >
-            <path
-              ref={topPathRef}
-              d="M 0,28 L 0,8 Q 0,0 8,0 L 112,0 Q 120,0 120,8 L 120,28"
-              fill="none" stroke="#66ffff" strokeWidth="2" strokeLinecap="round"
-              pathLength={100}
-              style={{ strokeDasharray: '35 165', filter: 'drop-shadow(0 0 4px #66ffff)' }}
-            />
-            <path
-              ref={botPathRef}
-              d="M 0,28 L 0,48 Q 0,56 8,56 L 112,56 Q 120,56 120,48 L 120,28"
-              fill="none" stroke="#66ffff" strokeWidth="2" strokeLinecap="round"
-              pathLength={100}
-              style={{ strokeDasharray: '35 165', filter: 'drop-shadow(0 0 4px #66ffff)' }}
-            />
+        <button
+          onClick={handleUpgradeClick}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="absolute px-1.5 py-0.5 rounded-t cursor-pointer"
+          style={{
+            top: -16,
+            right: 8,
+            zIndex: affordableUpgradeCount > 0 ? 1 : -1,
+            borderTop: `1px solid ${affordableUpgradeCount > 0 ? colors.border : '#374151'}`,
+            borderLeft: `1px solid ${affordableUpgradeCount > 0 ? colors.border : '#374151'}`,
+            borderRight: `1px solid ${affordableUpgradeCount > 0 ? colors.border : '#374151'}`,
+            borderBottom: 'none',
+            background: affordableUpgradeCount > 0 ? `${colors.border}15` : '#1f2937',
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke={affordableUpgradeCount > 0 ? colors.border : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 8L6 4L10 8" />
           </svg>
-        )}
-        <div>{component.label}</div>
-        {component.type === 'broker' && (
-          <div className="w-full mt-1 h-1 rounded-full overflow-hidden" style={{ background: '#1e293b' }}>
+        </button>
+        <motion.div
+          whileHover={cursorGrabbing || !isPublisher ? undefined : { scale: 1.05 }}
+          whileTap={cursorGrabbing || !isPublisher ? undefined : { scale: 0.95 }}
+          className="px-4 py-2 rounded-lg font-mono text-sm select-none relative flex flex-col items-center"
+          style={{
+            border: `1.5px solid ${isValidTarget ? '#22d3ee' : colors.border}`,
+            background: colors.bg,
+            boxShadow: isValidTarget
+              ? '0 0 16px rgba(34,211,238,0.6), 0 0 30px rgba(34,211,238,0.3)'
+              : isSelected
+                ? `${colors.glow}, 0 0 20px ${colors.border}44`
+                : colors.glow,
+            color: colors.border,
+            cursor: cursorGrabbing ? 'grabbing' : (isPublisher ? 'pointer' : 'default'),
+            width: isDmq ? dmqNodeWidth : 120,
+            minHeight: 56,
+            textAlign: 'center',
+            justifyContent: 'center',
+            pointerEvents: cursorGrabbing ? 'none' : 'auto',
+            transition: 'border-color 0.15s, box-shadow 0.15s',
+          }}
+        >
+          {/* Cooldown overlay for publisher */}
+          {isPublisher && cooldownPct > 0 && (
             <div
-              className="h-full rounded-full transition-all"
+              className="absolute inset-0 rounded-lg pointer-events-none"
               style={{
-                width: `${Math.min(brokerUtilization * 100, 100)}%`,
-                background: brokerUtilization > 0.9 ? '#ef4444' : brokerUtilization > 0.7 ? '#f59e0b' : '#22c55e',
+                background: 'rgba(0, 0, 0, 0.35)',
+                clipPath: `inset(${(1 - cooldownPct) * 100}% 0 0 0)`,
               }}
             />
-          </div>
-        )}
-        {isPublisher && (
-          <div className="text-[10px] opacity-60">(click to fire)</div>
-        )}
-        {isDmq && (
-          <div className="flex flex-col gap-1 mt-1 items-center">
-            {(() => {
-              const capacity = 3 + (component.upgrades['dmqBufferSize'] ?? 0);
-              const queuedDots = eventDots
-                .filter(d => d.status === 'queued' && d.queuedAtNodeId === component.id)
-                .sort((a, b) => (a.pauseStartTime ?? 0) - (b.pauseStartTime ?? 0));
-              const emptyCount = capacity - queuedDots.length;
-              const slotsPerRow = getDmqSlotsPerRow(component.upgrades['dmqWidth'] ?? 0);
-              const slots = Array.from({ length: capacity }).map((_, i) => {
-                const dot = i < emptyCount ? null : queuedDots[queuedDots.length - 1 - (i - emptyCount)];
-                return (
-                  <div
-                    key={i}
-                    className="w-1.5 h-1.5 rounded-full"
-                    style={{
-                      backgroundColor: dot ? '#fb923c' : '#1e293b',
-                    }}
-                  />
-                );
-              });
-              const rows: typeof slots[] = [];
-              for (let i = 0; i < slots.length; i += slotsPerRow) {
-                rows.push(slots.slice(i, i + slotsPerRow));
-              }
-              return rows.map((row, ri) => (
-                <div key={ri} className="flex gap-1.5">{row}</div>
-              ));
-            })()}
-          </div>
-        )}
-        {component.type === 'queue' && (
-          <div className="flex flex-col gap-1 mt-1 items-center">
-            {(() => {
-              const prestige = useGameStore.getState().prestige;
-              const capacity = 3 + (component.upgrades['bufferSize'] ?? 0) + getPermanentQueueBufferBonus({ prestige });
-              const queuedDots = eventDots
-                .filter(d => d.status === 'queued' && d.queuedAtNodeId === component.id)
-                .sort((a, b) => (a.pauseStartTime ?? 0) - (b.pauseStartTime ?? 0));
-              const emptyCount = capacity - queuedDots.length;
-              const slots = Array.from({ length: capacity }).map((_, i) => {
-                const dot = i < emptyCount ? null : queuedDots[queuedDots.length - 1 - (i - emptyCount)];
-                return (
-                  <div
-                    key={i}
-                    className="w-1.5 h-1.5 rounded-full"
-                    style={{
-                      backgroundColor: dot ? (dot.isRetry ? '#fb923c' : '#66ffff') : '#1e293b',
-                    }}
-                  />
-                );
-              });
-              // Wrap into rows of 10
-              const rows: typeof slots[] = [];
-              for (let i = 0; i < slots.length; i += 10) {
-                rows.push(slots.slice(i, i + 10));
-              }
-              return rows.map((row, ri) => (
-                <div key={ri} className="flex gap-1.5">{row}</div>
-              ));
-            })()}
-          </div>
-        )}
-        {/* Output port for creating connections — Boomi-style arrow circle */}
-        {hasOutput && (
-          <div
-            onPointerDown={handleOutputPortDown}
-            className={`absolute w-4 h-4 rounded-full border flex items-center justify-center group/port ${isDmq ? 'left-1/2 -top-6' : 'top-1/2 -right-6'}`}
-            style={{
-              transform: isDmq ? 'translateX(-50%)' : 'translateY(-50%)',
-              cursor: 'crosshair',
-              background: '#1e293b',
-              borderColor: colors.border + '88',
-              transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
-            }}
-            title="Drag to connect"
-            onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = colors.border;
-              e.currentTarget.style.background = colors.border + '22';
-              e.currentTarget.style.boxShadow = `0 0 8px ${colors.border}66`;
-              const path = e.currentTarget.querySelector('path');
-              if (path) path.setAttribute('stroke', colors.border);
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = colors.border + '88';
-              e.currentTarget.style.background = '#1e293b';
-              e.currentTarget.style.boxShadow = 'none';
-              const path = e.currentTarget.querySelector('path');
-              if (path) path.setAttribute('stroke', '#94a3b8');
-            }}
-          >
-            <svg width="8" height="8" viewBox="0 0 12 12" style={{ pointerEvents: 'none', transform: isDmq ? 'rotate(-90deg)' : undefined }}>
-              <path d="M3 2 L9 6 L3 10" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          )}
+          {/* Cooldown overlay for subscriber (consuming) */}
+          {isSubscriber && subscriberCooldownPct > 0 && (
+            <div
+              className="absolute inset-0 rounded-lg pointer-events-none"
+              style={{
+                background: 'rgba(0, 0, 0, 0.35)',
+                clipPath: `inset(${(1 - subscriberCooldownPct) * 100}% 0 0 0)`,
+              }}
+            />
+          )}
+          {/* Processing border animation for webhook/broker — RAF-driven, always mounted */}
+          {isWebhook && (
+            <svg
+              ref={svgRef}
+              className="absolute inset-0 pointer-events-none"
+              width="100%"
+              height="100%"
+              style={{ overflow: 'visible' }}
+            >
+              <path
+                ref={topPathRef}
+                d="M 0,28 L 0,8 Q 0,0 8,0 L 112,0 Q 120,0 120,8 L 120,28"
+                fill="none" stroke="#66ffff" strokeWidth="2" strokeLinecap="round"
+                pathLength={100}
+                style={{ strokeDasharray: '35 165', filter: 'drop-shadow(0 0 4px #66ffff)' }}
+              />
+              <path
+                ref={botPathRef}
+                d="M 0,28 L 0,48 Q 0,56 8,56 L 112,56 Q 120,56 120,48 L 120,28"
+                fill="none" stroke="#66ffff" strokeWidth="2" strokeLinecap="round"
+                pathLength={100}
+                style={{ strokeDasharray: '35 165', filter: 'drop-shadow(0 0 4px #66ffff)' }}
+              />
             </svg>
-          </div>
-        )}
-      </motion.div>
+          )}
+          <div>{component.label}</div>
+          {component.type === 'broker' && (
+            <div className="w-full mt-1 h-1 rounded-full overflow-hidden" style={{ background: '#1e293b' }}>
+              <div
+                className="h-full rounded-full transition-all"
+                style={{
+                  width: `${Math.min(brokerUtilization * 100, 100)}%`,
+                  background: brokerUtilization > 0.9 ? '#ef4444' : brokerUtilization > 0.7 ? '#f59e0b' : '#22c55e',
+                }}
+              />
+            </div>
+          )}
+          {isPublisher && (
+            <div className="text-[10px] opacity-60">(click to fire)</div>
+          )}
+          {isDmq && (
+            <div className="flex flex-col gap-1 mt-1 items-center">
+              {(() => {
+                const capacity = 3 + (component.upgrades['dmqBufferSize'] ?? 0);
+                const queuedDots = eventDots
+                  .filter(d => d.status === 'queued' && d.queuedAtNodeId === component.id)
+                  .sort((a, b) => (a.pauseStartTime ?? 0) - (b.pauseStartTime ?? 0));
+                const emptyCount = capacity - queuedDots.length;
+                const slotsPerRow = getDmqSlotsPerRow(component.upgrades['dmqWidth'] ?? 0);
+                const slots = Array.from({ length: capacity }).map((_, i) => {
+                  const dot = i < emptyCount ? null : queuedDots[queuedDots.length - 1 - (i - emptyCount)];
+                  return (
+                    <div
+                      key={i}
+                      className="w-1.5 h-1.5 rounded-full"
+                      style={{
+                        backgroundColor: dot ? '#fb923c' : '#1e293b',
+                      }}
+                    />
+                  );
+                });
+                const rows: typeof slots[] = [];
+                for (let i = 0; i < slots.length; i += slotsPerRow) {
+                  rows.push(slots.slice(i, i + slotsPerRow));
+                }
+                return rows.map((row, ri) => (
+                  <div key={ri} className="flex gap-1.5">{row}</div>
+                ));
+              })()}
+            </div>
+          )}
+          {component.type === 'queue' && (
+            <div className="flex flex-col gap-1 mt-1 items-center">
+              {(() => {
+                const prestige = useGameStore.getState().prestige;
+                const capacity = 3 + (component.upgrades['bufferSize'] ?? 0) + getPermanentQueueBufferBonus({ prestige });
+                const queuedDots = eventDots
+                  .filter(d => d.status === 'queued' && d.queuedAtNodeId === component.id)
+                  .sort((a, b) => (a.pauseStartTime ?? 0) - (b.pauseStartTime ?? 0));
+                const emptyCount = capacity - queuedDots.length;
+                const slots = Array.from({ length: capacity }).map((_, i) => {
+                  const dot = i < emptyCount ? null : queuedDots[queuedDots.length - 1 - (i - emptyCount)];
+                  return (
+                    <div
+                      key={i}
+                      className="w-1.5 h-1.5 rounded-full"
+                      style={{
+                        backgroundColor: dot ? (dot.isRetry ? '#fb923c' : '#66ffff') : '#1e293b',
+                      }}
+                    />
+                  );
+                });
+                // Wrap into rows of 10
+                const rows: typeof slots[] = [];
+                for (let i = 0; i < slots.length; i += 10) {
+                  rows.push(slots.slice(i, i + 10));
+                }
+                return rows.map((row, ri) => (
+                  <div key={ri} className="flex gap-1.5">{row}</div>
+                ));
+              })()}
+            </div>
+          )}
+          {/* Output port for creating connections — Boomi-style arrow circle */}
+          {hasOutput && (
+            <div
+              onPointerDown={handleOutputPortDown}
+              className={`absolute w-4 h-4 rounded-full border flex items-center justify-center group/port ${isDmq ? 'left-1/2 -top-6' : 'top-1/2 -right-6'}`}
+              style={{
+                transform: isDmq ? 'translateX(-50%)' : 'translateY(-50%)',
+                cursor: 'crosshair',
+                background: '#1e293b',
+                borderColor: colors.border + '88',
+                transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
+              }}
+              title="Drag to connect"
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = colors.border;
+                e.currentTarget.style.background = colors.border + '22';
+                e.currentTarget.style.boxShadow = `0 0 8px ${colors.border}66`;
+                const path = e.currentTarget.querySelector('path');
+                if (path) path.setAttribute('stroke', colors.border);
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = colors.border + '88';
+                e.currentTarget.style.background = '#1e293b';
+                e.currentTarget.style.boxShadow = 'none';
+                const path = e.currentTarget.querySelector('path');
+                if (path) path.setAttribute('stroke', '#94a3b8');
+              }}
+            >
+              <svg width="8" height="8" viewBox="0 0 12 12" style={{ pointerEvents: 'none', transform: isDmq ? 'rotate(-90deg)' : undefined }}>
+                <path d="M3 2 L9 6 L3 10" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+          )}
+        </motion.div>
       </div>
       {component.type === 'publisher' && component.topicSegments && (
         <div className="text-[8px] text-gray-500 font-mono text-center" style={{ maxWidth: 140, wordBreak: 'break-all' }}>

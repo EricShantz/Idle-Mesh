@@ -20,7 +20,7 @@ export function computeOrthogonalWaypoints(
   toBounds?: NodeBounds,
 ): Point[] {
   // Straight horizontal — no routing needed
-  if (Math.abs(startY - endY) < 5) {
+  if (Math.abs(startY - endY) < 10) {
     return [
       { x: startX, y: startY },
       { x: endX, y: endY },

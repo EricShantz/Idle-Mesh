@@ -438,7 +438,7 @@ export const useGameStore = create<GameState>()(
           // Build path using node centers, then expand orthogonally with bounds
           const nodePath = [{ x: pub.x, y: pub.y }, { x: target.x, y: target.y }];
           const truncatedWaypoints: { x: number; y: number }[] = [nodePath[0]];
-          if (Math.abs(nodePath[0].y - nodePath[1].y) >= 5) {
+          if (Math.abs(nodePath[0].y - nodePath[1].y) >= 10) {
             const pubHalfW = pub.type === 'queue' ? 70 : 60;
             const tgtHalfW = target.type === 'queue' ? 70 : 60;
             const portStartX = pub.x + pubHalfW + 24;
@@ -1170,7 +1170,7 @@ export const useGameStore = create<GameState>()(
           for (let i = 0; i < nodePath.length - 1; i++) {
             const a = nodePath[i];
             const b = nodePath[i + 1];
-            if (Math.abs(a.y - b.y) >= 5) {
+            if (Math.abs(a.y - b.y) >= 10) {
               const aNode = state.components.find(c => c.id === nodeIds[i]);
               const bNode = state.components.find(c => c.id === nodeIds[i + 1]);
               const aHalfW = aNode?.type === 'queue' ? 70 : 60;
