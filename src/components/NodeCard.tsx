@@ -60,7 +60,7 @@ export function NodeCard({ component }: Props) {
   const viewport = useViewport();
 
   // Subscribe to viewport changes for screen-space positioning
-  const vpSnap = useSyncExternalStore(viewport.subscribe, () => {
+  useSyncExternalStore(viewport.subscribe, () => {
     const v = viewport.ref.current;
     return `${v.panX},${v.panY},${v.zoom}`;
   });
@@ -193,7 +193,6 @@ export function NodeCard({ component }: Props) {
     : 0;
 
   // Compute dot's normalized x-position through this webhook/broker (0→1), or -1 if none
-  const isWebhookOrBroker = component.type === 'webhook' || component.type === 'broker';
   const isWebhook = component.type === 'webhook';
   const dotProgress = useMemo(() => {
     if (!isWebhook) return -1;
@@ -330,7 +329,7 @@ export function NodeCard({ component }: Props) {
     }
   };
 
-  const handlePointerUp = (e: React.PointerEvent) => {
+  const handlePointerUp = (_e: React.PointerEvent) => {
     if (!isDragging.current) return;
     isDragging.current = false;
     setCursorGrabbing(false);
@@ -578,7 +577,7 @@ export function NodeCard({ component }: Props) {
       )}
       {component.type === 'queue' && component.subscriptionTopic && (
         <div className="text-[8px] font-mono text-center" style={{ maxWidth: 140, wordBreak: 'break-all' }}>
-          {component.subscriptionTopic.split('/').map((seg, i, arr) => (
+          {component.subscriptionTopic.split('/').map((seg, i) => (
             <span key={i}>
               {i > 0 && <span className="text-gray-600">/</span>}
               <span style={{ color: seg === '*' || seg === '>' ? '#f59e0b' : '#6b7280' }}>{seg}</span>

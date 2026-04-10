@@ -168,8 +168,8 @@ export function useGameLoop() {
 
       const state = useGameStore.getState();
       const toConsume: { id: string; value: number; subscriberId: string }[] = [];
-      const toFinish: string[] = [];
-      const toRemove: string[] = [];
+      const _toFinish: string[] = [];
+      const _toRemove: string[] = [];
       let droppedCount = 0;
 
       state.updateDots(dots => {
