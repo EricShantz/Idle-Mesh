@@ -458,7 +458,7 @@ export function BrokerUpgradeGraphic() {
 
 export function QueueGraphic() {
   const bX = 70, qX = W / 2, sX = W - 70, y = H / 2;
-  const qNodeW = 72;
+  const qNodeW = 72, qNodeH = 40;
 
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderRadius: 8, background: C.bg }}>

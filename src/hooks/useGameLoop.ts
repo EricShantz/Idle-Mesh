@@ -168,8 +168,6 @@ export function useGameLoop() {
 
       const state = useGameStore.getState();
       const toConsume: { id: string; value: number; subscriberId: string }[] = [];
-      const _toFinish: string[] = [];
-      const _toRemove: string[] = [];
       let droppedCount = 0;
 
       state.updateDots(dots => {
@@ -230,7 +228,6 @@ export function useGameLoop() {
             // but doesn't disconnect cables, so the position-based matching would give false positives
             let pathInvalid = false;
             for (let pc = 0; pc < pathComps.length - 1 && !state.draggingNodeId; pc++) {
-              const fromProgress = pathComps[pc].idx / (dot.path.length - 1);
               // Only validate segments the dot hasn't passed yet
               if (pathComps[pc + 1].idx / (dot.path.length - 1) < dot.progress - 0.01) continue;
               const a = pathComps[pc].comp;
@@ -259,7 +256,6 @@ export function useGameLoop() {
             if (webhookComponent && dotTouchesNode(eventPos.x, eventPos.y, webhookComponent.x, webhookComponent.y)) {
               actualSpeed *= 0.4;
             }
-            const blockRadius = NODE_HALF_W + DOT_RADIUS + 15; // detect approaching dots before they enter the node
 
             let blocked = false;
             for (const comp of state.components) {
@@ -507,6 +503,22 @@ export function useGameLoop() {
           }
         }
 
+        // Helper: calculate the progress at which a dot enters a subscriber's collision box
+        const getArrivalProgress = (path: { x: number; y: number }[]) => {
+          if (path.length < 2) return 1;
+          const last = path[path.length - 1];
+          const prev = path[path.length - 2];
+          const dx = last.x - prev.x;
+          const dy = last.y - prev.y;
+          const lastSegLen = Math.hypot(dx, dy);
+          if (lastSegLen === 0) return 1;
+          const catchDist = Math.abs(dx) >= Math.abs(dy)
+            ? NODE_HALF_W + DOT_RADIUS
+            : NODE_TOP_OFFSET + DOT_RADIUS;
+          const totalSegments = path.length - 1;
+          return Math.max(0, 1 - catchDist / (lastSegLen * totalSegments));
+        };
+
         // --- Pass 2: auto-release queued dots (1 per queue, or up to 3 with Prefetch prestige) ---
         const batchConsume = hasPermanentBatchConsume(state);
         const maxReleasesPerQueue = batchConsume ? 3 : 1;
@@ -577,11 +589,10 @@ export function useGameLoop() {
           // Pre-build release paths for all connected subscribers
           const buildReleasePath = (subTarget: { x: number; y: number }) => {
             if (!queue) return { path: dot.path, progress: dot.progress };
-            let bestIdx = 0;
             let bestDist = Infinity;
             for (let pi = 0; pi < dot.path.length; pi++) {
               const d = Math.hypot(dot.path[pi].x - queue.x, dot.path[pi].y - queue.y);
-              if (d < bestDist) { bestDist = d; bestIdx = pi; }
+              if (d < bestDist) { bestDist = d; }
             }
             const queuePoint = { x: queue.x, y: queue.y };
             const extension: { x: number; y: number }[] = [];
@@ -609,22 +620,6 @@ export function useGameLoop() {
           // Predictive release: release when the dot would arrive as the subscriber finishes consuming
           // Calculate the progress at which a dot enters a subscriber's collision box
           // (dotTouchesNode triggers before progress 1.0 due to the node's bounding rectangle)
-          const getArrivalProgress = (path: { x: number; y: number }[]) => {
-            if (path.length < 2) return 1;
-            const last = path[path.length - 1];
-            const prev = path[path.length - 2];
-            const dx = last.x - prev.x;
-            const dy = last.y - prev.y;
-            const lastSegLen = Math.hypot(dx, dy);
-            if (lastSegLen === 0) return 1;
-            // Catch distance depends on approach direction (horizontal vs vertical)
-            const catchDist = Math.abs(dx) >= Math.abs(dy)
-              ? NODE_HALF_W + DOT_RADIUS
-              : NODE_TOP_OFFSET + DOT_RADIUS;
-            const totalSegments = path.length - 1;
-            return Math.max(0, 1 - catchDist / (lastSegLen * totalSegments));
-          };
-
           const shouldReleaseTo = (sub: { x: number; y: number }, releasePath: { x: number; y: number }[], startProgress: number) => {
             const baseSpeed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, releasePath);
             // During movement, dot.speed is multiplied by propagationSpeed again (line 234)
