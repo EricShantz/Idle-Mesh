@@ -187,7 +187,7 @@ const tutorialLabels: Record<string, string> = {
 const dropReasonMessages: Record<DropReason, { label: string; fix: string }> = {
   'webhook-occupied': { label: 'Webhook is busy', fix: 'Upgrade to Broker to remove the bottleneck' },
   'broker-capped': { label: 'Throughput limit reached', fix: 'Upgrade "Increase Throughput" on this broker' },
-  'queue-full': { label: 'Queue buffer is full', fix: 'Upgrade "Queue Size" or add more subscribers' },
+  'queue-full': { label: 'Queue buffer is full', fix: 'Upgrade "Queue Size", add more subscribers, or (if you have persistent messaging), ensure all subscribers have the same event consumption speed' },
   'subscriber-occupied': { label: 'Subscriber is busy', fix: 'Upgrade "Faster Consumption" or add more subscribers' },
   'path-incomplete': { label: 'No matching destination', fix: 'Connect the broker to a queue with a matching topic subscription' },
   'path-invalid': { label: 'Connection broken', fix: 'Reconnect the missing path' },
