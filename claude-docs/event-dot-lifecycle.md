@@ -5,7 +5,7 @@ type EventDot = {
   id: string;
   path: { x: number; y: number }[];  // waypoints from getAllPathsForPublisher()
   progress: number;                   // 0.0 → 1.0 along full path
-  speed: number;                      // normalizedSpeed(0.0007 * propagationSpeed, path) — constant per-hop duration
+  speed: number;                      // normalizedSpeed(0.0007 * propagationSpeed, path) — constant per-hop duration. Visual pixel speed is made uniform across segments by getSegmentSpeedScale()
   status: 'traveling' | 'pausing' | 'queued' | 'dropped' | 'consumed';
   pauseStartTime?: number;            // Date.now() when pausing began
   queuedAtNodeId?: string;            // queue component ID when status is 'queued'
@@ -40,10 +40,10 @@ type EventDot = {
 When multiple downstream paths exist (fan-out or bridge), `fireEvent` creates one dot per unique first-broker. Extra paths are stored as `forkPaths` on the dot. When the dot reaches the fork broker (detected via `dotTouchesNode` in `useGameLoop`), fork dots are spawned from the broker position for each additional path. Fork dot IDs are generated via `nextDotId()` exported from `gameStore.ts`. During node drag, `forkPaths` waypoints are rebuilt each frame (alongside the main `path`) so fork dots don't spawn on stale coordinates if the broker has moved.
 
 ## Key behaviors
-- `traveling` → slows through webhook when dot visually overlaps the webhook node, drops near webhook/broker if component is occupied
+- `traveling` → speed is scaled per-segment via `getSegmentSpeedScale(path, progress)` so dots move at constant pixel speed regardless of segment length. Slows through webhook when dot visually overlaps the webhook node, drops near webhook/broker if component is occupied
 - `traveling` → on collision with next queue on path, always transitions to `queued` if buffer has space, otherwise drops
 - `traveling` → on collision with next subscriber on path (only if no queue ahead), transitions to `pausing` if subscriber is free, otherwise drops
-- `queued` → predictive auto-release: one per queue per frame. Queue computes travel time to the target subscriber and when the subscriber will be free (`latestSlotOpen`). Travel time accounts for the subscriber's collision box via `getArrivalProgress()` — dots are caught by `dotTouchesNode` before reaching progress 1.0, so the prediction uses the actual arrival progress (based on approach direction and node dimensions) rather than the path endpoint. Releases when `latestSlotOpen <= travelTime` so the dot arrives exactly as the subscriber finishes consuming. Without fan-out, checks the round-robin target; with fan-out, waits until ALL connected subscribers satisfy the timing condition. Path dynamically rebuilt as queue→subscriber at release time. 50ms tolerance margin at subscriber arrival prevents frame-timing drops.
+- `queued` → predictive auto-release: one per queue per frame. Queue computes travel time to the target subscriber using `scaledTravelTime()` (accounts for per-segment speed scaling) and when the subscriber will be free (`latestSlotOpen`). Travel time accounts for the subscriber's collision box via `getArrivalProgress()` — dots are caught by `dotTouchesNode` before reaching progress 1.0, so the prediction uses the actual arrival progress (based on approach direction and node dimensions) rather than the path endpoint. Releases when `latestSlotOpen <= travelTime` so the dot arrives exactly as the subscriber finishes consuming. Without fan-out, checks the round-robin target; with fan-out, waits until ALL connected subscribers satisfy the timing condition. Path dynamically rebuilt as queue→subscriber at release time. 50ms tolerance margin at subscriber arrival prevents frame-timing drops.
 - `pausing` → at end of consume duration (1s base), value is passed directly to `consumeEvent(id, value)` and dot is removed from array
 - `dropped` → gravity fall + fade over 1.2s; position is where the blockage occurred. Non-retry dots can be caught by the DMQ. Retry dots turn dark grey and cannot be re-caught. `eventsDropped` counter incremented via batch `setState` after the dot loop.
 

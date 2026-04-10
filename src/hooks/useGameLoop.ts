@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useGameStore, nextDotId, getPermanentQueueBufferBonus, hasPermanentBatchConsume } from '../store/gameStore';
-import { interpolatePath, normalizedSpeed } from '../utils/pathUtils';
+import { interpolatePath, normalizedSpeed, getSegmentSpeedScale, scaledTravelTime } from '../utils/pathUtils';
 import { computeOrthogonalWaypoints, computeVerticalFirstWaypoints } from '../utils/orthogonalPath';
 
 // Node card dimensions: positioned at left: x-60, top: y-28
@@ -451,6 +451,9 @@ export function useGameLoop() {
 
             let actualSpeed = dot.speed * state.upgrades.propagationSpeed;
 
+            // Scale speed by segment length ratio so dots move at constant pixel speed
+            actualSpeed *= getSegmentSpeedScale(dot.path, dot.progress);
+
             const webhookComponent = state.components.find(c => c.type === 'webhook');
             if (webhookComponent && dotTouchesNode(eventPos.x, eventPos.y, webhookComponent.x, webhookComponent.y)) {
               actualSpeed *= 0.4;
@@ -844,10 +847,10 @@ export function useGameLoop() {
           // (dotTouchesNode triggers before progress 1.0 due to the node's bounding rectangle)
           const shouldReleaseTo = (sub: { x: number; y: number }, releasePath: { x: number; y: number }[], startProgress: number) => {
             const baseSpeed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, releasePath);
-            // During movement, dot.speed is multiplied by propagationSpeed again (line 234)
+            // During movement, dot.speed is multiplied by propagationSpeed again
             const actualSpeed = baseSpeed * state.upgrades.propagationSpeed;
             const arrivalProg = getArrivalProgress(releasePath);
-            const travelTime = actualSpeed > 0 ? (Math.max(arrivalProg, startProgress) - startProgress) / actualSpeed : Infinity;
+            const travelTime = scaledTravelTime(releasePath, startProgress, Math.max(arrivalProg, startProgress), actualSpeed);
 
             const subComp = state.components.find(c =>
               c.type === 'subscriber' && Math.hypot(c.x - sub.x, c.y - sub.y) < 50
@@ -883,7 +886,7 @@ export function useGameLoop() {
                 if (!isPastAllQueues) continue;
                 const inFlightActualSpeed = d.speed * state.upgrades.propagationSpeed;
                 const dArrivalProg = getArrivalProgress(d.path);
-                const arrivalTime = inFlightActualSpeed > 0 ? (Math.max(dArrivalProg, d.progress) - d.progress) / inFlightActualSpeed : Infinity;
+                const arrivalTime = scaledTravelTime(d.path, d.progress, Math.max(dArrivalProg, d.progress), inFlightActualSpeed);
                 latestSlotOpen = Math.max(latestSlotOpen, arrivalTime + consumeDuration);
               }
             }
@@ -1055,7 +1058,7 @@ export function useGameLoop() {
                   // Subscriber — predictive timing (same logic as queue release)
                   const actualSpeed = speed * state.upgrades.propagationSpeed;
                   const dmqArrivalProg = getArrivalProgress(fullPath);
-                  const travelTime = actualSpeed > 0 ? dmqArrivalProg / actualSpeed : Infinity;
+                  const travelTime = scaledTravelTime(fullPath, 0, dmqArrivalProg, actualSpeed);
 
                   const subComp = state.components.find(c => c.id === targetComp!.id);
                   const fcLevel = subComp?.upgrades['fasterConsumption'] ?? 0;
@@ -1076,7 +1079,7 @@ export function useGameLoop() {
 
                     if (d.status === 'traveling') {
                       const dArrProg = getArrivalProgress(d.path);
-                      const arrivalTime = (Math.max(dArrProg, d.progress) - d.progress) / (d.speed * state.upgrades.propagationSpeed);
+                      const arrivalTime = scaledTravelTime(d.path, d.progress, Math.max(dArrProg, d.progress), d.speed * state.upgrades.propagationSpeed);
                       latestSlotOpen = Math.max(latestSlotOpen, arrivalTime + consumeDuration);
                     }
                   }
