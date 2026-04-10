@@ -488,7 +488,7 @@ export function NodeCard({ component }: Props) {
                     key={i}
                     className="w-1.5 h-1.5 rounded-full"
                     style={{
-                      backgroundColor: dot ? (dot.isRetry ? '#fb923c' : '#66ffff') : '#1e293b',
+                      backgroundColor: dot ? '#fb923c' : '#1e293b',
                     }}
                   />
                 );

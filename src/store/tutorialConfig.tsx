@@ -55,7 +55,7 @@ export const tutorials: TutorialDef[] = [
   {
     key: 'firstDmq',
     slides: [
-      { title: 'Dead Message Queue!', body: 'The DMQ catches dropped events as they fall. Connect its top port to a broker to retry them. Upgrade its width to catch more and value recovery to recoup more money.', graphic: DmqGraphic },
+      { title: 'Dead Message Queue!', body: 'The DMQ catches dropped events as they fall. Connect its top port to a broker to retry them. You only get part of the value back at first — upgrade value recovery to recoup more money. Upgrade its width to catch more events.', graphic: DmqGraphic },
     ],
   },
   {
