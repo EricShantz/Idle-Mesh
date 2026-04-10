@@ -1061,14 +1061,16 @@ export const useGameStore = create<GameState>()(
 
         for (const bId of brokerIds) walk(bId);
 
-        // Generate one entry per publisher at the queue's current broaden level
+        // Generate ALL broadening levels (specific → broad) for each publisher, dedduped
         const queue = state.components.find(c => c.id === queueId);
-        const broadenLevel = queue?.upgrades.subscriptionBroaden ?? 0;
+        const maxBroaden = queue?.upgrades.subscriptionBroaden ?? 0;
         const results: Map<string, { topic: string; segments: string[]; broadenLevel: number }> = new Map();
         for (const pub of publishers.values()) {
-          const broadened = broadenLevel === 0 ? pub.topic : computeBroadenedTopic(pub.segments, broadenLevel);
-          if (!results.has(broadened)) {
-            results.set(broadened, { topic: broadened, segments: pub.segments, broadenLevel });
+          for (let level = 0; level <= maxBroaden; level++) {
+            const broadened = level === 0 ? pub.topic : computeBroadenedTopic(pub.segments, level);
+            if (!results.has(broadened)) {
+              results.set(broadened, { topic: broadened, segments: pub.segments, broadenLevel: level });
+            }
           }
         }
         return Array.from(results.values());

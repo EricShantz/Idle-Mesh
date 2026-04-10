@@ -203,28 +203,64 @@ export function NodeModal() {
             </div>
             )}
             {(() => {
-              if (topics.length <= 1 && node.subscriptionTopic) return null;
+              if (topics.length === 0) return null;
               return topicPickerOpen ? (
-                <div className="mt-1 flex flex-col gap-0.5 max-h-32 overflow-y-auto">
-                  {topics.map(t => (
-                    <button
-                      key={t.topic}
-                      onClick={() => {
-                        if (t.topic !== node.subscriptionTopic) {
-                          setQueueSubscription(node.id, t.topic, t.segments, t.broadenLevel);
-                        }
-                        setTopicPickerOpen(false);
-                      }}
-                      className="text-left text-[10px] font-mono px-1.5 py-1 rounded border transition-colors cursor-pointer"
-                      style={{
-                        borderColor: t.topic === node.subscriptionTopic ? '#f59e0b' : '#374151',
-                        background: t.topic === node.subscriptionTopic ? '#78350f33' : '#1f293744',
-                        color: t.topic === node.subscriptionTopic ? '#fbbf24' : '#9ca3af',
-                      }}
-                    >
-                      {t.topic}
-                    </button>
-                  ))}
+                <div className="mt-1 flex flex-col gap-1 max-h-48 overflow-y-auto" data-scroll-trap>
+                  {(() => {
+                    // Group topics: by domain segment (index 1), cross-domain topics last
+                    const groups: Map<string, typeof topics> = new Map();
+                    for (const t of topics) {
+                      const parts = t.topic.split('/');
+                      // If only 2 segments like "acme/>", it's cross-domain
+                      const domain = parts.length > 2 ? parts[1] : '~cross-domain';
+                      if (!groups.has(domain)) groups.set(domain, []);
+                      groups.get(domain)!.push(t);
+                    }
+                    // Sort each group: specific first (lower broadenLevel), then alphabetically
+                    for (const arr of groups.values()) {
+                      arr.sort((a, b) => {
+                        if (a.broadenLevel !== b.broadenLevel) return a.broadenLevel - b.broadenLevel;
+                        // Same broadening level: sort by last segment (identifier) for natural numerical order
+                        const aLast = a.topic.split('/').pop() ?? '';
+                        const bLast = b.topic.split('/').pop() ?? '';
+                        return aLast.localeCompare(bLast, undefined, { numeric: true });
+                      });
+                    }
+                    // Sort groups: named domains alphabetically, cross-domain last
+                    const sorted = Array.from(groups.entries()).sort((a, b) => {
+                      if (a[0] === '~cross-domain') return 1;
+                      if (b[0] === '~cross-domain') return -1;
+                      return a[0].localeCompare(b[0]);
+                    });
+                    return sorted.map(([domain, items]) => (
+                      <div key={domain}>
+                        {sorted.length > 1 && (
+                          <div className="text-[9px] text-gray-500 uppercase tracking-wider mt-1 mb-0.5 px-0.5">
+                            {domain === '~cross-domain' ? 'cross-domain' : domain}
+                          </div>
+                        )}
+                        {items.map(t => (
+                          <button
+                            key={t.topic}
+                            onClick={() => {
+                              if (t.topic !== node.subscriptionTopic) {
+                                setQueueSubscription(node.id, t.topic, t.segments, t.broadenLevel);
+                              }
+                              setTopicPickerOpen(false);
+                            }}
+                            className="w-full text-left text-[10px] font-mono px-1.5 py-1 rounded border transition-colors cursor-pointer"
+                            style={{
+                              borderColor: t.topic === node.subscriptionTopic ? '#f59e0b' : '#374151',
+                              background: t.topic === node.subscriptionTopic ? '#78350f33' : '#1f293744',
+                              color: t.topic === node.subscriptionTopic ? '#fbbf24' : '#9ca3af',
+                            }}
+                          >
+                            {t.topic}
+                          </button>
+                        ))}
+                      </div>
+                    ));
+                  })()}
                 </div>
               ) : (
                 <button
