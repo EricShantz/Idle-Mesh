@@ -802,12 +802,28 @@ export function useGameLoop() {
             }
             const queuePoint = { x: queue.x, y: queue.y };
             const extension: { x: number; y: number }[] = [];
-            if (Math.abs(queue.y - subTarget.y) >= 1) {
+            if (Math.abs(queue.y - subTarget.y) >= 5) {
               const qHalfW = 70;
               const sHalfW = 60;
-              const midX = (queue.x + qHalfW + 24 + subTarget.x - sHalfW - 2) / 2;
-              extension.push({ x: midX, y: queue.y });
-              extension.push({ x: midX, y: subTarget.y });
+              const portStartX = queue.x + qHalfW + 24;
+              const portEndX = subTarget.x - sHalfW - 2;
+              const halfH = 28;
+              const fromBounds = {
+                left: queue.x - qHalfW,
+                right: queue.x + qHalfW + 24,
+                top: queue.y - halfH,
+                bottom: queue.y + halfH,
+              };
+              const toBounds = {
+                left: subTarget.x - sHalfW,
+                right: subTarget.x + sHalfW,
+                top: subTarget.y - halfH,
+                bottom: subTarget.y + halfH,
+              };
+              const segWaypoints = computeOrthogonalWaypoints(portStartX, queue.y, portEndX, subTarget.y, fromBounds, toBounds);
+              for (let w = 1; w < segWaypoints.length - 1; w++) {
+                extension.push(segWaypoints[w]);
+              }
             }
             extension.push({ x: subTarget.x, y: subTarget.y });
             const releasePath = dedupeConsecutiveWaypoints([queuePoint, ...extension]);

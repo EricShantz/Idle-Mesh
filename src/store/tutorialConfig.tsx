@@ -42,7 +42,7 @@ export const tutorials: TutorialDef[] = [
   {
     key: 'brokerUpgrade',
     slides: [
-      { title: 'Broker Unlocked!', body: 'Your webhook is now a broker! A broker routes events instantly, but has a throughput limit. You can increase that limit by upgrading the component.', graphic: BrokerUpgradeGraphic },
+      { title: 'Broker Unlocked!', body: 'Your webhook is now a broker! A broker routes events instantly, and can have multiple components attached to it! Brokers do have throughput limits, but you can increase the limits by upgrading the component.s', graphic: BrokerUpgradeGraphic },
       { title: 'New Components Available!', body: 'Your broker has unlocked new mesh components in the shop. Purchase one to learn what it does and start expanding your event mesh!', graphic: NewComponentsGraphic },
     ],
   },
