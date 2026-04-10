@@ -54,7 +54,7 @@ src/
 6. Buy queues, wire connections via drag-to-connect
 7. Automation via per-publisher auto-fire upgrades
 8. Broker fan-out: broker sends events to ALL connected queues with matching topics
-9. Prestige ("Schema Registry") at $1M for permanent upgrades
+9. Prestige ("Schema Registry") for permanent upgrades — scaling cost: Nth point costs $N million (triangular)
 
 ## Key Conventions
 

@@ -10,8 +10,12 @@ export function PrestigePanel() {
 
   const [showConfirm, setShowConfirm] = useState(false);
 
-  const canPrestige = totalEarned >= 1_000_000;
-  const pointsToEarn = Math.floor(totalEarned / 1_000_000);
+  // Scaling: Nth point costs N million (triangular numbers)
+  const t = totalEarned / 1_000_000;
+  const pointsToEarn = Math.floor((-1 + Math.sqrt(1 + 8 * t)) / 2);
+  const canPrestige = pointsToEarn >= 1;
+  const nextPointCost = (pointsToEarn + 1) * 1_000_000; // cost for the next point
+  const cumulativeCostForEarned = (pointsToEarn * (pointsToEarn + 1) / 2) * 1_000_000;
 
   const handlePrestige = () => {
     performPrestige();
@@ -48,7 +52,7 @@ export function PrestigePanel() {
           Reset all progress. Earn {pointsToEarn > 0 ? pointsToEarn : '0'} prestige point{pointsToEarn !== 1 ? 's' : ''}.
         </div>
         <div className="mt-0.5 font-mono text-[10px] opacity-50">
-          Requires {formatMoney(1_000_000)} total earned
+          Next point at {formatMoney(cumulativeCostForEarned + nextPointCost)} total earned
         </div>
       </button>
 

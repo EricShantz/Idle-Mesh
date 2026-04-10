@@ -1191,7 +1191,10 @@ export const useGameStore = create<GameState>()(
         const state = get();
         if (state.totalEarned < 1_000_000) return false;
 
-        const pointsEarned = Math.floor(state.totalEarned / 1_000_000);
+        // Scaling: Nth point costs N million (triangular numbers)
+        // Total for N points = N*(N+1)/2 million, so N = floor((-1+sqrt(1+8T))/2) where T = totalEarned/1M
+        const t = state.totalEarned / 1_000_000;
+        const pointsEarned = Math.floor((-1 + Math.sqrt(1 + 8 * t)) / 2);
 
         set(draft => {
           // Award prestige points
