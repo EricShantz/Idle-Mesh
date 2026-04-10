@@ -186,7 +186,7 @@ export function Sidebar() {
       <div className="border-t border-gray-800 pt-3">
         <div className="text-gray-500 text-xs uppercase tracking-wider mb-2">Stats</div>
         <div className="grid grid-cols-2 gap-y-1.5 text-xs">
-          <span className="text-gray-500">Total earned</span>
+          <span className="text-gray-500">Lifetime Earnings</span>
           <span className="text-gray-300 text-right">{formatMoney(totalEarned)}</span>
           <span className="text-gray-500">Consumed</span>
           <span className="text-green-400 text-right">{eventsConsumed.toLocaleString()}</span>

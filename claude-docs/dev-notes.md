@@ -127,7 +127,7 @@
 
 ## Prestige System ("Schema Registry")
 - `prestige` state holds `points`, `totalPoints`, `count`, `permanentUpgradeLevels: Record<string, number>`.
-- Prestige awards points on a scaling triangular curve: Nth point costs $N million (1st=$1M, 2nd=$2M, 3rd=$3M...). Total earned for N points = N*(N+1)/2 million. Formula: `N = floor((-1 + sqrt(1 + 8 * totalEarned/1M)) / 2)`.
+- Prestige awards points on a scaling triangular curve: Nth point costs $N million (1st=$1M, 2nd=$2M, 3rd=$3M...). Lifetime Earnings for N points = N*(N+1)/2 million. Formula: `N = floor((-1 + sqrt(1 + 8 * totalEarned/1M)) / 2)`.
 - `performPrestige()` resets all run state while preserving `prestige` and `tutorialsSeen`. Post-reset applies permanent node effects.
 - `showPrestigeTree` (transient, excluded from save) controls full-page tree view.
 
