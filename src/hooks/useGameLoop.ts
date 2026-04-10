@@ -83,7 +83,8 @@ export function getBrokerUtilization(brokerId: string, cap: number): number {
  *  Returns the path AND the waypoint index of each node center in the path. */
 function rebuildPathFromNodeIds(
   nodeIds: string[],
-  components: { id: string; type: string; x: number; y: number }[]
+  components: { id: string; type: string; x: number; y: number }[],
+  connections?: { fromId: string; toId: string }[]
 ): { path: { x: number; y: number }[]; nodeWpIndices: number[] } {
   const nodes: { id: string; type: string; x: number; y: number }[] = [];
   for (const id of nodeIds) {
@@ -112,26 +113,37 @@ function rebuildPathFromNodeIds(
           path.push(segWaypoints[w]);
         }
       } else {
-        const aHalfW = a.type === 'queue' ? 70 : 60;
-        const bHalfW = b.type === 'queue' ? 70 : 60;
-        const portStartX = a.x + aHalfW + 24;
-        const portEndX = b.x - bHalfW - 2;
+        // Check if this is a reverse bridge traversal (dot goes a→b but connection is b→a)
+        const isReverseBridge = a.type === 'broker' && b.type === 'broker' && connections &&
+          !connections.some(c => c.fromId === a.id && c.toId === b.id) &&
+          connections.some(c => c.fromId === b.id && c.toId === a.id);
+
+        // Use connection direction for waypoint computation so dots follow the displayed SVG path
+        const src = isReverseBridge ? b : a;
+        const dst = isReverseBridge ? a : b;
+        const srcHalfW = src.type === 'queue' ? 70 : 60;
+        const dstHalfW = dst.type === 'queue' ? 70 : 60;
+        const portStartX = src.x + srcHalfW + 24;
+        const portEndX = dst.x - dstHalfW - 2;
         const halfH = 28;
         const fromBounds = {
-          left: a.x - aHalfW,
-          right: a.x + aHalfW + 24,
-          top: a.y - halfH,
-          bottom: a.y + halfH,
+          left: src.x - srcHalfW,
+          right: src.x + srcHalfW + 24,
+          top: src.y - halfH,
+          bottom: src.y + halfH,
         };
         const toBounds = {
-          left: b.x - bHalfW,
-          right: b.x + bHalfW,
-          top: b.y - halfH,
-          bottom: b.y + halfH,
+          left: dst.x - dstHalfW,
+          right: dst.x + dstHalfW,
+          top: dst.y - halfH,
+          bottom: dst.y + halfH,
         };
-        const segWaypoints = computeOrthogonalWaypoints(portStartX, a.y, portEndX, b.y, fromBounds, toBounds);
-        for (let w = 1; w < segWaypoints.length - 1; w++) {
-          path.push(segWaypoints[w]);
+        const segWaypoints = computeOrthogonalWaypoints(portStartX, src.y, portEndX, dst.y, fromBounds, toBounds);
+        // For reverse bridges, reverse the intermediate waypoints so dot travels the displayed path backward
+        const intermediates = segWaypoints.slice(1, -1);
+        if (isReverseBridge) intermediates.reverse();
+        for (const wp of intermediates) {
+          path.push(wp);
         }
       }
     }
@@ -326,7 +338,7 @@ export function useGameLoop() {
               (dot.status === 'traveling' || dot.status === 'queued')) {
             const oldPath = dot.path;
             const oldNodeWpIndices = dot.nodeWpIndices;
-            const { path: freshPath, nodeWpIndices: freshIndices } = rebuildPathFromNodeIds(dot.originalNodeIds, state.components);
+            const { path: freshPath, nodeWpIndices: freshIndices } = rebuildPathFromNodeIds(dot.originalNodeIds, state.components, state.connections);
             if (freshPath.length >= 2) {
               if (dot.status === 'queued' && dot.queuedAtNodeId) {
                 postDragCleanupQueues.add(dot.queuedAtNodeId);
@@ -352,7 +364,7 @@ export function useGameLoop() {
             // Also rebuild forkPaths one final time for Y-snap
             if (dot.forkPaths) {
               const updatedForks = dot.forkPaths.map(fork => {
-                const { path: newForkPath } = rebuildPathFromNodeIds(fork.nodeIds, state.components);
+                const { path: newForkPath } = rebuildPathFromNodeIds(fork.nodeIds, state.components, state.connections);
                 return newForkPath.length >= 2 ? { ...fork, waypoints: newForkPath } : fork;
               });
               dot = { ...dot, forkPaths: updatedForks } as typeof dot;
@@ -363,7 +375,7 @@ export function useGameLoop() {
           if (state.draggingNodeId && dot.originalNodeIds?.includes(state.draggingNodeId) &&
               (dot.status === 'traveling' || dot.status === 'queued')) {
             const oldPath = dot.path;
-            const { path: newPath, nodeWpIndices: newNodeWpIndices } = rebuildPathFromNodeIds(dot.originalNodeIds, state.components);
+            const { path: newPath, nodeWpIndices: newNodeWpIndices } = rebuildPathFromNodeIds(dot.originalNodeIds, state.components, state.connections);
             if (newPath.length >= 2) {
               // For queued dots: pin progress to the queue's waypoint on the new path
               if (dot.status === 'queued' && dot.queuedAtNodeId) {
@@ -399,7 +411,7 @@ export function useGameLoop() {
             if (dot.forkPaths) {
               const updatedForks = dot.forkPaths.map(fork => {
                 if (fork.nodeIds.includes(state.draggingNodeId!)) {
-                  const { path: newForkPath } = rebuildPathFromNodeIds(fork.nodeIds, state.components);
+                  const { path: newForkPath } = rebuildPathFromNodeIds(fork.nodeIds, state.components, state.connections);
                   return { ...fork, waypoints: newForkPath };
                 }
                 return fork;
@@ -1037,26 +1049,33 @@ export function useGameLoop() {
                   const a = routeNodes[ni];
                   const b = routeNodes[ni + 1];
                   if (Math.abs(a.y - b.y) >= 5) {
-                    const aHalfW = a.type === 'queue' ? 70 : 60;
-                    const bHalfW = b.type === 'queue' ? 70 : 60;
-                    const portStartX = a.x + aHalfW + 24;
-                    const portEndX = b.x - bHalfW - 2;
+                    const isReverseBridge = a.type === 'broker' && b.type === 'broker' &&
+                      !state.connections.some(c => c.fromId === a.id && c.toId === b.id) &&
+                      state.connections.some(c => c.fromId === b.id && c.toId === a.id);
+                    const src = isReverseBridge ? b : a;
+                    const dst = isReverseBridge ? a : b;
+                    const srcHalfW = src.type === 'queue' ? 70 : 60;
+                    const dstHalfW = dst.type === 'queue' ? 70 : 60;
+                    const portStartX = src.x + srcHalfW + 24;
+                    const portEndX = dst.x - dstHalfW - 2;
                     const halfH = 28;
                     const fromBounds = {
-                      left: a.x - aHalfW,
-                      right: a.x + aHalfW + 24,
-                      top: a.y - halfH,
-                      bottom: a.y + halfH,
+                      left: src.x - srcHalfW,
+                      right: src.x + srcHalfW + 24,
+                      top: src.y - halfH,
+                      bottom: src.y + halfH,
                     };
                     const toBounds = {
-                      left: b.x - bHalfW,
-                      right: b.x + bHalfW,
-                      top: b.y - halfH,
-                      bottom: b.y + halfH,
+                      left: dst.x - dstHalfW,
+                      right: dst.x + dstHalfW,
+                      top: dst.y - halfH,
+                      bottom: dst.y + halfH,
                     };
-                    const segWaypoints = computeOrthogonalWaypoints(portStartX, a.y, portEndX, b.y, fromBounds, toBounds);
-                    for (let w = 1; w < segWaypoints.length - 1; w++) {
-                      pathFromBroker.push(segWaypoints[w]);
+                    const segWaypoints = computeOrthogonalWaypoints(portStartX, src.y, portEndX, dst.y, fromBounds, toBounds);
+                    const intermediates = segWaypoints.slice(1, -1);
+                    if (isReverseBridge) intermediates.reverse();
+                    for (const wp of intermediates) {
+                      pathFromBroker.push(wp);
                     }
                   }
                   pathFromBroker.push({ x: b.x, y: b.y });

@@ -1187,27 +1187,36 @@ export const useGameStore = create<GameState>()(
             if (Math.abs(a.y - b.y) >= 10) {
               const aNode = state.components.find(c => c.id === nodeIds[i]);
               const bNode = state.components.find(c => c.id === nodeIds[i + 1]);
-              const aHalfW = aNode?.type === 'queue' ? 70 : 60;
-              const bHalfW = bNode?.type === 'queue' ? 70 : 60;
-              const portStartX = a.x + aHalfW + 24; // port right edge
-              const portEndX = b.x - bHalfW - 2;    // target left edge
+              // Detect reverse bridge traversal: dot goes a→b but connection is b→a
+              const isReverseBridge = aNode?.type === 'broker' && bNode?.type === 'broker' &&
+                !state.connections.some(c => c.fromId === nodeIds[i] && c.toId === nodeIds[i + 1]) &&
+                state.connections.some(c => c.fromId === nodeIds[i + 1] && c.toId === nodeIds[i]);
+              const src = isReverseBridge ? b : a;
+              const dst = isReverseBridge ? a : b;
+              const srcNode = isReverseBridge ? bNode : aNode;
+              const dstNode = isReverseBridge ? aNode : bNode;
+              const srcHalfW = srcNode?.type === 'queue' ? 70 : 60;
+              const dstHalfW = dstNode?.type === 'queue' ? 70 : 60;
+              const portStartX = src.x + srcHalfW + 24; // port right edge
+              const portEndX = dst.x - dstHalfW - 2;    // target left edge
               const halfH = 28;
               const fromBounds = {
-                left: a.x - aHalfW,
-                right: a.x + aHalfW + 24,
-                top: a.y - halfH,
-                bottom: a.y + halfH,
+                left: src.x - srcHalfW,
+                right: src.x + srcHalfW + 24,
+                top: src.y - halfH,
+                bottom: src.y + halfH,
               };
               const toBounds = {
-                left: b.x - bHalfW,
-                right: b.x + bHalfW,
-                top: b.y - halfH,
-                bottom: b.y + halfH,
+                left: dst.x - dstHalfW,
+                right: dst.x + dstHalfW,
+                top: dst.y - halfH,
+                bottom: dst.y + halfH,
               };
-              const segWaypoints = computeOrthogonalWaypoints(portStartX, a.y, portEndX, b.y, fromBounds, toBounds);
-              // Skip first point (it's the start, already in expanded) and last (will be added as b)
-              for (let w = 1; w < segWaypoints.length - 1; w++) {
-                expanded.push(segWaypoints[w]);
+              const segWaypoints = computeOrthogonalWaypoints(portStartX, src.y, portEndX, dst.y, fromBounds, toBounds);
+              const intermediates = segWaypoints.slice(1, -1);
+              if (isReverseBridge) intermediates.reverse();
+              for (const wp of intermediates) {
+                expanded.push(wp);
               }
             }
             expanded.push(b);
