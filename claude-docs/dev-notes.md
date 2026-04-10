@@ -17,6 +17,7 @@
 ## Drag-to-Move
 - Implemented in `NodeCard.tsx` using pointer capture + ref-based drag state. RAF-throttled state updates. Final position flushed synchronously on pointer up.
 - `draggingNodeId` (transient, in store) is set when drag movement begins and cleared on pointer up.
+- **Y-snap on drop**: on pointer up, if the node's Y is within 5px of any connected neighbor's Y, the node snaps to that neighbor's Y. This ensures nearly-horizontal connections become perfectly straight, eliminating the small orthogonal step that would otherwise cause dots to visibly climb/descend.
 
 ## Live Path Rebuilding During Drag
 - When a component is being dragged, all in-flight dots whose `originalNodeIds` include the dragged component have their paths rebuilt every frame via `rebuildPathFromNodeIds()`.

@@ -339,6 +339,32 @@ export function NodeCard({ component }: Props) {
       moveComponent(component.id, pendingMove.current.x, pendingMove.current.y);
       moveRaf.current = 0;
     }
+    // Snap Y to nearest connected neighbor if within threshold
+    if (hasMoved.current) {
+      const state = useGameStore.getState();
+      const conns = state.connections;
+      const comps = state.components;
+      const SNAP_THRESHOLD = 5;
+      let closestDy = Infinity;
+      let snapY: number | null = null;
+      for (const conn of conns) {
+        let neighborId: string | null = null;
+        if (conn.fromId === component.id) neighborId = conn.toId;
+        else if (conn.toId === component.id) neighborId = conn.fromId;
+        if (!neighborId) continue;
+        const neighbor = comps.find(c => c.id === neighborId);
+        if (!neighbor) continue;
+        const dy = Math.abs(pendingMove.current.y - neighbor.y);
+        if (dy > 0 && dy < SNAP_THRESHOLD && dy < closestDy) {
+          closestDy = dy;
+          snapY = neighbor.y;
+        }
+      }
+      if (snapY !== null) {
+        moveComponent(component.id, pendingMove.current.x, snapY);
+      }
+    }
+
     setDraggingNodeId(null);
 
     // Fire event if this was just a click (no drag)
