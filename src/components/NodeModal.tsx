@@ -312,7 +312,7 @@ export function NodeModal() {
             );
           })}
         </div>
-        {(node.type === 'queue' || node.type === 'dmq') && (
+        {!['pub-1', 'webhook-1', 'sub-1'].includes(node.id) && (
           <button
             onClick={() => { removeComponent(node.id); selectNode(null); }}
             className="mt-2 w-full px-2 py-1.5 rounded text-xs border border-red-800 text-red-400 hover:bg-red-900/30 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
@@ -320,7 +320,7 @@ export function NodeModal() {
             <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
               <path d="M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M3 3v7a1 1 0 001 1h4a1 1 0 001-1V3" />
             </svg>
-            Delete {node.type === 'dmq' ? 'DMQ' : 'Queue'}
+            Delete {node.label}
           </button>
         )}
       </motion.div>
