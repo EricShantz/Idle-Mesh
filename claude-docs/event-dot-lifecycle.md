@@ -37,7 +37,7 @@ type EventDot = {
 - **Path-ordered interaction**: dots only collide with the **next** queue or subscriber on their path (determined from `pathComps` by progress). This prevents dots from being captured by nodes they physically overlap but haven't reached yet along their connection route. DMQ catch is exempt — it uses spatial-only collision on falling dots.
 
 ## Broker-level forking
-When multiple downstream paths exist (fan-out or bridge), `fireEvent` creates one dot per unique first-broker. Extra paths are stored as `forkPaths` on the dot. When the dot reaches the fork broker (detected via `dotTouchesNode` in `useGameLoop`), fork dots are spawned from the broker position for each additional path. Fork dot IDs are generated via `nextDotId()` exported from `gameStore.ts`.
+When multiple downstream paths exist (fan-out or bridge), `fireEvent` creates one dot per unique first-broker. Extra paths are stored as `forkPaths` on the dot. When the dot reaches the fork broker (detected via `dotTouchesNode` in `useGameLoop`), fork dots are spawned from the broker position for each additional path. Fork dot IDs are generated via `nextDotId()` exported from `gameStore.ts`. During node drag, `forkPaths` waypoints are rebuilt each frame (alongside the main `path`) so fork dots don't spawn on stale coordinates if the broker has moved.
 
 ## Key behaviors
 - `traveling` → slows through webhook when dot visually overlaps the webhook node, drops near webhook/broker if component is occupied
