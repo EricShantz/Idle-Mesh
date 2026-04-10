@@ -1,7 +1,6 @@
 import type { ComponentType, ReactNode } from 'react';
 import {
   PublisherGraphic,
-  EventsFlowGraphic,
   WebhookFlowGraphic,
   EarnMoneyGraphic,
   UpgradeExpandGraphic,
