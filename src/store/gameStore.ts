@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { canConnect } from '../utils/connectionRules';
-import { globalUpgrades, getUpgradeCost } from './upgradeConfig';
 import { getNextTopic } from './topicPool';
 import { topicMatches, computeBroadenedTopic } from '../utils/topicMatching';
 import { normalizedSpeed } from '../utils/pathUtils';
