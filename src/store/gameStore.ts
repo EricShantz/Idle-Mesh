@@ -4,6 +4,7 @@ import { canConnect } from '../utils/connectionRules';
 import { getNextTopic } from './topicPool';
 import { topicMatches, computeBroadenedTopic } from '../utils/topicMatching';
 import { normalizedSpeed } from '../utils/pathUtils';
+import { computeOrthogonalWaypoints } from '../utils/orthogonalPath';
 import { getSmoothedFps } from '../hooks/useGameLoop';
 import { prestigeNodes, isNodeAvailable, isNodePurchased, type PrestigeNode } from './prestigeUpgradeConfig';
 
@@ -1146,7 +1147,7 @@ export const useGameStore = create<GameState>()(
         walk(publisherId, [], [], new Set());
 
         // Expand node-center paths into orthogonal waypoints
-        // Use port-adjusted midX to match SVG connection line rendering
+        // Uses computeOrthogonalWaypoints to match SVG connection line routing
         return results.map(({ waypoints: nodePath, nodeIds }) => {
           if (nodePath.length < 2) return { waypoints: nodePath, nodeIds };
           const expanded: { x: number; y: number }[] = [nodePath[0]];
@@ -1154,18 +1155,30 @@ export const useGameStore = create<GameState>()(
             const a = nodePath[i];
             const b = nodePath[i + 1];
             if (Math.abs(a.y - b.y) >= 1) {
-              // Match ConnectionLine.tsx port positions:
-              // startX = from.x + fromHalfW + 16 (port center) + 8 (port radius)
-              // endX = to.x - toHalfW - 2
               const aNode = state.components.find(c => c.id === nodeIds[i]);
               const bNode = state.components.find(c => c.id === nodeIds[i + 1]);
               const aHalfW = aNode?.type === 'queue' ? 70 : 60;
               const bHalfW = bNode?.type === 'queue' ? 70 : 60;
               const portStartX = a.x + aHalfW + 24; // port right edge
               const portEndX = b.x - bHalfW - 2;    // target left edge
-              const midX = (portStartX + portEndX) / 2;
-              expanded.push({ x: midX, y: a.y });
-              expanded.push({ x: midX, y: b.y });
+              const halfH = 28;
+              const fromBounds = {
+                left: a.x - aHalfW,
+                right: a.x + aHalfW + 24,
+                top: a.y - halfH,
+                bottom: a.y + halfH,
+              };
+              const toBounds = {
+                left: b.x - bHalfW,
+                right: b.x + bHalfW,
+                top: b.y - halfH,
+                bottom: b.y + halfH,
+              };
+              const segWaypoints = computeOrthogonalWaypoints(portStartX, a.y, portEndX, b.y, fromBounds, toBounds);
+              // Skip first point (it's the start, already in expanded) and last (will be added as b)
+              for (let w = 1; w < segWaypoints.length - 1; w++) {
+                expanded.push(segWaypoints[w]);
+              }
             }
             expanded.push(b);
           }

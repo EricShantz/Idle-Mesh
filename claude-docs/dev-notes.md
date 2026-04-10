@@ -34,10 +34,11 @@
 - Port position = `from.x + halfW + 16` where halfW is 60 (120px nodes) or 70 (140px queue nodes).
 - DMQ uses top-center port (`from.x, from.y - 28 - 16`) with vertical-first routing, terminating at broker's bottom edge (`to.x, to.y + 30`).
 - All nodes use `minHeight: 56` and fixed `width` for consistent port alignment (DMQ width is dynamic: 120 + 40 * dmqWidthLevel).
+- **Node-aware routing**: `computeOrthogonalWaypoints()` in `orthogonalPath.ts` is the single source of truth for routing. It accepts optional `NodeBounds` for source and target nodes. When the midpoint vertical segment would clip through either node (e.g. nodes vertically aligned or target to the left), it routes a 6-point detour: right to clear source → vertically past source → left to clear target → vertically to target Y → right into target. Lines always exit right from the source port and enter left into the target.
+- `buildSvgPathFromWaypoints()` draws rounded corners for any number of waypoints (generic, not limited to 4 points).
 
 ## Dot Path Waypoint Expansion
-- `_getAllPathsWithNodes()` walks node centers, then expands non-horizontal segments into orthogonal waypoints.
-- Vertical `midX` is port-adjusted: `midX = (from.x + fromHalfW + 24 + to.x - toHalfW - 2) / 2` where halfW is 60 (standard) or 70 (queue). Same formula used in `rebuildPathFromNodeIds()` and all queue release / DMQ retry path rebuilds.
+- `_getAllPathsWithNodes()` walks node centers, then expands non-horizontal segments into orthogonal waypoints using `computeOrthogonalWaypoints()` with node bounding boxes, keeping dot paths in sync with SVG connection lines.
 
 ## Smart Routing & Fan-out
 - `_getAllPathsWithNodes()` does DFS returning paths with both waypoints and node IDs. Bridge connections traversed bidirectionally.
