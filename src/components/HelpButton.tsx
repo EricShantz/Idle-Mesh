@@ -232,11 +232,11 @@ export function HelpButton() {
     <>
       <button
         onClick={() => { setOpen(o => !o); if (open) setViewingComponent(null); }}
-        className="fixed top-3 left-3 w-9 h-9 rounded-full border border-gray-600 bg-gray-800/90 hover:bg-gray-700 text-gray-300 hover:text-white flex items-center justify-center text-lg font-bold backdrop-blur-sm transition-colors"
+        className="fixed top-3 left-3 px-3 h-9 rounded-full border border-gray-600 bg-gray-800/90 hover:bg-gray-700 text-gray-300 hover:text-white flex items-center justify-center text-sm font-semibold backdrop-blur-sm transition-colors"
         style={{ zIndex: 50 }}
         title="Help & Info"
       >
-        ?
+        Guide
       </button>
 
       <AnimatePresence>
