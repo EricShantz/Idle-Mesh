@@ -94,8 +94,10 @@
 
 ## Tutorial System
 - `tutorialsSeen: Record<string, boolean>` persists which tutorials dismissed. `activeTutorial: string | null` (transient).
-- Triggers: `intro` on first mount via `App.tsx`, `brokerUpgrade` inside `upgradeComponent` (2 slides: broker info + new components available), `firstFanOut` inside `upgradeComponent` on first Persistent Delivery purchase, component-type tutorials inside `addComponent`, `firstDrop` from `useGameLoop.ts` 1 second after the first event drop. Publisher/subscriber tutorials trigger on 2nd instance.
+- Triggers: `intro` on first mount via `App.tsx` (after intro cinematic completes), `brokerUpgrade` inside `upgradeComponent` (2 slides: broker info + new components available), `firstFanOut` inside `upgradeComponent` on first Persistent Delivery purchase, component-type tutorials inside `addComponent`, `firstDrop` from `useGameLoop.ts` 1 second after the first event drop. Publisher/subscriber tutorials trigger on 2nd instance.
 - Post-broker-upgrade flow: after the `brokerUpgrade` tutorial is dismissed, `Sidebar.tsx` scrolls to the "Mesh Components" section and applies a cyan glow highlight. The glow persists until the user clicks anywhere (global click listener).
+- **Dave** — pixel-art developer character (`PixelCharacter` exported from `IntroSequence.tsx`). Appears in the intro cinematic (frustrated → determined) and in all tutorial modals (bottom-right, delivering slides as speech bubbles). The tutorial card is positioned to Dave's left with a speech tail pointing at his mouth (bottom-right of card).
+- **Intro cinematic** — `IntroSequence.tsx`, gated by `tutorialsSeen['introSequence']`. Shows 15-service spaghetti diagram with failing dots, red pulsing vignette, then Dave delivers 4 lines of dialogue via "Next" buttons. Skippable. Rendered in `App.tsx` before game UI; `showTutorial('intro')` fires after intro completes.
 - Content in `tutorialConfig.tsx` (note: `.tsx` — file uses JSX for rich body content); UI in `TutorialModal.tsx` (z-index 60).
 - `TutorialSlide.body` is typed as `ReactNode`, so slide bodies can be plain strings or JSX (e.g. `<span style={{color: ...}}>` for inline color). `TutorialModal` renders it directly inside a `<p>`.
 - `TutorialSlide` has an optional `graphic?: ComponentType` field. When present, `TutorialModal` renders the graphic between the slide title and body text.

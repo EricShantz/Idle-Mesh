@@ -23,7 +23,8 @@ src/
     Sidebar.tsx         # Balance, stats, collapsible sections (Schema Registry, Mesh Upgrades, Mesh Components)
     PrestigePanel.tsx   # Prestige stats, "Register Schema" button, confirmation dialog
     PrestigeTreePage.tsx # Full-page prestige skill tree with pan/zoom
-    TutorialModal.tsx   # Centered overlay modal for tutorial slides
+    IntroSequence.tsx   # First-load cinematic: spaghetti diagram + Dave character intro
+    TutorialModal.tsx   # Tutorial overlay with Dave (pixel-art character) delivering slides as speech bubbles
     TutorialGraphics.tsx # Animated SVG graphics for each tutorial slide (Framer Motion)
   store/
     gameStore.ts        # All Zustand state + actions, auto-save subscription
