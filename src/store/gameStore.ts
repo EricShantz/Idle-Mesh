@@ -435,15 +435,31 @@ export const useGameStore = create<GameState>()(
           if (!directConn) return;
           const target = state.components.find(c => c.id === directConn.toId);
           if (!target) return;
-          // Build path using node centers (same as _getAllPathsWithNodes), then expand orthogonally
+          // Build path using node centers, then expand orthogonally with bounds
           const nodePath = [{ x: pub.x, y: pub.y }, { x: target.x, y: target.y }];
           const truncatedWaypoints: { x: number; y: number }[] = [nodePath[0]];
-          if (Math.abs(nodePath[0].y - nodePath[1].y) >= 1) {
+          if (Math.abs(nodePath[0].y - nodePath[1].y) >= 5) {
             const pubHalfW = pub.type === 'queue' ? 70 : 60;
             const tgtHalfW = target.type === 'queue' ? 70 : 60;
-            const midX = (pub.x + pubHalfW + 24 + target.x - tgtHalfW - 2) / 2;
-            truncatedWaypoints.push({ x: midX, y: nodePath[0].y });
-            truncatedWaypoints.push({ x: midX, y: nodePath[1].y });
+            const portStartX = pub.x + pubHalfW + 24;
+            const portEndX = target.x - tgtHalfW - 2;
+            const halfH = 28;
+            const fromBounds = {
+              left: pub.x - pubHalfW,
+              right: pub.x + pubHalfW + 24,
+              top: pub.y - halfH,
+              bottom: pub.y + halfH,
+            };
+            const toBounds = {
+              left: target.x - tgtHalfW,
+              right: target.x + tgtHalfW,
+              top: target.y - halfH,
+              bottom: target.y + halfH,
+            };
+            const segWaypoints = computeOrthogonalWaypoints(portStartX, pub.y, portEndX, target.y, fromBounds, toBounds);
+            for (let w = 1; w < segWaypoints.length - 1; w++) {
+              truncatedWaypoints.push(segWaypoints[w]);
+            }
           }
           truncatedWaypoints.push(nodePath[1]);
           const value = state.getEventValue(publisherId);
@@ -1154,7 +1170,7 @@ export const useGameStore = create<GameState>()(
           for (let i = 0; i < nodePath.length - 1; i++) {
             const a = nodePath[i];
             const b = nodePath[i + 1];
-            if (Math.abs(a.y - b.y) >= 1) {
+            if (Math.abs(a.y - b.y) >= 5) {
               const aNode = state.components.find(c => c.id === nodeIds[i]);
               const bNode = state.components.find(c => c.id === nodeIds[i + 1]);
               const aHalfW = aNode?.type === 'queue' ? 70 : 60;

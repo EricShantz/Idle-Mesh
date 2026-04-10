@@ -20,7 +20,7 @@ export function computeOrthogonalWaypoints(
   toBounds?: NodeBounds,
 ): Point[] {
   // Straight horizontal — no routing needed
-  if (Math.abs(startY - endY) < 1) {
+  if (Math.abs(startY - endY) < 5) {
     return [
       { x: startX, y: startY },
       { x: endX, y: endY },
@@ -45,20 +45,8 @@ export function computeOrthogonalWaypoints(
     ];
   }
 
-  // Determine which side to route the vertical segment on.
-  // Pick the side that requires the least horizontal extension.
   const fromRight = fromBounds ? fromBounds.right : startX;
-  const fromLeft = fromBounds ? fromBounds.left : startX;
-  const toRight = toBounds ? toBounds.right : endX;
   const toLeft = toBounds ? toBounds.left : endX;
-
-  // Option A: route right — vertical segment just past both right edges
-  const routeRight = Math.max(fromRight, toRight) + CLEARANCE;
-  const costRight = Math.abs(routeRight - startX) + Math.abs(routeRight - endX);
-
-  // Option B: route left — vertical segment just past both left edges
-  const routeLeft = Math.min(fromLeft, toLeft) - CLEARANCE;
-  const costLeft = Math.abs(startX - routeLeft) + Math.abs(endX - routeLeft);
 
   const dy = endY - startY;
 

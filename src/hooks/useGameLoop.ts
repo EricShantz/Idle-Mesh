@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useGameStore, nextDotId, getPermanentQueueBufferBonus, hasPermanentBatchConsume } from '../store/gameStore';
 import { interpolatePath, normalizedSpeed } from '../utils/pathUtils';
+import { computeOrthogonalWaypoints } from '../utils/orthogonalPath';
 
 // Node card dimensions: positioned at left: x-60, top: y-28
 // Card width: 120px (half = 60), card height varies but ~56px
@@ -86,21 +87,34 @@ function rebuildPathFromNodeIds(
   const path: { x: number; y: number }[] = [{ x: nodes[0].x, y: nodes[0].y }];
   for (let i = 0; i < nodes.length - 1; i++) {
     const a = nodes[i], b = nodes[i + 1];
-    if (Math.abs(a.y - b.y) >= 1) {
+    if (Math.abs(a.y - b.y) >= 5) {
       // DMQ→broker uses vertical-first routing
       if (a.type === 'dmq' && b.type === 'broker') {
         const midY = (a.y + b.y) / 2;
         path.push({ x: a.x, y: midY });
         path.push({ x: b.x, y: midY });
       } else {
-        // Match port-adjusted midX from ConnectionLine.tsx
         const aHalfW = a.type === 'queue' ? 70 : 60;
         const bHalfW = b.type === 'queue' ? 70 : 60;
         const portStartX = a.x + aHalfW + 24;
         const portEndX = b.x - bHalfW - 2;
-        const midX = (portStartX + portEndX) / 2;
-        path.push({ x: midX, y: a.y });
-        path.push({ x: midX, y: b.y });
+        const halfH = 28;
+        const fromBounds = {
+          left: a.x - aHalfW,
+          right: a.x + aHalfW + 24,
+          top: a.y - halfH,
+          bottom: a.y + halfH,
+        };
+        const toBounds = {
+          left: b.x - bHalfW,
+          right: b.x + bHalfW,
+          top: b.y - halfH,
+          bottom: b.y + halfH,
+        };
+        const segWaypoints = computeOrthogonalWaypoints(portStartX, a.y, portEndX, b.y, fromBounds, toBounds);
+        for (let w = 1; w < segWaypoints.length - 1; w++) {
+          path.push(segWaypoints[w]);
+        }
       }
     }
     path.push({ x: b.x, y: b.y });
@@ -749,12 +763,28 @@ export function useGameLoop() {
                 for (let ni = 0; ni < routeNodes.length - 1; ni++) {
                   const a = routeNodes[ni];
                   const b = routeNodes[ni + 1];
-                  if (Math.abs(a.y - b.y) >= 1) {
+                  if (Math.abs(a.y - b.y) >= 5) {
                     const aHalfW = a.type === 'queue' ? 70 : 60;
                     const bHalfW = b.type === 'queue' ? 70 : 60;
-                    const midX = (a.x + aHalfW + 24 + b.x - bHalfW - 2) / 2;
-                    pathFromBroker.push({ x: midX, y: a.y });
-                    pathFromBroker.push({ x: midX, y: b.y });
+                    const portStartX = a.x + aHalfW + 24;
+                    const portEndX = b.x - bHalfW - 2;
+                    const halfH = 28;
+                    const fromBounds = {
+                      left: a.x - aHalfW,
+                      right: a.x + aHalfW + 24,
+                      top: a.y - halfH,
+                      bottom: a.y + halfH,
+                    };
+                    const toBounds = {
+                      left: b.x - bHalfW,
+                      right: b.x + bHalfW,
+                      top: b.y - halfH,
+                      bottom: b.y + halfH,
+                    };
+                    const segWaypoints = computeOrthogonalWaypoints(portStartX, a.y, portEndX, b.y, fromBounds, toBounds);
+                    for (let w = 1; w < segWaypoints.length - 1; w++) {
+                      pathFromBroker.push(segWaypoints[w]);
+                    }
                   }
                   pathFromBroker.push({ x: b.x, y: b.y });
                 }
