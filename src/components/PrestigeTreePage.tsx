@@ -4,8 +4,8 @@ import { prestigeNodes, isNodePurchased, isNodeAvailable, branchColors } from '.
 import type { PrestigeBranch } from '../store/prestigeUpgradeConfig';
 import { ViewportContext, useViewportApi } from '../hooks/useViewport';
 
-const GRID_SPACING = 160;
-const NODE_SIZE = 80;
+const GRID_SPACING = 200;
+const NODE_SIZE = 96;
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 3;
 
@@ -244,7 +244,7 @@ function PrestigeTreeInner({ viewport }: { viewport: ReturnType<typeof useViewpo
               }}
               onPointerDown={(e) => e.stopPropagation()}
               disabled={isPurchasedNode || locked || !canAfford}
-              className="absolute flex flex-col items-center justify-center rounded-lg border-2 transition-colors duration-200 cursor-pointer disabled:cursor-default select-none"
+              className="absolute flex flex-col items-center justify-center rounded-lg border-2 transition-colors duration-200 cursor-pointer disabled:cursor-default select-none p-1"
               style={{
                 left: screen.x,
                 top: screen.y,
@@ -259,19 +259,19 @@ function PrestigeTreeInner({ viewport }: { viewport: ReturnType<typeof useViewpo
               }}
               title={`${n.label}\n${n.description}\nCost: ${n.cost} pts`}
             >
-              <span className="text-xl leading-none mb-0.5">
+              <span className="text-2xl leading-none mb-1">
                 {locked ? '\u{1F512}' : isPurchasedNode ? '\u2713' : getNodeIcon(n.key)}
               </span>
-              <span className="text-[9px] font-bold leading-tight text-center px-1 truncate w-full">
+              <span className="text-[11px] font-bold leading-tight text-center px-1.5 line-clamp-2 w-full">
                 {n.label}
               </span>
               {!isPurchasedNode && !locked && (
-                <span className="text-[8px] font-mono opacity-70 mt-0.5">
+                <span className="text-[10px] font-mono opacity-70 mt-0.5">
                   {n.cost} pt{n.cost !== 1 ? 's' : ''}
                 </span>
               )}
               {isPurchasedNode && (
-                <span className="text-[8px] font-mono opacity-70 mt-0.5">Owned</span>
+                <span className="text-[10px] font-mono opacity-70 mt-0.5">Owned</span>
               )}
             </button>
           );
