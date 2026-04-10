@@ -83,7 +83,9 @@
 
 ## DMQ Mechanics
 - DMQ catch detection runs inside the `dropped` dot branch of Pass 1 — checks `!dot.isRetry` to prevent infinite loops.
+- DMQ catch capacity is pre-computed from the source `dots` array before the main loop and incremented on each catch, preventing undercounting when existing queued dots appear later in iteration order.
 - DMQ release (Pass 3) is time-throttled: releases one dot every 500ms (`lastDmqReleaseTime`). If the retry path's first target is a queue, it releases unconditionally on the timer — if the queue is full on arrival, the dot drops (and won't be re-caught since `isRetry` is true). If the target is a subscriber, uses predictive timing (same logic as queue release, including `getArrivalProgress` for collision-aware travel time). Retry paths rebuilt at release time from `dot.originalNodeIds` using current positions.
+- DMQ can release to any connected broker, not just the original route's broker. When the connected broker differs from the original, a DFS walk (following connections + reverse bridges, same pattern as `_getAllPathsWithNodes`) finds a path from the connected broker to the original destination queue/subscriber.
 - DMQ width for collision = `(120 + dmqWidthLevel * 40) / 2` as half-width.
 
 ## Adaptive Coin Pop Throttling

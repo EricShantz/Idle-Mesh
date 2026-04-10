@@ -49,7 +49,8 @@
 - [x] add delete button to all purchased component upgrade modals (except the default publisher, webhook, broker, and subscriber. We dont want users to delete these and get soft locked if they dont have any money left)
 - [x] the monetary requirement to gain prestige points should scale upwards in how expensive they are
 - [x] add intro sequence the first time the game loads that shows a super messy spaghetti code graphic full of point to point connections that are failing all over, the screen should pulse red, then a message should show up saying something like "Ugh! this legacy code is a nightmare to deal with... That's it! I'm going to rebuild it using Event-Driven Architecture'
-- [ ] mske uprade notification more noticeable 
+- [x] DMQ releases to any connected broker via bridge routing to the original destination
+- [ ] user should be able to change queue subscription even when queue is fully broadened 
 ---
 
 ## Clarification Needed

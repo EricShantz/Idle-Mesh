@@ -308,6 +308,12 @@ export function useGameLoop() {
         // Track queues whose dots were rebuilt in post-drag cleanup this frame
         // (skip releases for 1 frame to let paths stabilize after Y-snap).
         const postDragCleanupQueues = new Set<string>();
+        // Pre-compute DMQ queued count from source array to avoid undercounting
+        // when existing queued dots appear later in iteration order
+        const dmqCompForCount = state.components.find(c => c.type === 'dmq');
+        let dmqQueuedCount = dmqCompForCount
+          ? dots.filter(d => d.status === 'queued' && d.queuedAtNodeId === dmqCompForCount.id).length
+          : 0;
 
         for (let i = 0; i < dots.length; i++) {
           let dot = dots[i];
@@ -729,11 +735,9 @@ export function useGameLoop() {
                 if (dropX >= dmq.x - dmqHalfW && dropX <= dmq.x + dmqHalfW && newDropY >= dmqTop) {
                   // Check DMQ buffer capacity
                   const dmqBufferSize = 3 + (dmq.upgrades['dmqBufferSize'] ?? 0);
-                  const dmqQueuedCount = updated.filter(d =>
-                    d.status === 'queued' && d.queuedAtNodeId === dmq.id
-                  ).length;
 
                   if (dmqQueuedCount < dmqBufferSize) {
+                    dmqQueuedCount++;
                     updated.push({
                       ...dot,
                       status: 'queued',
@@ -1034,7 +1038,45 @@ export function useGameLoop() {
                 // Get node IDs from broker onward using the original route
                 const origNodeIds = dot.originalNodeIds ?? [];
                 const brokerIdx = origNodeIds.indexOf(brokerTarget.id);
-                const nodeIdsFromBroker = brokerIdx >= 0 ? origNodeIds.slice(brokerIdx) : [brokerTarget.id];
+                let nodeIdsFromBroker: string[];
+                if (brokerIdx >= 0) {
+                  // DMQ is connected to the same broker as the original route
+                  nodeIdsFromBroker = origNodeIds.slice(brokerIdx);
+                } else {
+                  // DMQ is connected to a different broker — find a path through bridges
+                  // to the original destination (last queue/subscriber in the original route)
+                  const origDest = [...origNodeIds].reverse().find(nid => {
+                    const c = state.components.find(comp => comp.id === nid);
+                    return c?.type === 'queue' || c?.type === 'subscriber';
+                  });
+                  let foundPath: string[] | null = null;
+                  if (origDest) {
+                    const walkForDest = (nodeId: string, path: string[], visited: Set<string>): void => {
+                      if (foundPath) return;
+                      if (visited.has(nodeId)) return;
+                      visited.add(nodeId);
+                      const node = state.components.find(c => c.id === nodeId);
+                      if (!node) return;
+                      const curPath = [...path, nodeId];
+                      if (nodeId === origDest) { foundPath = curPath; return; }
+                      // Follow outgoing connections + reverse bridges (bidirectional)
+                      const nextConns = state.connections.filter(c => c.fromId === nodeId);
+                      const reverseBridgeConns = node.type === 'broker'
+                        ? state.connections.filter(c => c.toId === nodeId &&
+                          state.components.find(comp => comp.id === c.fromId)?.type === 'broker')
+                        : [];
+                      const allNext = [
+                        ...nextConns.map(c => c.toId),
+                        ...reverseBridgeConns.map(c => c.fromId),
+                      ];
+                      for (const nextId of allNext) {
+                        walkForDest(nextId, curPath, new Set(visited));
+                      }
+                    };
+                    walkForDest(brokerTarget.id, [], new Set());
+                  }
+                  nodeIdsFromBroker = foundPath ?? [brokerTarget.id];
+                }
 
                 // Build fresh waypoints from current positions: broker → ... → subscriber
                 const routeNodes: { x: number; y: number; type: string; id: string }[] = [];
