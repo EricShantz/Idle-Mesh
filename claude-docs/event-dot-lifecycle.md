@@ -18,6 +18,7 @@ type EventDot = {
   moneyAdded?: boolean;               // true once consumeEvent() has credited earnings
   isRetry?: boolean;                  // true for DMQ retry dots (orange, no re-catch)
   originalNodeIds?: string[];         // node IDs of the original path, used to rebuild fresh path on DMQ release
+  nodeWpIndices?: number[];           // waypoint index of each node in originalNodeIds on the current path (set during drag rebuild, cleared after post-drag cleanup)
   originalValue?: number;             // publisher event value at creation, used for DMQ value recovery calc
   forkPaths?: { waypoints: { x: number; y: number }[]; nodeIds: string[] }[];  // additional paths to spawn when dot reaches fork broker
   forkNodeId?: string;               // broker ID where fork dots should spawn
@@ -49,5 +50,5 @@ When multiple downstream paths exist (fan-out or bridge), `fireEvent` creates on
 ## Game loop pattern
 - Dots are processed sequentially in a `for` loop (not `.map()`) building a mutable `updated` array, so each dot sees the results of earlier dots in the same frame.
 - Side-effect counters (`droppedCount`) are accumulated during the dot loop and applied to the store in a single `setState` call after `updateDots` completes.
-- Three passes per frame: Pass 1 (main dot loop: travel, collide, drop, DMQ catch, live path rebuild during drag), Pass 2 (queue auto-release, skips DMQ-queued dots), Pass 3 (DMQ time-throttled auto-release: one dot every 500ms. If first target on retry path is a queue, releases unconditionally on the timer (drops on arrival if queue full). If subscriber, uses same timing prediction as Pass 2. Rebuilds path from current positions).
+- Three passes per frame: Pass 1 (main dot loop: travel, collide, drop, DMQ catch, live path rebuild during drag, post-drag cleanup on first frame after drag ends), Pass 2 (queue auto-release, skips DMQ-queued dots; time-throttled during drag via `queueLastReleaseTime`), Pass 3 (DMQ time-throttled auto-release: one dot every 500ms. If first target on retry path is a queue, releases unconditionally on the timer (drops on arrival if queue full). If subscriber, uses same timing prediction as Pass 2. Rebuilds path from current positions).
 - **Queue release path truncation**: when a dot is released from a queue (Pass 2), its path is rebuilt as queue→subscriber only (not the full publisher→...→queue→subscriber). This ensures `normalizedSpeed` is calculated on the remaining segments, so dots travel at consistent visual speed regardless of how many hops preceded the queue. With fan-out, the queue creates additional dot copies for each extra connected subscriber.

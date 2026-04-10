@@ -26,6 +26,9 @@ let firstDropTutorialShown = false;
 /** Throttle DMQ releases to ~1 every 500ms */
 let lastDmqReleaseTime = 0;
 
+/** Last release timestamp per queue — safety net during drag to prevent rapid draining */
+const queueLastReleaseTime = new Map<string, number>();
+
 /** Drop reason tracking for the warning "!" button */
 export type DropReason = 'path-invalid' | 'webhook-occupied' | 'broker-capped' | 'queue-full' | 'subscriber-occupied' | 'path-incomplete';
 
@@ -290,10 +293,9 @@ export function useGameLoop() {
         type Dot = import('../store/gameStore').EventDot;
         // Use a mutable array so each dot sees the results of earlier dots in the same frame
         const updated: Dot[] = [];
-        // Track queues whose dots were rebuilt during drag or post-drag cleanup this frame.
-        // Releases are paused for these queues because approaching dots can't enter
-        // (pixel collision fails on constantly-rebuilding orthogonal paths).
-        const dragAffectedQueues = new Set<string>();
+        // Track queues whose dots were rebuilt in post-drag cleanup this frame
+        // (skip releases for 1 frame to let paths stabilize after Y-snap).
+        const postDragCleanupQueues = new Set<string>();
 
         for (let i = 0; i < dots.length; i++) {
           let dot = dots[i];
@@ -327,7 +329,7 @@ export function useGameLoop() {
             const { path: freshPath, nodeWpIndices: freshIndices } = rebuildPathFromNodeIds(dot.originalNodeIds, state.components);
             if (freshPath.length >= 2) {
               if (dot.status === 'queued' && dot.queuedAtNodeId) {
-                dragAffectedQueues.add(dot.queuedAtNodeId);
+                postDragCleanupQueues.add(dot.queuedAtNodeId);
                 const queueNodeIdx = dot.originalNodeIds.indexOf(dot.queuedAtNodeId);
                 if (queueNodeIdx >= 0 && queueNodeIdx < freshIndices.length) {
                   const queueWpIdx = freshIndices[queueNodeIdx];
@@ -357,7 +359,6 @@ export function useGameLoop() {
             if (newPath.length >= 2) {
               // For queued dots: pin progress to the queue's waypoint on the new path
               if (dot.status === 'queued' && dot.queuedAtNodeId) {
-                dragAffectedQueues.add(dot.queuedAtNodeId);
                 const queueNodeIdx = dot.originalNodeIds.indexOf(dot.queuedAtNodeId);
                 if (queueNodeIdx >= 0 && queueNodeIdx < newNodeWpIndices.length) {
                   const queueWpIdx = newNodeWpIndices[queueNodeIdx];
@@ -550,7 +551,12 @@ export function useGameLoop() {
             let queued = false;
             if (nextInteractable && nextInteractable.comp.type === 'queue') {
               const queue = nextInteractable.comp;
-              if (dotTouchesNode(newPos.x, newPos.y, queue.x, queue.y)) {
+              // During drag, pixel collision can fail because orthogonal paths are rebuilt
+              // each frame (dot pixel position shifts while progress approaches the queue).
+              // Fall back to progress-based capture when dot reaches the queue's waypoint.
+              const queueProgress = nextInteractable.idx / (dot.path.length - 1);
+              const reachedByProgress = state.draggingNodeId && newProgress >= queueProgress;
+              if (reachedByProgress || dotTouchesNode(newPos.x, newPos.y, queue.x, queue.y)) {
                 const bufferSize = 3 + (queue.upgrades['bufferSize'] ?? 0) + getPermanentQueueBufferBonus(state);
                 // Count from the already-processed updated array for accurate counts
                 const queuedCount = updated.filter(d =>
@@ -715,11 +721,8 @@ export function useGameLoop() {
           const queueComp = state.components.find(c => c.id === queueId);
           if (queueComp?.type === 'dmq') continue;
 
-          // Pause releases for queues whose paths are being rebuilt during drag or
-          // post-drag cleanup. Rebuilding prevents approaching dots from entering the queue
-          // (pixel collision fails on constantly-changing orthogonal paths), so releasing
-          // while inflow is blocked would drain the queue.
-          if (dragAffectedQueues.has(queueId)) continue;
+          // Skip releases on the post-drag cleanup frame (paths just rebuilt after Y-snap)
+          if (postDragCleanupQueues.has(queueId)) continue;
 
           // Only release the oldest queued dot in this queue (FIFO by pauseStartTime)
           let isOldest = true;
@@ -870,9 +873,26 @@ export function useGameLoop() {
           }));
 
           // With fanout: all subscribers must be ready; without: just the target
-          const canRelease = releaseData.every(rd => shouldReleaseTo(rd.sub, rd.path, rd.progress));
+          let canRelease = releaseData.every(rd => shouldReleaseTo(rd.sub, rd.path, rd.progress));
+
+          // During drag, shouldReleaseTo timing is unreliable (in-flight dots' paths/speeds
+          // are rebuilt each frame). Enforce a minimum interval based on consume duration
+          // to prevent rapid queue draining.
+          if (canRelease && state.draggingNodeId) {
+            const lastRelease = queueLastReleaseTime.get(queueId) ?? 0;
+            const subComp = allConnectedSubs.length > 0
+              ? state.components.find(c => c.type === 'subscriber' && Math.hypot(c.x - allConnectedSubs[0].x, c.y - allConnectedSubs[0].y) < 50)
+              : null;
+            const fcLevel = subComp?.upgrades['fasterConsumption'] ?? 0;
+            const boostPct = Math.min(fcLevel * (fcLevel + 9) / 2, 100);
+            const minInterval = 1000 * (1 - boostPct / 100); // consume duration
+            if (Date.now() - lastRelease < minInterval) {
+              canRelease = false;
+            }
+          }
 
           if (canRelease) {
+            queueLastReleaseTime.set(queueId, Date.now());
             queueReleaseCounts.set(queueId, (queueReleaseCounts.get(queueId) ?? 0) + 1);
 
             for (let ti = 0; ti < releaseData.length; ti++) {
