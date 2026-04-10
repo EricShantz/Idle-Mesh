@@ -32,7 +32,7 @@
 ## Connection Line Geometry
 - Orthogonal (Boomi-style) lines routed horizontal → vertical → horizontal with rounded 12px corners.
 - Port position = `from.x + halfW + 16` where halfW is 60 (120px nodes) or 70 (140px queue nodes).
-- DMQ uses top-center port (`from.x, from.y - 28 - 16`) with vertical-first routing, terminating at broker's bottom edge (`to.x, to.y + 30`).
+- DMQ uses top-center port (`from.x, from.y - 28 - 16`) with vertical-first routing via `computeVerticalFirstWaypoints()`, terminating at broker's bottom edge (`to.x, to.y + 30`). Node-aware: detours around node bodies when the simple path would clip, descending on the broker-facing side of the DMQ and entering the broker from below.
 - All nodes use `minHeight: 56` and fixed `width` for consistent port alignment (DMQ width is dynamic: 120 + 40 * dmqWidthLevel).
 - **Node-aware routing**: `computeOrthogonalWaypoints()` in `orthogonalPath.ts` is the single source of truth for routing. It accepts optional `NodeBounds` for source and target nodes. When the midpoint vertical segment would clip through either node (e.g. nodes vertically aligned or target to the left), it routes a 6-point detour: right to clear source → vertically past source → left to clear target → vertically to target Y → right into target. Lines always exit right from the source port and enter left into the target.
 - `buildSvgPathFromWaypoints()` draws rounded corners for any number of waypoints (generic, not limited to 4 points).

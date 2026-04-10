@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useGameStore, nextDotId, getPermanentQueueBufferBonus, hasPermanentBatchConsume } from '../store/gameStore';
 import { interpolatePath, normalizedSpeed } from '../utils/pathUtils';
-import { computeOrthogonalWaypoints } from '../utils/orthogonalPath';
+import { computeOrthogonalWaypoints, computeVerticalFirstWaypoints } from '../utils/orthogonalPath';
 
 // Node card dimensions: positioned at left: x-60, top: y-28
 // Card width: 120px (half = 60), card height varies but ~56px
@@ -90,9 +90,19 @@ function rebuildPathFromNodeIds(
     if (Math.abs(a.y - b.y) >= 5) {
       // DMQ→broker uses vertical-first routing
       if (a.type === 'dmq' && b.type === 'broker') {
-        const midY = (a.y + b.y) / 2;
-        path.push({ x: a.x, y: midY });
-        path.push({ x: b.x, y: midY });
+        const halfH = 28;
+        const aHalfW = 60;
+        const bHalfW = 60;
+        const fromBounds = { left: a.x - aHalfW, right: a.x + aHalfW, top: a.y - halfH, bottom: a.y + halfH };
+        const toBounds = { left: b.x - bHalfW, right: b.x + bHalfW, top: b.y - halfH, bottom: b.y + halfH };
+        const startX = a.x;
+        const startY = a.y - halfH - 16; // top-center port
+        const endX = b.x;
+        const endY = b.y + halfH + 2; // bottom edge of broker
+        const segWaypoints = computeVerticalFirstWaypoints(startX, startY, endX, endY, fromBounds, toBounds);
+        for (let w = 1; w < segWaypoints.length - 1; w++) {
+          path.push(segWaypoints[w]);
+        }
       } else {
         const aHalfW = a.type === 'queue' ? 70 : 60;
         const bHalfW = b.type === 'queue' ? 70 : 60;
@@ -789,13 +799,17 @@ export function useGameLoop() {
                   pathFromBroker.push({ x: b.x, y: b.y });
                 }
 
-                // Build DMQ → broker path (vertical first)
-                const dmqToBroker: { x: number; y: number }[] = [{ x: dmqComp.x, y: dmqComp.y }];
-                if (Math.abs(dmqComp.x - brokerTarget.x) >= 1) {
-                  const midY = (dmqComp.y + brokerTarget.y) / 2;
-                  dmqToBroker.push({ x: dmqComp.x, y: midY });
-                  dmqToBroker.push({ x: brokerTarget.x, y: midY });
-                }
+                // Build DMQ → broker path (vertical first, node-aware)
+                const halfH = 28;
+                const dmqHalfW = 60;
+                const brokerHalfW = 60;
+                const dmqStartX = dmqComp.x;
+                const dmqStartY = dmqComp.y - halfH - 16; // top-center port
+                const brokerEndX = brokerTarget.x;
+                const brokerEndY = brokerTarget.y + halfH + 2; // bottom edge
+                const dmqFromBounds = { left: dmqComp.x - dmqHalfW, right: dmqComp.x + dmqHalfW, top: dmqComp.y - halfH, bottom: dmqComp.y + halfH };
+                const dmqToBounds = { left: brokerTarget.x - brokerHalfW, right: brokerTarget.x + brokerHalfW, top: brokerTarget.y - halfH, bottom: brokerTarget.y + halfH };
+                const dmqToBroker = computeVerticalFirstWaypoints(dmqStartX, dmqStartY, brokerEndX, brokerEndY, dmqFromBounds, dmqToBounds);
                 // Combine: DMQ → broker → original route from broker
                 const fullPath = [...dmqToBroker, ...pathFromBroker];
 

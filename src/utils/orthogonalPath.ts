@@ -87,32 +87,94 @@ export function getOrthogonalWaypoints(
 }
 
 /**
- * Builds an SVG path string for vertical-first orthogonal routing (up → horizontal → vertical).
+ * Compute vertical-first orthogonal waypoints (V → H → V) with node-aware routing.
+ * Used for DMQ top-center port connecting upward to broker.
+ */
+export function computeVerticalFirstWaypoints(
+  startX: number, startY: number,
+  endX: number, endY: number,
+  fromBounds?: NodeBounds,
+  toBounds?: NodeBounds,
+): Point[] {
+  if (Math.abs(startX - endX) < 1) {
+    return [{ x: startX, y: startY }, { x: endX, y: endY }];
+  }
+
+  // The vertical segment at startX spans [startY → midY]. It clips fromBounds if
+  // startX is inside fromBounds horizontally AND the Y range overlaps fromBounds.
+  // Since startX = DMQ center, it's always inside. Same logic for endX/toBounds.
+  // So we check: would midY cause either vertical segment to pass through a node body?
+  // Place horizontal section just above the DMQ (startY side) rather than halfway
+  const midY = endY < startY
+    ? startY - CLEARANCE   // DMQ below broker: just above DMQ port
+    : startY + CLEARANCE;  // DMQ above broker: just below DMQ port
+
+  // Vertical at startX clips from-node if segment [startY,midY] overlaps [top,bottom]
+  const startSegTop = Math.min(startY, midY);
+  const startSegBot = Math.max(startY, midY);
+  const clipsFrom = fromBounds &&
+    startX >= fromBounds.left && startX <= fromBounds.right &&
+    startSegTop < fromBounds.bottom && startSegBot > fromBounds.top;
+
+  // Vertical at endX clips to-node if segment [midY,endY] overlaps [top,bottom]
+  const endSegTop = Math.min(midY, endY);
+  const endSegBot = Math.max(midY, endY);
+  const clipsTo = toBounds &&
+    endX >= toBounds.left && endX <= toBounds.right &&
+    endSegTop < toBounds.bottom && endSegBot > toBounds.top;
+
+  if (!clipsFrom && !clipsTo) {
+    return [
+      { x: startX, y: startY },
+      { x: startX, y: midY },
+      { x: endX, y: midY },
+      { x: endX, y: endY },
+    ];
+  }
+
+  // Detour: route above both nodes, descend on the DMQ's side, enter broker from below.
+  const bridgeY = Math.min(
+    startY,
+    endY,
+    fromBounds ? fromBounds.top : startY,
+    toBounds ? toBounds.top : endY,
+  ) - CLEARANCE;
+
+  // midX just past the broker-facing edge of the DMQ
+  const dx = endX - startX;
+  const midX = dx > 0
+    ? (fromBounds ? fromBounds.right : startX) + CLEARANCE
+    : (fromBounds ? fromBounds.left : startX) - CLEARANCE;
+
+  // Go below broker so the final segment enters upward
+  const belowBroker = Math.max(
+    toBounds ? toBounds.bottom : endY,
+    endY,
+  ) + CLEARANCE;
+
+  return [
+    { x: startX, y: startY },
+    { x: startX, y: bridgeY },
+    { x: midX, y: bridgeY },
+    { x: midX, y: belowBroker },
+    { x: endX, y: belowBroker },
+    { x: endX, y: endY },
+  ];
+}
+
+/**
+ * Builds an SVG path string for vertical-first orthogonal routing (V → H → V).
  * Used for DMQ top-center port connecting upward to broker.
  */
 export function buildVerticalFirstSvgPath(
   startX: number, startY: number,
   endX: number, endY: number,
   radius = 12,
+  fromBounds?: NodeBounds,
+  toBounds?: NodeBounds,
 ): string {
-  if (Math.abs(startX - endX) < 1) {
-    return `M ${startX} ${startY} L ${endX} ${endY}`;
-  }
-
-  const midY = (startY + endY) / 2;
-  const dx = endX - startX;
-  const r = Math.min(radius, Math.abs(dx) / 2, Math.abs(midY - startY), Math.abs(endY - midY));
-
-  const dirX = dx > 0 ? 1 : -1;
-
-  return [
-    `M ${startX} ${startY}`,
-    `L ${startX} ${midY + r}`,
-    `Q ${startX} ${midY} ${startX + r * dirX} ${midY}`,
-    `L ${endX - r * dirX} ${midY}`,
-    `Q ${endX} ${midY} ${endX} ${midY - r}`,
-    `L ${endX} ${endY}`,
-  ].join(' ');
+  const waypoints = computeVerticalFirstWaypoints(startX, startY, endX, endY, fromBounds, toBounds);
+  return buildSvgPathFromWaypoints(waypoints, radius);
 }
 
 /**

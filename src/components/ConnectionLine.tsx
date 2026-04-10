@@ -71,7 +71,7 @@ export function ConnectionLine({ conn }: Props) {
   };
 
   const pathD = from.type === 'dmq'
-    ? buildVerticalFirstSvgPath(startX, startY, endX, endY)
+    ? buildVerticalFirstSvgPath(startX, startY, endX, endY, 12, fromBounds, toBounds)
     : buildOrthogonalSvgPath(startX, startY, endX, endY, 12, fromBounds, toBounds);
 
   const isBridge = from.type === 'broker' && to.type === 'broker';
