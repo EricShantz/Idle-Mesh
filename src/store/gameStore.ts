@@ -4,6 +4,7 @@ import { canConnect } from '../utils/connectionRules';
 import { getNextTopic } from './topicPool';
 import { topicMatches, computeBroadenedTopic } from '../utils/topicMatching';
 import { normalizedSpeed } from '../utils/pathUtils';
+import { computeOrthogonalWaypoints } from '../utils/orthogonalPath';
 import { getSmoothedFps } from '../hooks/useGameLoop';
 import { prestigeNodes, isNodeAvailable, isNodePurchased, type PrestigeNode } from './prestigeUpgradeConfig';
 
@@ -47,10 +48,21 @@ export type EventDot = {
   moneyAdded?: boolean;
   isRetry?: boolean;
   originalNodeIds?: string[];
+  nodeWpIndices?: number[];
   originalValue?: number;
   forkPaths?: { waypoints: { x: number; y: number }[]; nodeIds: string[] }[];
   forkNodeId?: string;
+  nextNodeId?: string;
 };
+
+/** Find the first queue or subscriber ID in a route's node list. */
+export function findNextInteractableId(nodeIds: string[], components: GameComponent[]): string | undefined {
+  for (const id of nodeIds) {
+    const c = components.find(comp => comp.id === id);
+    if (c && (c.type === 'queue' || c.type === 'subscriber')) return id;
+  }
+  return undefined;
+}
 
 export type GameState = {
   balance: number;
@@ -434,15 +446,31 @@ export const useGameStore = create<GameState>()(
           if (!directConn) return;
           const target = state.components.find(c => c.id === directConn.toId);
           if (!target) return;
-          // Build path using node centers (same as _getAllPathsWithNodes), then expand orthogonally
+          // Build path using node centers, then expand orthogonally with bounds
           const nodePath = [{ x: pub.x, y: pub.y }, { x: target.x, y: target.y }];
           const truncatedWaypoints: { x: number; y: number }[] = [nodePath[0]];
-          if (Math.abs(nodePath[0].y - nodePath[1].y) >= 1) {
+          if (Math.abs(nodePath[0].y - nodePath[1].y) >= 10) {
             const pubHalfW = pub.type === 'queue' ? 70 : 60;
             const tgtHalfW = target.type === 'queue' ? 70 : 60;
-            const midX = (pub.x + pubHalfW + 24 + target.x - tgtHalfW - 2) / 2;
-            truncatedWaypoints.push({ x: midX, y: nodePath[0].y });
-            truncatedWaypoints.push({ x: midX, y: nodePath[1].y });
+            const portStartX = pub.x + pubHalfW + 24;
+            const portEndX = target.x - tgtHalfW - 2;
+            const halfH = 28;
+            const fromBounds = {
+              left: pub.x - pubHalfW,
+              right: pub.x + pubHalfW + 24,
+              top: pub.y - halfH,
+              bottom: pub.y + halfH,
+            };
+            const toBounds = {
+              left: target.x - tgtHalfW,
+              right: target.x + tgtHalfW,
+              top: target.y - halfH,
+              bottom: target.y + halfH,
+            };
+            const segWaypoints = computeOrthogonalWaypoints(portStartX, pub.y, portEndX, target.y, fromBounds, toBounds);
+            for (let w = 1; w < segWaypoints.length - 1; w++) {
+              truncatedWaypoints.push(segWaypoints[w]);
+            }
           }
           truncatedWaypoints.push(nodePath[1]);
           const value = state.getEventValue(publisherId);
@@ -463,6 +491,7 @@ export const useGameStore = create<GameState>()(
                 value,
                 originalValue: value,
                 originalNodeIds: [publisherId, target.id],
+                nextNodeId: findNextInteractableId([publisherId, target.id], state.components),
               });
             }
           });
@@ -518,6 +547,7 @@ export const useGameStore = create<GameState>()(
                     value,
                     originalValue: value,
                     originalNodeIds: truncatedNodeIds,
+                    nextNodeId: findNextInteractableId(truncatedNodeIds, state.components),
                   });
                 }
               });
@@ -591,6 +621,7 @@ export const useGameStore = create<GameState>()(
                 value,
                 originalValue: value,
                 originalNodeIds: primary.nodeIds,
+                nextNodeId: findNextInteractableId(primary.nodeIds, state.components),
                 forkPaths: forks,
                 forkNodeId: brokerId !== 'none' ? brokerId : undefined,
               });
@@ -1030,14 +1061,16 @@ export const useGameStore = create<GameState>()(
 
         for (const bId of brokerIds) walk(bId);
 
-        // Generate one entry per publisher at the queue's current broaden level
+        // Generate ALL broadening levels (specific → broad) for each publisher, dedduped
         const queue = state.components.find(c => c.id === queueId);
-        const broadenLevel = queue?.upgrades.subscriptionBroaden ?? 0;
+        const maxBroaden = queue?.upgrades.subscriptionBroaden ?? 0;
         const results: Map<string, { topic: string; segments: string[]; broadenLevel: number }> = new Map();
         for (const pub of publishers.values()) {
-          const broadened = broadenLevel === 0 ? pub.topic : computeBroadenedTopic(pub.segments, broadenLevel);
-          if (!results.has(broadened)) {
-            results.set(broadened, { topic: broadened, segments: pub.segments, broadenLevel });
+          for (let level = 0; level <= maxBroaden; level++) {
+            const broadened = level === 0 ? pub.topic : computeBroadenedTopic(pub.segments, level);
+            if (!results.has(broadened)) {
+              results.set(broadened, { topic: broadened, segments: pub.segments, broadenLevel: level });
+            }
           }
         }
         return Array.from(results.values());
@@ -1146,26 +1179,47 @@ export const useGameStore = create<GameState>()(
         walk(publisherId, [], [], new Set());
 
         // Expand node-center paths into orthogonal waypoints
-        // Use port-adjusted midX to match SVG connection line rendering
+        // Uses computeOrthogonalWaypoints to match SVG connection line routing
         return results.map(({ waypoints: nodePath, nodeIds }) => {
           if (nodePath.length < 2) return { waypoints: nodePath, nodeIds };
           const expanded: { x: number; y: number }[] = [nodePath[0]];
           for (let i = 0; i < nodePath.length - 1; i++) {
             const a = nodePath[i];
             const b = nodePath[i + 1];
-            if (Math.abs(a.y - b.y) >= 1) {
-              // Match ConnectionLine.tsx port positions:
-              // startX = from.x + fromHalfW + 16 (port center) + 8 (port radius)
-              // endX = to.x - toHalfW - 2
+            if (Math.abs(a.y - b.y) >= 10) {
               const aNode = state.components.find(c => c.id === nodeIds[i]);
               const bNode = state.components.find(c => c.id === nodeIds[i + 1]);
-              const aHalfW = aNode?.type === 'queue' ? 70 : 60;
-              const bHalfW = bNode?.type === 'queue' ? 70 : 60;
-              const portStartX = a.x + aHalfW + 24; // port right edge
-              const portEndX = b.x - bHalfW - 2;    // target left edge
-              const midX = (portStartX + portEndX) / 2;
-              expanded.push({ x: midX, y: a.y });
-              expanded.push({ x: midX, y: b.y });
+              // Detect reverse bridge traversal: dot goes a→b but connection is b→a
+              const isReverseBridge = aNode?.type === 'broker' && bNode?.type === 'broker' &&
+                !state.connections.some(c => c.fromId === nodeIds[i] && c.toId === nodeIds[i + 1]) &&
+                state.connections.some(c => c.fromId === nodeIds[i + 1] && c.toId === nodeIds[i]);
+              const src = isReverseBridge ? b : a;
+              const dst = isReverseBridge ? a : b;
+              const srcNode = isReverseBridge ? bNode : aNode;
+              const dstNode = isReverseBridge ? aNode : bNode;
+              const srcHalfW = srcNode?.type === 'queue' ? 70 : 60;
+              const dstHalfW = dstNode?.type === 'queue' ? 70 : 60;
+              const portStartX = src.x + srcHalfW + 24; // port right edge
+              const portEndX = dst.x - dstHalfW - 2;    // target left edge
+              const halfH = 28;
+              const fromBounds = {
+                left: src.x - srcHalfW,
+                right: src.x + srcHalfW + 24,
+                top: src.y - halfH,
+                bottom: src.y + halfH,
+              };
+              const toBounds = {
+                left: dst.x - dstHalfW,
+                right: dst.x + dstHalfW,
+                top: dst.y - halfH,
+                bottom: dst.y + halfH,
+              };
+              const segWaypoints = computeOrthogonalWaypoints(portStartX, src.y, portEndX, dst.y, fromBounds, toBounds);
+              const intermediates = segWaypoints.slice(1, -1);
+              if (isReverseBridge) intermediates.reverse();
+              for (const wp of intermediates) {
+                expanded.push(wp);
+              }
             }
             expanded.push(b);
           }

@@ -58,6 +58,8 @@ function MeshCanvasInner({ viewport }: { viewport: ReturnType<typeof useViewport
     if (!el) return;
 
     const onWheel = (e: WheelEvent) => {
+      // Don't zoom when scrolling inside a scrollable child (e.g. topic picker)
+      if ((e.target as HTMLElement).closest?.('[data-scroll-trap]')) return;
       e.preventDefault();
       const v = viewport.ref.current;
 

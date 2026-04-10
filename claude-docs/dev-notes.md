@@ -5,7 +5,7 @@
 - **Component IDs**: initial components use fixed IDs (`pub-1`, `webhook-1`, `sub-1`, `conn-1`, `conn-2`). Dynamically added components use counter-based IDs starting at 10 (`comp-10+`, `conn-10+`). Counters are initialized from saved state on load via `initCountersFromSaved()` to prevent duplicate IDs.
 
 ## Collision & Thresholds
-- `useGameLoop.ts` uses `dotTouchesNode()` bounding-box collision for all node interactions: webhook slowdown, queue capture, subscriber pause/drop.
+- `useGameLoop.ts` uses `dotTouchesNode()` bounding-box collision for all node interactions: webhook slowdown, queue capture, subscriber pause/drop. Exception: when a dot has `nextNodeId` set, queue/subscriber capture uses progress-based detection instead of hitbox collision to avoid premature capture by nodes on unrelated path segments.
 - Webhook blockage uses a 20px approach zone before the node's left edge; `isComponentOccupied()` detects traveling dots inside the webhook via `dotTouchesNode()`. Brokers skip blockage entirely.
 
 ## Viewport (Pan/Zoom)
@@ -17,10 +17,16 @@
 ## Drag-to-Move
 - Implemented in `NodeCard.tsx` using pointer capture + ref-based drag state. RAF-throttled state updates. Final position flushed synchronously on pointer up.
 - `draggingNodeId` (transient, in store) is set when drag movement begins and cleared on pointer up.
+- **Y-snap on drop**: on pointer up, if the node's Y is within 10px of any connected neighbor's Y, the node snaps to that neighbor's Y. This ensures nearly-horizontal connections become perfectly straight, eliminating the small orthogonal step that would otherwise cause dots to visibly climb/descend.
 
 ## Live Path Rebuilding During Drag
 - When a component is being dragged, all in-flight dots whose `originalNodeIds` include the dragged component have their paths rebuilt every frame via `rebuildPathFromNodeIds()`.
-- Dot progress recalculated via `projectOntoPath()` for visual continuity.
+- **Reverse bridge path matching**: broker bridges are bidirectional — dots can traverse a connection in either direction. When a dot travels in the reverse direction of the stored connection (e.g., dot goes B→A but connection is A→B), waypoints are computed in the connection's actual direction (matching the SVG line) and then the intermediate points are reversed. This ensures dots always follow the visually displayed path. The same logic applies in `rebuildPathFromNodeIds()`, `getAllPathsForPublisher()`, and the DMQ retry path builder.
+- `rebuildPathFromNodeIds()` accepts an optional `connections` parameter for reverse bridge detection. It returns both the path and `nodeWpIndices` (waypoint index of each node center). Progress is remapped via `remapProgressSemantic()` which identifies the dot's logical segment (e.g. broker→queue) using node waypoint indices, then projects the dot's pixel position onto only that segment of the new path. This prevents dots from jumping across segment boundaries (e.g. skipping a queue) while avoiding progress oscillation from waypoint-count changes.
+- **Fork path rebuilding during drag**: dots with `forkPaths` (pre-computed alternate broker paths) also have their fork waypoints rebuilt each frame if the dragged node appears in any fork's `nodeIds`. This prevents fork dots from spawning on stale/ghost paths when a broker is moved. The same rebuild runs during post-drag cleanup.
+- **Post-drag cleanup**: on the first frame after drag ends (`!draggingNodeId && dot.nodeWpIndices`), paths are rebuilt one final time from current (post-Y-snap) positions, including `forkPaths`. Queued dots are pinned to their queue's waypoint; traveling dots are semantically remapped. `nodeWpIndices` is cleared so this runs only once.
+- **Progress-based queue capture during drag**: pixel-based `dotTouchesNode` collision can fail during drag because orthogonal paths are rebuilt each frame (dot pixel position shifts while progress approaches the queue). As a fallback, dots are captured when their progress reaches the queue's waypoint progress (`newProgress >= queueProgress`), gated on `draggingNodeId`.
+- **Time-throttled queue releases during drag**: `shouldReleaseTo` timing is unreliable during drag because in-flight dots' paths/speeds are rebuilt each frame. A per-queue `queueLastReleaseTime` map enforces a minimum interval equal to the subscriber's consume duration between releases, preventing rapid queue draining. Only active while `draggingNodeId` is set.
 - Connection validation is bypassed while `draggingNodeId` is set.
 
 ## Draggable Connections
@@ -32,12 +38,13 @@
 ## Connection Line Geometry
 - Orthogonal (Boomi-style) lines routed horizontal → vertical → horizontal with rounded 12px corners.
 - Port position = `from.x + halfW + 16` where halfW is 60 (120px nodes) or 70 (140px queue nodes).
-- DMQ uses top-center port (`from.x, from.y - 28 - 16`) with vertical-first routing, terminating at broker's bottom edge (`to.x, to.y + 30`).
+- DMQ uses top-center port (`from.x, from.y - 28 - 16`) with vertical-first routing via `computeVerticalFirstWaypoints()`, terminating at broker's bottom edge (`to.x, to.y + 30`). Node-aware: detours around node bodies when the simple path would clip, descending on the broker-facing side of the DMQ and entering the broker from below.
 - All nodes use `minHeight: 56` and fixed `width` for consistent port alignment (DMQ width is dynamic: 120 + 40 * dmqWidthLevel).
+- **Node-aware routing**: `computeOrthogonalWaypoints()` in `orthogonalPath.ts` is the single source of truth for routing. It accepts optional `NodeBounds` for source and target nodes. When the midpoint vertical segment would clip through either node (e.g. nodes vertically aligned or target to the left), it routes a 6-point detour: right to clear source → vertically past source → left to clear target → vertically to target Y → right into target. Lines always exit right from the source port and enter left into the target.
+- `buildSvgPathFromWaypoints()` draws rounded corners for any number of waypoints (generic, not limited to 4 points).
 
 ## Dot Path Waypoint Expansion
-- `_getAllPathsWithNodes()` walks node centers, then expands non-horizontal segments into orthogonal waypoints.
-- Vertical `midX` is port-adjusted: `midX = (from.x + fromHalfW + 24 + to.x - toHalfW - 2) / 2` where halfW is 60 (standard) or 70 (queue). Same formula used in `rebuildPathFromNodeIds()` and all queue release / DMQ retry path rebuilds.
+- `_getAllPathsWithNodes()` walks node centers, then expands non-horizontal segments into orthogonal waypoints using `computeOrthogonalWaypoints()` with node bounding boxes, keeping dot paths in sync with SVG connection lines.
 
 ## Smart Routing & Fan-out
 - `_getAllPathsWithNodes()` does DFS returning paths with both waypoints and node IDs. Bridge connections traversed bidirectionally.
@@ -48,7 +55,7 @@
 - `dedupeConsecutiveWaypoints()` removes consecutive duplicate waypoints (within 1px) from rebuilt paths in Pass 2 queue release. Without this, when queue and subscriber share the same x-coordinate, `isPastAllQueues` fails and queues drain at ~60×/s.
 
 ## Connection-Aware Dot Lifecycle
-- Traveling dots validate their remaining path against the current connection graph each frame — if a connection was removed, the dot drops immediately.
+- Traveling dots validate their remaining path against the current connection graph each frame — if a connection was removed, the dot drops immediately. When `originalNodeIds` is set, validation uses the authoritative node ID list instead of geometric `pathComps`, avoiding false invalidation from unrelated nodes sitting on the path geometry.
 - Queued dots only release when the queue has an active connection to a subscriber (checked via `state.connections`, not baked path).
 - Queue collision check skips waypoints the dot has already passed to prevent re-capture after release.
 
@@ -58,7 +65,13 @@
 - `pauseStartTime` uses `Date.now()` (Unix epoch). The RAF `time` argument is a different clock — don't mix them.
 
 ## Speed Double-Application
-- `dot.speed` is set to `normalizedSpeed(0.0007 * propagationSpeed, path)` at creation/release. During movement (line 234), `actualSpeed = dot.speed * propagationSpeed`. This means `propagationSpeed` is applied **twice** (squared). Any code predicting travel time must account for this: `travelTime = (arrivalProgress - progress) / (dot.speed * propagationSpeed)`.
+- `dot.speed` is set to `normalizedSpeed(0.0007 * propagationSpeed, path)` at creation/release. During movement, `actualSpeed = dot.speed * propagationSpeed`. This means `propagationSpeed` is applied **twice** (squared). Any code predicting travel time must account for this: `travelTime = (arrivalProgress - progress) / (dot.speed * propagationSpeed)`.
+
+## Constant Pixel Speed (Segment Speed Scaling)
+- Orthogonal paths have segments of varying pixel length, but progress is distributed equally by segment count. Without correction, dots visually speed up on long segments and slow down on short ones.
+- `getSegmentSpeedScale(path, progress)` in `pathUtils.ts` returns `avgSegmentLength / currentSegmentLength` — a multiplier applied to `actualSpeed` in the game loop before the progress increment. Long segments get slowed down, short segments get sped up, resulting in constant visual pixel speed.
+- All `index / (path.length - 1)` progress math for drag, queue pinning, and path validation remains unchanged.
+- **Predictive timing must use `scaledTravelTime()`**: queue release and DMQ release predictions must account for segment speed scaling. The helper `scaledTravelTime(path, startProgress, endProgress, baseActualSpeed)` in `pathUtils.ts` integrates travel time across segments with their individual scale factors. Using simple `progressDelta / speed` will underestimate travel time on paths with long segments (e.g. subscriber above/below queue), causing premature releases and drops.
 
 ## Arrival Progress & Collision Box
 - `dotTouchesNode` catches dots before they reach progress 1.0 — the subscriber's bounding box (NODE_HALF_W=60, NODE_TOP_OFFSET=28) extends well beyond its center point. Predictive timing uses `getArrivalProgress(path)` to compute the actual progress at which a dot enters the subscriber's collision box, based on the last segment's direction: horizontal approach catches at `NODE_HALF_W + DOT_RADIUS` (66px), vertical at `NODE_TOP_OFFSET + DOT_RADIUS` (34px). Using `1.0` instead of `arrivalProgress` overestimates travel time and causes premature queue releases at high propagation speeds.
@@ -70,7 +83,9 @@
 
 ## DMQ Mechanics
 - DMQ catch detection runs inside the `dropped` dot branch of Pass 1 — checks `!dot.isRetry` to prevent infinite loops.
-- DMQ release (Pass 3) uses predictive timing: if the retry path's first target is a queue, checks queue space; if a subscriber, predicts when it will be free (same logic as queue release, including `getArrivalProgress` for collision-aware travel time). Retry paths rebuilt at release time from `dot.originalNodeIds` using current positions.
+- DMQ catch capacity is pre-computed from the source `dots` array before the main loop and incremented on each catch, preventing undercounting when existing queued dots appear later in iteration order.
+- DMQ release (Pass 3) is time-throttled: releases one dot every 500ms (`lastDmqReleaseTime`). If the retry path's first target is a queue, it releases unconditionally on the timer — if the queue is full on arrival, the dot drops (and won't be re-caught since `isRetry` is true). If the target is a subscriber, uses predictive timing (same logic as queue release, including `getArrivalProgress` for collision-aware travel time). Retry paths rebuilt at release time from `dot.originalNodeIds` using current positions.
+- DMQ can release to any connected broker, not just the original route's broker. When the connected broker differs from the original, a DFS walk (following connections + reverse bridges, same pattern as `_getAllPathsWithNodes`) finds a path from the connected broker to the original destination queue/subscriber.
 - DMQ width for collision = `(120 + dmqWidthLevel * 40) / 2` as half-width.
 
 ## Adaptive Coin Pop Throttling
@@ -89,8 +104,10 @@
 - `interpolatePath()` clamps negative progress to path start. Old boolean saves migrated to level 1.
 
 ## Topic Subscription Picker
-- `getAvailableTopics(queueId)` walks broker connections (including bridges) to find all reachable publishers, broadened to queue's current `subscriptionBroaden` level. Deduplicates by broadened topic string.
+- `getAvailableTopics(queueId)` walks broker connections (including bridges) to find all reachable publishers. Returns ALL broadening levels (0 through queue's current `subscriptionBroaden` level) for each publisher, deduplicated by broadened topic string.
 - `setQueueSubscription(queueId, topic, segments, broadenLevel)` updates atomically. UI in `NodeModal.tsx`. Picker state resets on node switch via `key={node.id}`.
+- Picker groups topics by domain (segment index 1), sorted alphabetically; cross-domain topics (e.g. `acme/>`) appear last. Within each group, topics sort specific→broad (by `broadenLevel`), then by last segment with numeric-aware comparison (SKU001, SKU002, …).
+- Picker uses `data-scroll-trap` attribute so wheel events scroll the list instead of zooming the viewport (MeshCanvas wheel handler checks for this).
 
 ## Tutorial System
 - `tutorialsSeen: Record<string, boolean>` persists which tutorials dismissed. `activeTutorial: string | null` (transient).
@@ -110,7 +127,7 @@
 
 ## Prestige System ("Schema Registry")
 - `prestige` state holds `points`, `totalPoints`, `count`, `permanentUpgradeLevels: Record<string, number>`.
-- Prestige awards points on a scaling triangular curve: Nth point costs $N million (1st=$1M, 2nd=$2M, 3rd=$3M...). Total earned for N points = N*(N+1)/2 million. Formula: `N = floor((-1 + sqrt(1 + 8 * totalEarned/1M)) / 2)`.
+- Prestige awards points on a scaling triangular curve: Nth point costs $N million (1st=$1M, 2nd=$2M, 3rd=$3M...). Lifetime Earnings for N points = N*(N+1)/2 million. Formula: `N = floor((-1 + sqrt(1 + 8 * totalEarned/1M)) / 2)`.
 - `performPrestige()` resets all run state while preserving `prestige` and `tutorialsSeen`. Post-reset applies permanent node effects.
 - `showPrestigeTree` (transient, excluded from save) controls full-page tree view.
 

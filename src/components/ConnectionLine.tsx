@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useGameStore, type Connection } from '../store/gameStore';
-import { buildOrthogonalSvgPath, buildVerticalFirstSvgPath } from '../utils/orthogonalPath';
+import { buildOrthogonalSvgPath, buildVerticalFirstSvgPath, type NodeBounds } from '../utils/orthogonalPath';
 import { useViewport } from '../hooks/useViewport';
 
 type Props = {
@@ -52,9 +52,27 @@ export function ConnectionLine({ conn }: Props) {
     endY = to.y;
   }
 
+  // Compute node bounding boxes for routing
+  const fromHalfH = 28;
+  const toHalfH = 28;
+  const fromHalfWFull = from.type === 'queue' ? 70 : 60;
+  const toHalfWFull = to.type === 'queue' ? 70 : 60;
+  const fromBounds: NodeBounds = {
+    left: from.x - fromHalfWFull,
+    right: from.x + fromHalfWFull + 24, // include output port
+    top: from.y - fromHalfH,
+    bottom: from.y + fromHalfH,
+  };
+  const toBounds: NodeBounds = {
+    left: to.x - toHalfWFull,
+    right: to.x + toHalfWFull,
+    top: to.y - toHalfH,
+    bottom: to.y + toHalfH,
+  };
+
   const pathD = from.type === 'dmq'
-    ? buildVerticalFirstSvgPath(startX, startY, endX, endY)
-    : buildOrthogonalSvgPath(startX, startY, endX, endY);
+    ? buildVerticalFirstSvgPath(startX, startY, endX, endY, 12, fromBounds, toBounds)
+    : buildOrthogonalSvgPath(startX, startY, endX, endY, 12, fromBounds, toBounds);
 
   const isBridge = from.type === 'broker' && to.type === 'broker';
 
