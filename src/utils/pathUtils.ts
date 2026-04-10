@@ -1,7 +1,19 @@
 export type Point = { x: number; y: number };
 
+/**
+ * Normalize progress-per-ms speed so each path segment takes the same duration.
+ * Calibrated to REFERENCE_SEGMENTS=2 (the original pub→webhook→sub path).
+ */
+const REFERENCE_SEGMENTS = 2;
+export function normalizedSpeed(baseSpeed: number, path: Point[]): number {
+  const segments = Math.max(path.length - 1, 1);
+  return baseSpeed * REFERENCE_SEGMENTS / segments;
+}
+
 export function interpolatePath(path: Point[], progress: number): Point {
   if (path.length < 2) return path[0] ?? { x: 0, y: 0 };
+
+  if (progress <= 0) return path[0];
 
   const totalSegments = path.length - 1;
   const segmentProgress = progress * totalSegments;

@@ -5,22 +5,32 @@ export type UpgradeDef = {
   baseCost: number;
   costMultiplier: number;
   maxLevel?: number;
+  hidden?: boolean;
 };
 
 export const publisherUpgrades: UpgradeDef[] = [
   {
     key: 'eventValue',
-    label: 'Event Value +$0.50',
-    description: 'Each event this publisher fires is worth more',
-    baseCost: 10,
-    costMultiplier: 2.5,
+    label: 'Event Value',
+    description: 'Accelerating value increase per event',
+    baseCost: 5,
+    costMultiplier: 1.8,
   },
   {
     key: 'publishSpeed',
-    label: 'Publish Speed +5%',
-    description: 'Reduces cooldown between publishing events',
-    baseCost: 8,
-    costMultiplier: 1.15,
+    label: 'Publish Speed',
+    description: 'Accelerating cooldown reduction',
+    baseCost: 4,
+    costMultiplier: 1.8,
+    maxLevel: 10,
+  },
+  {
+    key: 'autoPub',
+    label: 'Auto-Click',
+    description: 'Automatically clicks this publisher',
+    baseCost: 300,
+    costMultiplier: 1,
+    maxLevel: 1,
   },
 ];
 
@@ -29,17 +39,9 @@ export const webhookUpgrades: UpgradeDef[] = [
     key: 'upgradeToBroker',
     label: 'Upgrade to Broker',
     description: 'Removes routing delay — events pass through instantly. Unlocks queue purchases.',
-    baseCost: 75,
+    baseCost: 50,
     costMultiplier: 1,
     maxLevel: 1,
-  },
-  {
-    key: 'fasterRouting',
-    label: 'Faster Routing +20%',
-    description: 'Reduces travel time through this hop',
-    baseCost: 20,
-    costMultiplier: 2,
-    maxLevel: 3,
   },
 ];
 
@@ -52,11 +54,19 @@ export const brokerUpgrades: UpgradeDef[] = [
     costMultiplier: 2,
   },
   {
-    key: 'topicFilterBoost',
-    label: 'Topic Filter Boost',
-    description: 'Routes events to more subscriber queues',
-    baseCost: 60,
-    costMultiplier: 2,
+    key: 'addBridgeSlot',
+    label: 'Add Bridge Slot',
+    description: 'Allow connection to another broker (event mesh bridging)',
+    baseCost: 80,
+    costMultiplier: 2.5,
+  },
+  {
+    key: 'increaseThroughput',
+    label: 'Increase Throughput',
+    description: 'Raises the max events/sec this broker can relay',
+    baseCost: 100,
+    costMultiplier: 2.2,
+    maxLevel: 10,
   },
 ];
 
@@ -72,101 +82,120 @@ export const queueUpgrades: UpgradeDef[] = [
     key: 'fanOut',
     label: 'Persistent Delivery (Fan-out)',
     description: 'All connected subscribers receive every event',
-    baseCost: 100,
+    baseCost: 200,
     costMultiplier: 1,
     maxLevel: 1,
   },
   {
     key: 'bufferSize',
-    label: 'Increase Buffer Size',
-    description: 'Allows more in-flight events before dropping',
-    baseCost: 45,
+    label: 'Increase Queue Size',
+    description: 'Allows more in-flight events before dropping (max 20 slots)',
+    baseCost: 10,
+    costMultiplier: 1.2,
+    maxLevel: 17,
+  },
+  {
+    key: 'subscriptionBroaden',
+    label: 'Broaden Subscription',
+    description: 'Widen topic filter to accept events from more publishers',
+    baseCost: 40,
     costMultiplier: 2,
+    maxLevel: 5,
+  },
+];
+
+export const dmqUpgrades: UpgradeDef[] = [
+  {
+    key: 'dmqWidth',
+    label: 'Increase Width +40px',
+    description: 'Wider catch zone for falling events',
+    baseCost: 15,
+    costMultiplier: 1.2,
+  },
+  {
+    key: 'dmqBufferSize',
+    label: 'Increase Queue Size',
+    description: 'Hold more events before overflow',
+    baseCost: 10,
+    costMultiplier: 1.2,
+  },
+  {
+    key: 'dmqValueRecovery',
+    label: 'Value Recovery +10%',
+    description: 'Retry events recover more of their original value',
+    baseCost: 50,
+    costMultiplier: 2,
+    maxLevel: 9,
   },
 ];
 
 export const subscriberUpgrades: UpgradeDef[] = [
   {
     key: 'consumptionValue',
-    label: 'Consumption Value +$0.50',
-    description: 'Each event this subscriber consumes earns more',
-    baseCost: 10,
-    costMultiplier: 2.5,
+    label: 'Consumption Multiplier',
+    description: '+50% payout multiplier per level — scales with all upstream value',
+    baseCost: 5,
+    costMultiplier: 1.8,
   },
   {
     key: 'fasterConsumption',
-    label: 'Faster Consumption +5%',
-    description: 'Reduces processing time at this subscriber',
-    baseCost: 8,
-    costMultiplier: 1.15,
+    label: 'Faster Consumption',
+    description: 'Accelerating speed boost for processing events',
+    baseCost: 4,
+    costMultiplier: 1.8,
+    maxLevel: 11,
   },
 ];
 
-export type GlobalUpgradeDef = {
-  key: string;
-  label: string;
-  description: string;
-  cost: number;
-  maxLevel?: number;
-};
-
-export const globalUpgrades: GlobalUpgradeDef[] = [
+export const globalUpgrades: UpgradeDef[] = [
   {
     key: 'propagationSpeed',
     label: 'Faster Event Propagation',
-    description: 'All event dots travel 15% faster',
-    cost: 25,
+    description: 'Accelerating speed boost for all event dots',
+    baseCost: 25,
+    costMultiplier: 1.8,
+    maxLevel: 10,
   },
   {
     key: 'costReduction',
     label: '10% Cheaper Upgrades',
     description: 'All future upgrade costs reduced by 10%',
-    cost: 50,
+    baseCost: 50,
+    costMultiplier: 4.5,
     maxLevel: 3,
-  },
-  {
-    key: 'dlq',
-    label: 'Dead Letter Queue',
-    description: 'Dropped events can be replayed for 50% value',
-    cost: 80,
-    maxLevel: 1,
-  },
-  {
-    key: 'autoPub1',
-    label: 'Auto-Publisher Lv.1',
-    description: 'First publisher fires automatically every 5s',
-    cost: 150,
-    maxLevel: 1,
-  },
-  {
-    key: 'autoPub2',
-    label: 'Auto-Publisher Lv.2',
-    description: 'Auto-fire every 3s',
-    cost: 400,
-    maxLevel: 1,
-  },
-  {
-    key: 'autoPub3',
-    label: 'Auto-Publisher Lv.3',
-    description: 'Auto-fire every 1s',
-    cost: 1000,
-    maxLevel: 1,
   },
   {
     key: 'batchFire',
     label: 'Event Batching',
-    description: 'Publishers fire 2 events per click',
-    cost: 200,
-    maxLevel: 1,
+    description: 'Publishers fire extra events per click',
+    baseCost: 200,
+    costMultiplier: 2.5,
+    maxLevel: 5,
   },
   {
     key: 'globalValueMultiplier',
-    label: 'Global Value x1.5',
-    description: 'All earned money x1.5',
-    cost: 500,
-    maxLevel: 1,
+    label: 'Income Multiplier',
+    description: 'All earned money ×1.5 per level',
+    baseCost: 500,
+    costMultiplier: 3,
+    maxLevel: 5,
   },
 ];
+
+/** Max DMQ buffer slots based on current width level. 2 rows, 8 per row at base, +3 per width upgrade. */
+export function getDmqMaxBuffer(dmqWidthLevel: number): number {
+  return (8 + dmqWidthLevel * 3) * 2;
+}
+
+/** Slots per row for DMQ visual indicators. */
+export function getDmqSlotsPerRow(dmqWidthLevel: number): number {
+  return 8 + dmqWidthLevel * 3;
+}
+
+/** Effective max level for dmqBufferSize given current width (base capacity is 3). */
+export function getDmqBufferMaxLevel(dmqWidthLevel: number): number {
+  return getDmqMaxBuffer(dmqWidthLevel) - 3;
+}
 
 export function getUpgradeCost(def: UpgradeDef, currentLevel: number, costReduction: number): number {
   const raw = def.baseCost * Math.pow(def.costMultiplier, currentLevel);

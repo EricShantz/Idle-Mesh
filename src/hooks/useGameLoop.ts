@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { useGameStore } from '../store/gameStore';
-import { interpolatePath } from '../utils/pathUtils';
+import { useGameStore, nextDotId, getPermanentQueueBufferBonus, hasPermanentBatchConsume } from '../store/gameStore';
+import { interpolatePath, normalizedSpeed } from '../utils/pathUtils';
 
 // Node card dimensions: positioned at left: x-60, top: y-28
 // Card width: 120px (half = 60), card height varies but ~56px
@@ -9,6 +9,130 @@ const NODE_TOP_OFFSET = 28;   // from center to top edge
 const NODE_BOTTOM_OFFSET = 28; // from center to bottom edge (generous to cover content)
 
 const DOT_RADIUS = 6;
+
+const BROKER_BASE_THROUGHPUT = 8; // events/sec
+
+/** Rolling window of relay timestamps per broker for throughput cap */
+const brokerRelayTimestamps = new Map<string, number[]>();
+
+/** Round-robin index per queue for competing consumer pattern */
+const queueRoundRobinIdx = new Map<string, number>();
+
+/** Timestamp of the first event drop (for tutorial trigger) */
+let firstDropTime: number | null = null;
+let firstDropTutorialShown = false;
+
+/** Drop reason tracking for the warning "!" button */
+export type DropReason = 'path-invalid' | 'webhook-occupied' | 'broker-capped' | 'queue-full' | 'subscriber-occupied' | 'path-incomplete';
+
+const nodeDropTracker = new Map<string, { reason: DropReason; lastDropTime: number; nodeLabel: string }>();
+
+function recordDrop(nodeId: string, reason: DropReason, nodeLabel: string) {
+  nodeDropTracker.set(nodeId, { reason, lastDropTime: performance.now(), nodeLabel });
+}
+
+export function getActiveDrops(): Array<{ nodeId: string; nodeLabel: string; reason: DropReason }> {
+  const now = performance.now();
+  const active: Array<{ nodeId: string; nodeLabel: string; reason: DropReason }> = [];
+  for (const [nodeId, entry] of nodeDropTracker) {
+    if (now - entry.lastDropTime < 2000) {
+      active.push({ nodeId, nodeLabel: entry.nodeLabel, reason: entry.reason });
+    }
+  }
+  return active;
+}
+
+/** Smoothed FPS for adaptive coin pop throttling */
+let _smoothedFps = 60;
+const FPS_SMOOTH = 0.05; // low-pass filter weight (lower = smoother)
+export function getSmoothedFps() { return _smoothedFps; }
+
+/** Try to relay an event through a broker. Returns true if under cap, false if over. */
+function tryBrokerRelay(brokerId: string, cap: number, now: number): boolean {
+  let ts = brokerRelayTimestamps.get(brokerId) ?? [];
+  ts = ts.filter(t => now - t < 1000);
+  if (ts.length >= cap) { brokerRelayTimestamps.set(brokerId, ts); return false; }
+  ts.push(now);
+  brokerRelayTimestamps.set(brokerId, ts);
+  return true;
+}
+
+/** Get broker throughput cap from upgrade level */
+function getBrokerCap(brokerComp: { upgrades: Record<string, number> }): number {
+  const level = brokerComp.upgrades['increaseThroughput'] ?? 0;
+  const bonus = level * (level + 9) / 2;
+  return BROKER_BASE_THROUGHPUT + bonus;
+}
+
+/** Get current utilization ratio (0-1+) for a broker */
+export function getBrokerUtilization(brokerId: string, cap: number): number {
+  const ts = brokerRelayTimestamps.get(brokerId) ?? [];
+  const now = performance.now();
+  const recent = ts.filter(t => now - t < 1000);
+  return recent.length / cap;
+}
+
+/** Rebuild orthogonal waypoints from node IDs using current component positions */
+function rebuildPathFromNodeIds(
+  nodeIds: string[],
+  components: { id: string; type: string; x: number; y: number }[]
+): { x: number; y: number }[] {
+  const nodes: { id: string; type: string; x: number; y: number }[] = [];
+  for (const id of nodeIds) {
+    const comp = components.find(c => c.id === id);
+    if (comp) nodes.push(comp);
+  }
+  if (nodes.length === 0) return [];
+  const path: { x: number; y: number }[] = [{ x: nodes[0].x, y: nodes[0].y }];
+  for (let i = 0; i < nodes.length - 1; i++) {
+    const a = nodes[i], b = nodes[i + 1];
+    if (Math.abs(a.y - b.y) >= 1) {
+      // DMQ→broker uses vertical-first routing
+      if (a.type === 'dmq' && b.type === 'broker') {
+        const midY = (a.y + b.y) / 2;
+        path.push({ x: a.x, y: midY });
+        path.push({ x: b.x, y: midY });
+      } else {
+        // Match port-adjusted midX from ConnectionLine.tsx
+        const aHalfW = a.type === 'queue' ? 70 : 60;
+        const bHalfW = b.type === 'queue' ? 70 : 60;
+        const portStartX = a.x + aHalfW + 24;
+        const portEndX = b.x - bHalfW - 2;
+        const midX = (portStartX + portEndX) / 2;
+        path.push({ x: midX, y: a.y });
+        path.push({ x: midX, y: b.y });
+      }
+    }
+    path.push({ x: b.x, y: b.y });
+  }
+  return path;
+}
+
+/** Project a point onto a polyline path, returning the progress (0-1) of the closest point */
+function projectOntoPath(path: { x: number; y: number }[], px: number, py: number): number {
+  let bestProgress = 0;
+  let bestDist = Infinity;
+  for (let i = 0; i < path.length - 1; i++) {
+    const ax = path[i].x, ay = path[i].y;
+    const bx = path[i + 1].x, by = path[i + 1].y;
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + t * dx, cy = ay + t * dy;
+    const dist = Math.hypot(px - cx, py - cy);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestProgress = (i + t) / (path.length - 1);
+    }
+  }
+  return bestProgress;
+}
+
+/** Remove consecutive duplicate waypoints (within 1px) that break isPastAllQueues checks */
+function dedupeConsecutiveWaypoints(path: { x: number; y: number }[]): { x: number; y: number }[] {
+  return path.filter((p, i) => i === 0 || Math.abs(p.x - path[i - 1].x) >= 1 || Math.abs(p.y - path[i - 1].y) >= 1);
+}
 
 /** Check if a point (dot) touches the rectangular bounding box of a node */
 function dotTouchesNode(px: number, py: number, nodeX: number, nodeY: number): boolean {
@@ -25,15 +149,6 @@ function dotTouchesNode(px: number, py: number, nodeX: number, nodeY: number): b
   return dist <= DOT_RADIUS;
 }
 
-function getWebhookThresholds(path: { x: number; y: number }[]) {
-  if (path.length < 2) return { webhookSlowStart: 0, webhookSlowEnd: 0 };
-  const segmentCount = path.length - 1;
-  const progressPerSegment = 1 / segmentCount;
-  return {
-    webhookSlowStart: progressPerSegment,
-    webhookSlowEnd: 2 * progressPerSegment,
-  };
-}
 
 export function useGameLoop() {
   const rafRef = useRef<number>(0);
@@ -45,21 +160,17 @@ export function useGameLoop() {
       const dt = time - lastTimeRef.current;
       lastTimeRef.current = time;
 
+      // Update smoothed FPS for adaptive coin pop throttling
+      if (dt > 0) {
+        const instantFps = 1000 / dt;
+        _smoothedFps += FPS_SMOOTH * (instantFps - _smoothedFps);
+      }
+
       const state = useGameStore.getState();
-      const toConsume: string[] = [];
+      const toConsume: { id: string; value: number; subscriberId: string }[] = [];
       const toFinish: string[] = [];
       const toRemove: string[] = [];
-
-      // Helper: check if a component is occupied (has a pausing/queued dot)
-      const isComponentOccupied = (componentId: string) => {
-        const comp = state.components.find(c => c.id === componentId);
-        if (!comp) return false;
-        return state.eventDots.some(d => {
-          if (d.status !== 'pausing' && d.status !== 'queued') return false;
-          const lastPos = d.path[d.path.length - 1];
-          return Math.hypot(comp.x - lastPos.x, comp.y - lastPos.y) < 50;
-        });
-      };
+      let droppedCount = 0;
 
       state.updateDots(dots => {
         type Dot = import('../store/gameStore').EventDot;
@@ -69,30 +180,99 @@ export function useGameLoop() {
         for (let i = 0; i < dots.length; i++) {
           let dot = dots[i];
 
+          // Helper: check if a component is occupied — sees already-processed + remaining dots
+          const isComponentOccupied = (componentId: string) => {
+            const comp = state.components.find(c => c.id === componentId);
+            if (!comp) return false;
+            const allDots = [...updated, ...dots.slice(i + 1)];
+            return allDots.some(d => {
+              if (d.id === dot.id) return false; // never block yourself
+              if (d.status === 'pausing' || d.status === 'queued') {
+                const lastPos = d.path[d.path.length - 1];
+                return Math.hypot(comp.x - lastPos.x, comp.y - lastPos.y) < 50;
+              }
+              // A traveling dot inside a webhook/broker counts as occupying it
+              if (d.status === 'traveling' && (comp.type === 'webhook' || comp.type === 'broker')) {
+                const pos = interpolatePath(d.path, d.progress);
+                return dotTouchesNode(pos.x, pos.y, comp.x, comp.y);
+              }
+              return false;
+            });
+          };
+
+          // Rebuild path in real-time when a component on this dot's route is being dragged
+          if (state.draggingNodeId && dot.originalNodeIds?.includes(state.draggingNodeId) &&
+              (dot.status === 'traveling' || dot.status === 'queued')) {
+            const currentPos = dot.status === 'traveling' ? interpolatePath(dot.path, dot.progress) : null;
+            const newPath = rebuildPathFromNodeIds(dot.originalNodeIds, state.components);
+            if (newPath.length >= 2) {
+              const newProgress = currentPos ? projectOntoPath(newPath, currentPos.x, currentPos.y) : dot.progress;
+              dot = { ...dot, path: newPath, progress: newProgress } as typeof dot;
+            }
+          }
+
           if (dot.status === 'traveling') {
-            let actualSpeed = dot.speed * state.upgrades.propagationSpeed;
+            const dropColor = dot.isRetry ? '#4a5568' : '#ff4444';
+            const eventPos = interpolatePath(dot.path, dot.progress);
 
-            const thresholds = getWebhookThresholds(dot.path);
-
-            if (dot.progress >= thresholds.webhookSlowStart && dot.progress < thresholds.webhookSlowEnd) {
-              const webhookComponent = state.components.find(c => c.type === 'webhook');
-              if (webhookComponent) {
-                const fasterRoutingLevel = webhookComponent.upgrades['fasterRouting'] ?? 0;
-                const slowFactor = Math.min(1.0, 0.4 + fasterRoutingLevel * 0.2);
-                actualSpeed *= slowFactor;
+            // Drop dots whose path no longer matches the connection graph (connection was removed)
+            // Extract component nodes from the path (skip orthogonal midpoints)
+            const pathComps: { comp: typeof state.components[0]; idx: number }[] = [];
+            for (let wp = 0; wp < dot.path.length; wp++) {
+              const pt = dot.path[wp];
+              const comp = state.components.find(c => Math.abs(c.x - pt.x) < 1 && Math.abs(c.y - pt.y) < 1);
+              if (comp && (pathComps.length === 0 || pathComps[pathComps.length - 1].comp.id !== comp.id)) {
+                pathComps.push({ comp, idx: wp });
               }
             }
+            // Check each consecutive component pair ahead of the dot has a connection
+            // Skip validation while a node is being dragged — dragging moves positions
+            // but doesn't disconnect cables, so the position-based matching would give false positives
+            let pathInvalid = false;
+            for (let pc = 0; pc < pathComps.length - 1 && !state.draggingNodeId; pc++) {
+              const fromProgress = pathComps[pc].idx / (dot.path.length - 1);
+              // Only validate segments the dot hasn't passed yet
+              if (pathComps[pc + 1].idx / (dot.path.length - 1) < dot.progress - 0.01) continue;
+              const a = pathComps[pc].comp;
+              const b = pathComps[pc + 1].comp;
+              const bothBrokers = a.type === 'broker' && b.type === 'broker';
+              const connExists = state.connections.some(c =>
+                (c.fromId === a.id && c.toId === b.id) ||
+                (bothBrokers && c.fromId === b.id && c.toId === a.id)
+              );
+              if (!connExists) {
+                pathInvalid = true;
+                break;
+              }
+            }
+            if (pathInvalid) {
+              droppedCount++;
+              const failComp = pathComps[0]?.comp;
+              if (failComp) recordDrop(failComp.id, 'path-invalid', failComp.label);
+              updated.push({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: dropColor } as Dot);
+              continue;
+            }
 
-            const eventPos = interpolatePath(dot.path, dot.progress);
-            const blockRadius = 30;
+            let actualSpeed = dot.speed * state.upgrades.propagationSpeed;
+
+            const webhookComponent = state.components.find(c => c.type === 'webhook');
+            if (webhookComponent && dotTouchesNode(eventPos.x, eventPos.y, webhookComponent.x, webhookComponent.y)) {
+              actualSpeed *= 0.4;
+            }
+            const blockRadius = NODE_HALF_W + DOT_RADIUS + 15; // detect approaching dots before they enter the node
 
             let blocked = false;
             for (const comp of state.components) {
-              if (comp.type === 'publisher') continue;
-              const distToComp = Math.hypot(eventPos.x - comp.x, eventPos.y - comp.y);
-              if (distToComp < blockRadius && isComponentOccupied(comp.id)) {
-                if (comp.type === 'webhook' || comp.type === 'broker') {
-                  updated.push({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: '#ff4444' } as Dot);
+              if (comp.type === 'publisher' || comp.type === 'broker') continue;
+              if (comp.type === 'webhook') {
+                // Only block dots approaching from the left, just before the node's left edge
+                const leftEdge = comp.x - NODE_HALF_W - DOT_RADIUS;
+                if (eventPos.x >= leftEdge) continue; // already at or past the edge
+                if (eventPos.x < leftEdge - 20) continue; // too far away to block
+                if (isComponentOccupied(comp.id)) {
+                  droppedCount++;
+                  recordDrop(comp.id, 'webhook-occupied', comp.label);
+                  updated.push({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: dropColor } as Dot);
                   blocked = true;
                   break;
                 }
@@ -103,16 +283,100 @@ export function useGameLoop() {
             const newProgress = Math.min(dot.progress + actualSpeed * dt, 1);
             const newPos = interpolatePath(dot.path, newProgress);
 
-            // Check collision with queues along the path
-            let queued = false;
-            for (let j = 0; j < dot.path.length - 1; j++) {
-              const pathPoint = dot.path[j];
-              const queue = state.components.find(c =>
-                c.type === 'queue' && Math.hypot(c.x - pathPoint.x, c.y - pathPoint.y) < 50
-              );
+            // Broker throughput cap (ingestion only): only the FIRST broker on the path
+            // counts against throughput. Bridged events flow freely through subsequent brokers.
+            let brokerCapped = false;
+            const now = performance.now();
+            const firstBroker = pathComps.find(pc => pc.comp.type === 'broker');
+            if (firstBroker) {
+              const brokerProgress = firstBroker.idx / (dot.path.length - 1);
+              if (dot.progress < brokerProgress && newProgress >= brokerProgress) {
+                const cap = getBrokerCap(firstBroker.comp);
+                if (!tryBrokerRelay(firstBroker.comp.id, cap, now)) {
+                  droppedCount++;
+                  recordDrop(firstBroker.comp.id, 'broker-capped', firstBroker.comp.label);
+                  updated.push({ ...dot, status: 'dropped', dropX: firstBroker.comp.x, dropY: firstBroker.comp.y, dropVY: 0, color: dropColor } as Dot);
+                  brokerCapped = true;
+                }
+              }
+            }
+            if (brokerCapped) continue;
 
-              if (queue && dotTouchesNode(newPos.x, newPos.y, queue.x, queue.y)) {
-                const bufferSize = 1 + (queue.upgrades['bufferSize'] ?? 0);
+            // Fork spawning: when dot with forkPaths passes its fork broker, spawn fork dots
+            if (dot.forkPaths && dot.forkNodeId) {
+              const forkComp = state.components.find(c => c.id === dot.forkNodeId);
+              if (forkComp && dotTouchesNode(newPos.x, newPos.y, forkComp.x, forkComp.y)) {
+                for (const fork of dot.forkPaths) {
+                  const forkDotId = nextDotId();
+                  // Build fork path starting from the broker position onward
+                  const brokerIdxInFork = fork.nodeIds.indexOf(dot.forkNodeId!);
+                  const forkStartNodeIds = brokerIdxInFork >= 0 ? fork.nodeIds.slice(brokerIdxInFork) : fork.nodeIds;
+                  // Build waypoints from broker onward using the fork's full waypoints
+                  // Find the waypoint closest to the broker
+                  let brokerWpIdx = 0;
+                  let bestDist = Infinity;
+                  for (let wi = 0; wi < fork.waypoints.length; wi++) {
+                    const d = Math.hypot(fork.waypoints[wi].x - forkComp.x, fork.waypoints[wi].y - forkComp.y);
+                    if (d < bestDist) { bestDist = d; brokerWpIdx = wi; }
+                  }
+                  const forkWaypoints = fork.waypoints.slice(brokerWpIdx);
+                  if (forkWaypoints.length >= 2) {
+                    // Fork dots spawn at the publisher's first broker (ingestion point),
+                    // so they count against that broker's throughput cap
+                    const forkCap = getBrokerCap(forkComp);
+                    if (!tryBrokerRelay(forkComp.id, forkCap, now)) {
+                      droppedCount++;
+                      recordDrop(forkComp.id, 'broker-capped', forkComp.label);
+                      updated.push({
+                        id: forkDotId,
+                        path: forkWaypoints,
+                        progress: 0,
+                        speed: 0,
+                        status: 'dropped' as const,
+                        dropX: forkComp.x,
+                        dropY: forkComp.y,
+                        dropVY: 0,
+                        color: dropColor,
+                        opacity: 1,
+                        value: dot.value,
+                        originalValue: dot.originalValue,
+                        originalNodeIds: forkStartNodeIds,
+                      });
+                    } else {
+                      updated.push({
+                        id: forkDotId,
+                        path: forkWaypoints,
+                        progress: 0,
+                        speed: normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, forkWaypoints),
+                        status: 'traveling' as const,
+                        color: dot.color,
+                        opacity: 1,
+                        value: dot.value,
+                        originalValue: dot.originalValue,
+                        originalNodeIds: forkStartNodeIds,
+                      });
+                    }
+                  }
+                }
+                // Clear fork data from this dot
+                dot = { ...dot, forkPaths: undefined, forkNodeId: undefined };
+              }
+            }
+
+            // Find the next component the dot should interact with (queue or subscriber)
+            // This prevents dots from being captured by nodes they pass through spatially
+            // but haven't reached yet along their connection path
+            const nextInteractable = pathComps.find(pc => {
+              const compProgress = pc.idx / (dot.path.length - 1);
+              return compProgress > dot.progress - 0.01 && (pc.comp.type === 'queue' || pc.comp.type === 'subscriber');
+            });
+
+            // Check collision with queues — only the next queue on the path
+            let queued = false;
+            if (nextInteractable && nextInteractable.comp.type === 'queue') {
+              const queue = nextInteractable.comp;
+              if (dotTouchesNode(newPos.x, newPos.y, queue.x, queue.y)) {
+                const bufferSize = 3 + (queue.upgrades['bufferSize'] ?? 0) + getPermanentQueueBufferBonus(state);
                 // Count from the already-processed updated array for accurate counts
                 const queuedCount = updated.filter(d =>
                   d.status === 'queued' && d.queuedAtNodeId === queue.id
@@ -121,39 +385,53 @@ export function useGameLoop() {
                 if (queuedCount < bufferSize) {
                   updated.push({ ...dot, status: 'queued', pauseStartTime: Date.now(), queuedAtNodeId: queue.id, progress: newProgress } as Dot);
                 } else {
-                  updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: '#ff4444' } as Dot);
+                  droppedCount++;
+                  recordDrop(queue.id, 'queue-full', queue.label);
+                  updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
                 }
                 queued = true;
-                break;
               }
             }
             if (queued) continue;
 
-            // Check collision with subscriber
-            const lastPathPoint = dot.path[dot.path.length - 1];
-            const subscriber = state.components.find(c =>
-              c.type === 'subscriber' && Math.hypot(c.x - lastPathPoint.x, c.y - lastPathPoint.y) < 50
-            );
+            // Check collision with subscriber — only if subscriber is the next interactable node
+            if (nextInteractable && nextInteractable.comp.type === 'subscriber') {
+              const subscriber = nextInteractable.comp;
+              const lastPathPoint = dot.path[dot.path.length - 1];
 
-            if (subscriber && dotTouchesNode(newPos.x, newPos.y, subscriber.x, subscriber.y)) {
-              // Check updated array for accurate subscriber occupancy
-              const isSubscriberOccupied = updated.some(d =>
-                d.status === 'pausing' &&
-                !d.moneyAdded &&
-                d.path.length > 0 &&
-                Math.hypot(d.path[d.path.length - 1].x - lastPathPoint.x, d.path[d.path.length - 1].y - lastPathPoint.y) < 50
-              );
-              if (!isSubscriberOccupied) {
-                updated.push({ ...dot, status: 'pausing', pauseStartTime: Date.now(), progress: newProgress } as Dot);
-              } else {
-                updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: '#ff4444' } as Dot);
+              if (dotTouchesNode(newPos.x, newPos.y, subscriber.x, subscriber.y)) {
+                // Check updated array for accurate subscriber occupancy
+                // A subscriber is occupied only if the consuming dot still has time remaining
+                const subscriberForOccupancy = state.components.find(c =>
+                  c.type === 'subscriber' && Math.hypot(c.x - lastPathPoint.x, c.y - lastPathPoint.y) < 50
+                );
+                const occFcLevel = subscriberForOccupancy?.upgrades['fasterConsumption'] ?? 0;
+                const occBoostPct = Math.min(occFcLevel * (occFcLevel + 9) / 2, 100);
+                const occConsumeDuration = 1000 * (1 - occBoostPct / 100);
+                const isSubscriberOccupied = [...updated, ...dots.slice(i + 1)].some(d => {
+                  if (d.status !== 'pausing' || d.moneyAdded || d.path.length === 0) return false;
+                  if (Math.hypot(d.path[d.path.length - 1].x - lastPathPoint.x, d.path[d.path.length - 1].y - lastPathPoint.y) >= 50) return false;
+                  const elapsed = Date.now() - (d.pauseStartTime ?? Date.now());
+                  // Allow arrival within 50ms of consumption finishing to account for frame timing
+                  return elapsed < occConsumeDuration - 50;
+                });
+                if (!isSubscriberOccupied) {
+                  updated.push({ ...dot, status: 'pausing', pauseStartTime: Date.now(), progress: newProgress } as Dot);
+                } else {
+                  droppedCount++;
+                  recordDrop(subscriber.id, 'subscriber-occupied', subscriber.label);
+                  updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
+                }
+                continue;
               }
-              continue;
             }
 
             if (newProgress >= 1) {
               const endPos = dot.path[dot.path.length - 1];
-              updated.push({ ...dot, status: 'dropped', dropX: endPos.x, dropY: endPos.y, dropVY: 0, color: '#ff4444' } as Dot);
+              droppedCount++;
+              const lastComp = pathComps[pathComps.length - 1]?.comp;
+              if (lastComp) recordDrop(lastComp.id, 'path-incomplete', lastComp.label);
+              updated.push({ ...dot, status: 'dropped', dropX: endPos.x, dropY: endPos.y, dropVY: 0, color: dropColor } as Dot);
               continue;
             }
 
@@ -165,23 +443,62 @@ export function useGameLoop() {
               c.type === 'subscriber' && Math.hypot(c.x - lastComponent.x, c.y - lastComponent.y) < 50
             );
             const fasterConsumptionLevel = subscriber?.upgrades['fasterConsumption'] ?? 0;
-            const consumeDuration = 2500 * Math.pow(0.95, fasterConsumptionLevel);
-            const moneyAddTime = consumeDuration * 0.5;
+            const boostPct = Math.min(fasterConsumptionLevel * (fasterConsumptionLevel + 9) / 2, 100);
+            const consumeDuration = 1000 * (1 - boostPct / 100);
+            if (elapsed >= consumeDuration && !dot.moneyAdded) {
+              const consumptionValueLevel = subscriber?.upgrades['consumptionValue'] ?? 0;
+              const subscriberMult = 1.0 + consumptionValueLevel * 0.08 + consumptionValueLevel * consumptionValueLevel * 0.02;
 
-            if (elapsed >= moneyAddTime && !dot.moneyAdded) {
-              toConsume.push(dot.id);
+              const finalValue = dot.value * subscriberMult;
+              toConsume.push({ id: dot.id, value: finalValue, subscriberId: subscriber?.id ?? '' });
               // Don't add to updated — dot is finished
             } else {
               updated.push(dot);
             }
           } else if (dot.status === 'dropped') {
             const newVY = (dot.dropVY ?? 0) + 0.3 * dt / 16;
+            const newDropY = (dot.dropY ?? 0) + newVY;
             const newDot = {
               ...dot,
               dropVY: newVY,
-              dropY: (dot.dropY ?? 0) + newVY,
-              opacity: dot.opacity - dt / 600,
+              dropY: newDropY,
+              opacity: dot.opacity - dt / 2500,
             } as Dot;
+
+            // DMQ catch: check if dropping dot lands on the DMQ
+            if (!dot.isRetry) {
+              const dmq = state.components.find(c => c.type === 'dmq');
+              if (dmq) {
+                const dmqWidthLevel = dmq.upgrades['dmqWidth'] ?? 0;
+                const dmqHalfW = (120 + dmqWidthLevel * 40) / 2;
+                const dmqTop = dmq.y - NODE_TOP_OFFSET;
+                const dropX = dot.dropX ?? 0;
+
+                if (dropX >= dmq.x - dmqHalfW && dropX <= dmq.x + dmqHalfW && newDropY >= dmqTop) {
+                  // Check DMQ buffer capacity
+                  const dmqBufferSize = 3 + (dmq.upgrades['dmqBufferSize'] ?? 0);
+                  const dmqQueuedCount = updated.filter(d =>
+                    d.status === 'queued' && d.queuedAtNodeId === dmq.id
+                  ).length;
+
+                  if (dmqQueuedCount < dmqBufferSize) {
+                    updated.push({
+                      ...dot,
+                      status: 'queued',
+                      pauseStartTime: Date.now(),
+                      queuedAtNodeId: dmq.id,
+                      dropX: undefined,
+                      dropY: undefined,
+                      dropVY: undefined,
+                      opacity: 1,
+                      originalValue: dot.originalValue ?? dot.value,
+                    } as Dot);
+                    continue;
+                  }
+                }
+              }
+            }
+
             if (newDot.opacity > 0) {
               updated.push(newDot);
             }
@@ -190,49 +507,381 @@ export function useGameLoop() {
           }
         }
 
-        // --- Pass 2: auto-release ONE queued dot per queue if subscriber is free ---
-        const releasedQueues = new Set<string>();
+        // --- Pass 2: auto-release queued dots (1 per queue, or up to 3 with Prefetch prestige) ---
+        const batchConsume = hasPermanentBatchConsume(state);
+        const maxReleasesPerQueue = batchConsume ? 3 : 1;
+        const queueReleaseCounts = new Map<string, number>();
 
         for (let i = 0; i < updated.length; i++) {
-          const dot = updated[i];
+          let dot = updated[i];
           if (dot.status !== 'queued' || !dot.queuedAtNodeId) continue;
-          if (releasedQueues.has(dot.queuedAtNodeId)) continue;
+          const releasedSoFar = queueReleaseCounts.get(dot.queuedAtNodeId) ?? 0;
+          if (releasedSoFar >= maxReleasesPerQueue) continue;
 
           const queueId = dot.queuedAtNodeId;
 
-          // Only release the first queued dot in this queue
-          const isFirst = !updated.some((d, di) =>
-            di < i &&
-            d.status === 'queued' &&
-            d.queuedAtNodeId === queueId
-          );
-          if (!isFirst) continue;
+          // Skip DMQ-queued dots — they're handled in Pass 3
+          const queueComp = state.components.find(c => c.id === queueId);
+          if (queueComp?.type === 'dmq') continue;
 
-          // Check if subscriber is free — check against the updated array
-          const subscriberPos = dot.path[dot.path.length - 1];
-          const isSubscriberBusy = updated.some(d =>
-            d.id !== dot.id &&
-            d.path.length > 0 &&
-            Math.hypot(d.path[d.path.length - 1].x - subscriberPos.x, d.path[d.path.length - 1].y - subscriberPos.y) < 50 &&
-            (
-              (d.status === 'pausing' && !d.moneyAdded) ||
-              // Only count traveling dots that are past the queue (between queue and subscriber)
-              (d.status === 'traveling' && d.progress > dot.progress)
-            )
-          );
 
-          if (!isSubscriberBusy) {
-            releasedQueues.add(queueId);
-            updated[i] = { ...dot, status: 'traveling', pauseStartTime: undefined, queuedAtNodeId: undefined } as Dot;
+          // Only release the oldest queued dot in this queue (FIFO by pauseStartTime)
+          let isOldest = true;
+          for (let j = 0; j < updated.length; j++) {
+            if (j === i) continue;
+            const d = updated[j];
+            if (d.status === 'queued' && d.queuedAtNodeId === queueId &&
+                (d.pauseStartTime ?? 0) < (dot.pauseStartTime ?? 0)) {
+              isOldest = false;
+              break;
+            }
+          }
+          if (!isOldest) continue;
+
+          // Find the subscriber this queue feeds into (check current connections, not baked path)
+          const queueOutConn = state.connections.find(c => c.fromId === queueId);
+          const subscriberComp = queueOutConn
+            ? state.components.find(c => c.id === queueOutConn.toId && c.type === 'subscriber')
+            : null;
+          // Also check baked path for dots that already have a valid path
+          const endPoint = dot.path[dot.path.length - 1];
+          const bakedSubscriber = state.components.find(c =>
+            c.type === 'subscriber' && Math.hypot(c.x - endPoint.x, c.y - endPoint.y) < 50
+          );
+          const targetSub = subscriberComp ?? bakedSubscriber;
+
+          const hasFanOut = queueComp && (queueComp.upgrades['fanOut'] ?? 0) > 0;
+
+          // Collect all connected subscribers (needed for busy check and release)
+          const allConnectedSubs: { x: number; y: number }[] = [];
+          {
+            const queue = state.components.find(c => c.id === queueId);
+            if (queue) {
+              const outConns = state.connections.filter(c => c.fromId === queueId);
+              for (const conn of outConns) {
+                const target = state.components.find(c => c.id === conn.toId && c.type === 'subscriber');
+                if (target) allConnectedSubs.push({ x: target.x, y: target.y });
+              }
+            }
+          }
+          // Fallback to baked path subscriber
+          if (allConnectedSubs.length === 0 && targetSub) {
+            allConnectedSubs.push({ x: targetSub.x, y: targetSub.y });
+          }
+
+          const hasSubscriber = allConnectedSubs.length > 0;
+          if (!hasSubscriber) continue;
+
+          const queue = state.components.find(c => c.id === queueId);
+
+          // Pre-build release paths for all connected subscribers
+          const buildReleasePath = (subTarget: { x: number; y: number }) => {
+            if (!queue) return { path: dot.path, progress: dot.progress };
+            let bestIdx = 0;
+            let bestDist = Infinity;
+            for (let pi = 0; pi < dot.path.length; pi++) {
+              const d = Math.hypot(dot.path[pi].x - queue.x, dot.path[pi].y - queue.y);
+              if (d < bestDist) { bestDist = d; bestIdx = pi; }
+            }
+            const queuePoint = { x: queue.x, y: queue.y };
+            const extension: { x: number; y: number }[] = [];
+            if (Math.abs(queue.y - subTarget.y) >= 1) {
+              const qHalfW = 70;
+              const sHalfW = 60;
+              const midX = (queue.x + qHalfW + 24 + subTarget.x - sHalfW - 2) / 2;
+              extension.push({ x: midX, y: queue.y });
+              extension.push({ x: midX, y: subTarget.y });
+            }
+            extension.push({ x: subTarget.x, y: subTarget.y });
+            const releasePath = dedupeConsecutiveWaypoints([queuePoint, ...extension]);
+            const totalSegments = releasePath.length - 1;
+            let releaseProgress = 0;
+            if (totalSegments > 0) {
+              const from = releasePath[0];
+              const to = releasePath[1];
+              const segLen = Math.hypot(to.x - from.x, to.y - from.y);
+              const clearanceFraction = segLen > 0 ? (NODE_HALF_W + DOT_RADIUS + 2) / segLen : 1;
+              releaseProgress = Math.min(clearanceFraction / totalSegments, 1);
+            }
+            return { path: releasePath, progress: releaseProgress };
+          };
+
+          // Predictive release: release when the dot would arrive as the subscriber finishes consuming
+          // Calculate the progress at which a dot enters a subscriber's collision box
+          // (dotTouchesNode triggers before progress 1.0 due to the node's bounding rectangle)
+          const getArrivalProgress = (path: { x: number; y: number }[]) => {
+            if (path.length < 2) return 1;
+            const last = path[path.length - 1];
+            const prev = path[path.length - 2];
+            const dx = last.x - prev.x;
+            const dy = last.y - prev.y;
+            const lastSegLen = Math.hypot(dx, dy);
+            if (lastSegLen === 0) return 1;
+            // Catch distance depends on approach direction (horizontal vs vertical)
+            const catchDist = Math.abs(dx) >= Math.abs(dy)
+              ? NODE_HALF_W + DOT_RADIUS
+              : NODE_TOP_OFFSET + DOT_RADIUS;
+            const totalSegments = path.length - 1;
+            return Math.max(0, 1 - catchDist / (lastSegLen * totalSegments));
+          };
+
+          const shouldReleaseTo = (sub: { x: number; y: number }, releasePath: { x: number; y: number }[], startProgress: number) => {
+            const baseSpeed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, releasePath);
+            // During movement, dot.speed is multiplied by propagationSpeed again (line 234)
+            const actualSpeed = baseSpeed * state.upgrades.propagationSpeed;
+            const arrivalProg = getArrivalProgress(releasePath);
+            const travelTime = actualSpeed > 0 ? (Math.max(arrivalProg, startProgress) - startProgress) / actualSpeed : Infinity;
+
+            const subComp = state.components.find(c =>
+              c.type === 'subscriber' && Math.hypot(c.x - sub.x, c.y - sub.y) < 50
+            );
+            const fcLevel = subComp?.upgrades['fasterConsumption'] ?? 0;
+            const boostPct = Math.min(fcLevel * (fcLevel + 9) / 2, 100);
+            const consumeDuration = 1000 * (1 - boostPct / 100);
+
+            let latestSlotOpen = 0; // 0 = subscriber is free now
+
+            for (const d of updated) {
+              if (d.id === dot.id || d.path.length === 0) continue;
+              const dEnd = d.path[d.path.length - 1];
+              if (Math.hypot(dEnd.x - sub.x, dEnd.y - sub.y) >= 50) continue;
+
+              if (d.status === 'pausing' && !d.moneyAdded) {
+                const elapsed = Date.now() - (d.pauseStartTime ?? Date.now());
+                const remaining = Math.max(consumeDuration - elapsed, 0);
+                latestSlotOpen = Math.max(latestSlotOpen, remaining);
+              }
+
+              if (d.status === 'traveling') {
+                // Only count dots past all queues (on final segment to subscriber)
+                const isPastAllQueues = !d.path.some((wp, idx) => {
+                  if (idx >= d.path.length - 1) return false;
+                  const q = state.components.find(c =>
+                    c.type === 'queue' && Math.abs(c.x - wp.x) < 1 && Math.abs(c.y - wp.y) < 1
+                  );
+                  if (!q) return false;
+                  const queueProgress = idx / (d.path.length - 1);
+                  return d.progress <= queueProgress + 0.01;
+                });
+                if (!isPastAllQueues) continue;
+                const inFlightActualSpeed = d.speed * state.upgrades.propagationSpeed;
+                const dArrivalProg = getArrivalProgress(d.path);
+                const arrivalTime = inFlightActualSpeed > 0 ? (Math.max(dArrivalProg, d.progress) - d.progress) / inFlightActualSpeed : Infinity;
+                latestSlotOpen = Math.max(latestSlotOpen, arrivalTime + consumeDuration);
+              }
+            }
+
+            return latestSlotOpen <= travelTime;
+          };
+
+          // Without fan-out, determine round-robin target
+          let targets: { x: number; y: number }[];
+          if (hasFanOut) {
+            targets = allConnectedSubs;
+          } else {
+            const rrIdx = (queueRoundRobinIdx.get(queueId) ?? 0) % allConnectedSubs.length;
+            queueRoundRobinIdx.set(queueId, rrIdx + 1);
+            targets = [allConnectedSubs[rrIdx]];
+          }
+
+          // Build release paths and check timing for each target
+          const releaseData = targets.map(sub => ({
+            sub,
+            ...buildReleasePath(sub),
+          }));
+
+          // With fanout: all subscribers must be ready; without: just the target
+          const canRelease = releaseData.every(rd => shouldReleaseTo(rd.sub, rd.path, rd.progress));
+
+          if (canRelease) {
+            queueReleaseCounts.set(queueId, (queueReleaseCounts.get(queueId) ?? 0) + 1);
+
+            for (let ti = 0; ti < releaseData.length; ti++) {
+              const { path: releasePath, progress: releaseProgress } = releaseData[ti];
+              const releaseDot = { ...dot, path: releasePath };
+              const releaseSpeed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, releasePath);
+              if (ti === 0) {
+                updated[i] = { ...releaseDot, status: 'traveling', progress: releaseProgress, speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined } as Dot;
+              } else {
+                updated.push({
+                  ...releaseDot,
+                  id: nextDotId(),
+                  status: 'traveling',
+                  progress: releaseProgress,
+                  speed: releaseSpeed,
+                  pauseStartTime: undefined,
+                  queuedAtNodeId: undefined,
+                } as Dot);
+              }
+            }
+          }
+        }
+
+        // --- Pass 3: auto-release ONE queued dot from DMQ if broker connection exists ---
+        const dmqComp = state.components.find(c => c.type === 'dmq');
+        if (dmqComp) {
+          const dmqConn = state.connections.find(c => c.fromId === dmqComp.id);
+          const brokerTarget = dmqConn
+            ? state.components.find(c => c.id === dmqConn.toId && c.type === 'broker')
+            : null;
+
+          if (brokerTarget) {
+              // Find the first queued dot in DMQ and use predictive timing to decide release
+              for (let i = 0; i < updated.length; i++) {
+                const dot = updated[i];
+                if (dot.status !== 'queued' || dot.queuedAtNodeId !== dmqComp.id) continue;
+
+                // Rebuild path using current component positions from originalNodeIds
+                const origValue = dot.originalValue ?? dot.value;
+                const dmqValueRecoveryLevel = dmqComp.upgrades['dmqValueRecovery'] ?? 0;
+                const recoveryPct = Math.min(1.0, 0.1 + dmqValueRecoveryLevel * 0.1);
+                const retryValue = origValue * recoveryPct;
+
+                // Get node IDs from broker onward using the original route
+                const origNodeIds = dot.originalNodeIds ?? [];
+                const brokerIdx = origNodeIds.indexOf(brokerTarget.id);
+                const nodeIdsFromBroker = brokerIdx >= 0 ? origNodeIds.slice(brokerIdx) : [brokerTarget.id];
+
+                // Build fresh waypoints from current positions: broker → ... → subscriber
+                const routeNodes: { x: number; y: number; type: string; id: string }[] = [];
+                for (const nid of nodeIdsFromBroker) {
+                  const comp = state.components.find(c => c.id === nid);
+                  if (comp) routeNodes.push({ x: comp.x, y: comp.y, type: comp.type, id: comp.id });
+                }
+
+                // Expand to orthogonal waypoints
+                const pathFromBroker: { x: number; y: number }[] = routeNodes.length > 0 ? [{ x: routeNodes[0].x, y: routeNodes[0].y }] : [];
+                for (let ni = 0; ni < routeNodes.length - 1; ni++) {
+                  const a = routeNodes[ni];
+                  const b = routeNodes[ni + 1];
+                  if (Math.abs(a.y - b.y) >= 1) {
+                    const aHalfW = a.type === 'queue' ? 70 : 60;
+                    const bHalfW = b.type === 'queue' ? 70 : 60;
+                    const midX = (a.x + aHalfW + 24 + b.x - bHalfW - 2) / 2;
+                    pathFromBroker.push({ x: midX, y: a.y });
+                    pathFromBroker.push({ x: midX, y: b.y });
+                  }
+                  pathFromBroker.push({ x: b.x, y: b.y });
+                }
+
+                // Build DMQ → broker path (vertical first)
+                const dmqToBroker: { x: number; y: number }[] = [{ x: dmqComp.x, y: dmqComp.y }];
+                if (Math.abs(dmqComp.x - brokerTarget.x) >= 1) {
+                  const midY = (dmqComp.y + brokerTarget.y) / 2;
+                  dmqToBroker.push({ x: dmqComp.x, y: midY });
+                  dmqToBroker.push({ x: brokerTarget.x, y: midY });
+                }
+                // Combine: DMQ → broker → original route from broker
+                const fullPath = [...dmqToBroker, ...pathFromBroker];
+
+                // --- Predictive timing: find the first queue or subscriber on the retry path ---
+                let targetComp: { x: number; y: number; type: string; id: string } | null = null;
+                for (let ni = 1; ni < routeNodes.length; ni++) {
+                  if (routeNodes[ni].type === 'queue' || routeNodes[ni].type === 'subscriber') {
+                    targetComp = routeNodes[ni];
+                    break;
+                  }
+                }
+
+                if (!targetComp) continue;
+
+                const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, fullPath);
+
+                let canRelease = false;
+                if (targetComp.type === 'queue') {
+                  // Check if queue has buffer space, counting both queued and in-flight dots
+                  const queueComp = state.components.find(c => c.id === targetComp!.id);
+                  const queuedCount = updated.filter(d => d.status === 'queued' && d.queuedAtNodeId === targetComp!.id).length;
+                  const inFlightToQueue = updated.filter(d => {
+                    if (d.id === dot.id || d.status !== 'traveling' || d.path.length === 0) return false;
+                    // Check if this dot's path passes through the target queue
+                    return d.path.some(p => Math.hypot(p.x - targetComp!.x, p.y - targetComp!.y) < 50);
+                  }).length;
+                  const bufferLevel = queueComp?.upgrades['bufferSize'] ?? 0;
+                  const capacity = 3 + bufferLevel + getPermanentQueueBufferBonus(state);
+                  canRelease = (queuedCount + inFlightToQueue) < capacity;
+                } else {
+                  // Subscriber — predictive timing (same logic as queue release)
+                  const actualSpeed = speed * state.upgrades.propagationSpeed;
+                  const dmqArrivalProg = getArrivalProgress(fullPath);
+                  const travelTime = actualSpeed > 0 ? dmqArrivalProg / actualSpeed : Infinity;
+
+                  const subComp = state.components.find(c => c.id === targetComp!.id);
+                  const fcLevel = subComp?.upgrades['fasterConsumption'] ?? 0;
+                  const boostPct = Math.min(fcLevel * (fcLevel + 9) / 2, 100);
+                  const consumeDuration = 1000 * (1 - boostPct / 100);
+
+                  let latestSlotOpen = 0;
+                  for (const d of updated) {
+                    if (d.id === dot.id || d.path.length === 0) continue;
+                    const dEnd = d.path[d.path.length - 1];
+                    if (Math.hypot(dEnd.x - targetComp!.x, dEnd.y - targetComp!.y) >= 50) continue;
+
+                    if (d.status === 'pausing' && !d.moneyAdded) {
+                      const elapsed = Date.now() - (d.pauseStartTime ?? Date.now());
+                      const remaining = Math.max(consumeDuration - elapsed, 0);
+                      latestSlotOpen = Math.max(latestSlotOpen, remaining);
+                    }
+
+                    if (d.status === 'traveling') {
+                      const dArrProg = getArrivalProgress(d.path);
+                      const arrivalTime = (Math.max(dArrProg, d.progress) - d.progress) / (d.speed * state.upgrades.propagationSpeed);
+                      latestSlotOpen = Math.max(latestSlotOpen, arrivalTime + consumeDuration);
+                    }
+                  }
+
+                  canRelease = latestSlotOpen <= travelTime;
+                }
+
+                if (!canRelease) break; // Only attempt the oldest queued dot — if it can't release, wait
+
+                updated[i] = {
+                  ...dot,
+                  status: 'traveling',
+                  path: fullPath,
+                  progress: 0,
+                  speed,
+                  color: '#fb923c',
+                  opacity: 1,
+                  value: retryValue,
+                  isRetry: true,
+                  originalNodeIds: [dmqComp.id, ...nodeIdsFromBroker],
+                  originalValue: undefined,
+                  pauseStartTime: undefined,
+                  queuedAtNodeId: undefined,
+                  dropX: undefined,
+                  dropY: undefined,
+                  dropVY: undefined,
+                } as Dot;
+                break; // Only release one per frame
+              }
           }
         }
 
         return updated;
       });
 
+      // Increment dropped counter
+      if (droppedCount > 0) {
+        useGameStore.setState(state => ({
+          ...state,
+          eventsDropped: state.eventsDropped + droppedCount,
+        }));
+        // Track first drop time for tutorial
+        if (!firstDropTime && !firstDropTutorialShown) {
+          firstDropTime = Date.now();
+        }
+      }
+
+      // Show first-drop tutorial 1 second after the first drop
+      if (firstDropTime && !firstDropTutorialShown && Date.now() - firstDropTime >= 1000) {
+        firstDropTutorialShown = true;
+        useGameStore.getState().showTutorial('firstDrop');
+      }
+
       // Add money for dots that reached 50% of animation
-      for (const id of toConsume) {
-        useGameStore.getState().consumeEvent(id);
+      for (const { id, value, subscriberId } of toConsume) {
+        useGameStore.getState().consumeEvent(id, value, subscriberId);
       }
 
       // Prune old earnings (keep last 5s)
@@ -254,21 +903,19 @@ export function useGameLoop() {
 }
 
 export function useAutoPublisher() {
-  const autoPubLevel = useGameStore(s => s.upgrades.autoPubLevel);
-  const fireEvent = useGameStore(s => s.fireEvent);
-  const components = useGameStore(s => s.components);
-
   useEffect(() => {
-    if (autoPubLevel === 0) return;
-
-    const interval = autoPubLevel === 1 ? 5000 : autoPubLevel === 2 ? 3000 : 1000;
+    // Poll every 100ms and attempt to fire for each auto-click publisher
+    // The cooldown check inside fireEvent naturally gates the rate
     const timer = setInterval(() => {
-      const firstPub = components.find(c => c.type === 'publisher');
-      if (firstPub) {
-        fireEvent(firstPub.id);
+      const state = useGameStore.getState();
+      const publishers = state.components.filter(c => c.type === 'publisher');
+      for (const pub of publishers) {
+        if ((pub.upgrades['autoPub'] ?? 0) >= 1) {
+          state.fireEvent(pub.id);
+        }
       }
-    }, interval);
+    }, 100);
 
     return () => clearInterval(timer);
-  }, [autoPubLevel, fireEvent, components]);
+  }, []);
 }
