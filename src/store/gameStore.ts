@@ -52,7 +52,17 @@ export type EventDot = {
   originalValue?: number;
   forkPaths?: { waypoints: { x: number; y: number }[]; nodeIds: string[] }[];
   forkNodeId?: string;
+  nextNodeId?: string;
 };
+
+/** Find the first queue or subscriber ID in a route's node list. */
+export function findNextInteractableId(nodeIds: string[], components: GameComponent[]): string | undefined {
+  for (const id of nodeIds) {
+    const c = components.find(comp => comp.id === id);
+    if (c && (c.type === 'queue' || c.type === 'subscriber')) return id;
+  }
+  return undefined;
+}
 
 export type GameState = {
   balance: number;
@@ -481,6 +491,7 @@ export const useGameStore = create<GameState>()(
                 value,
                 originalValue: value,
                 originalNodeIds: [publisherId, target.id],
+                nextNodeId: findNextInteractableId([publisherId, target.id], state.components),
               });
             }
           });
@@ -536,6 +547,7 @@ export const useGameStore = create<GameState>()(
                     value,
                     originalValue: value,
                     originalNodeIds: truncatedNodeIds,
+                    nextNodeId: findNextInteractableId(truncatedNodeIds, state.components),
                   });
                 }
               });
@@ -609,6 +621,7 @@ export const useGameStore = create<GameState>()(
                 value,
                 originalValue: value,
                 originalNodeIds: primary.nodeIds,
+                nextNodeId: findNextInteractableId(primary.nodeIds, state.components),
                 forkPaths: forks,
                 forkNodeId: brokerId !== 'none' ? brokerId : undefined,
               });

@@ -22,6 +22,7 @@ type EventDot = {
   originalValue?: number;             // publisher event value at creation, used for DMQ value recovery calc
   forkPaths?: { waypoints: { x: number; y: number }[]; nodeIds: string[] }[];  // additional paths to spawn when dot reaches fork broker
   forkNodeId?: string;               // broker ID where fork dots should spawn
+  nextNodeId?: string;               // ID of the next queue/subscriber this dot should interact with — gates collision to prevent capture by unrelated nodes on the geometric path
 };
 ```
 
@@ -35,6 +36,7 @@ type EventDot = {
 - `dotTouchesNode(px, py, nodeX, nodeY)` tests a 6px-radius dot against node bounding boxes (NODE_HALF_W=60, NODE_TOP_OFFSET=28, NODE_BOTTOM_OFFSET=28)
 - Webhook/broker blockage uses proximity check (30px radius) + `isComponentOccupied()` (checks for pausing/queued dots)
 - **Path-ordered interaction**: dots only collide with the **next** queue or subscriber on their path (determined from `pathComps` by progress). This prevents dots from being captured by nodes they physically overlap but haven't reached yet along their connection route. DMQ catch is exempt — it uses spatial-only collision on falling dots.
+- **`nextNodeId` gating**: when set, the dot can ONLY interact with the component matching that specific ID. Collision uses progress-based detection (reaching the correct waypoint) instead of `dotTouchesNode` hitbox detection. This prevents capture when a queue/subscriber is physically placed on an unrelated path segment (e.g. a queue sitting on the DMQ→broker or publisher→broker connection line). Set at dot creation from `originalNodeIds` via `findNextInteractableId()`, and updated on queue release to point to the next subscriber.
 
 ## Broker-level forking
 When multiple downstream paths exist (fan-out or bridge), `fireEvent` creates one dot per unique first-broker. Extra paths are stored as `forkPaths` on the dot. When the dot reaches the fork broker (detected via `dotTouchesNode` in `useGameLoop`), fork dots are spawned from the broker position for each additional path. Fork dot IDs are generated via `nextDotId()` exported from `gameStore.ts`. During node drag, `forkPaths` waypoints are rebuilt each frame (alongside the main `path`) so fork dots don't spawn on stale coordinates if the broker has moved.

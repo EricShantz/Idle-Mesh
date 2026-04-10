@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useGameStore, nextDotId, getPermanentQueueBufferBonus, hasPermanentBatchConsume } from '../store/gameStore';
+import { useGameStore, nextDotId, getPermanentQueueBufferBonus, hasPermanentBatchConsume, findNextInteractableId } from '../store/gameStore';
 import { interpolatePath, normalizedSpeed, getSegmentSpeedScale, scaledTravelTime } from '../utils/pathUtils';
 import { computeOrthogonalWaypoints, computeVerticalFirstWaypoints } from '../utils/orthogonalPath';
 
@@ -425,20 +425,44 @@ export function useGameLoop() {
             // Check each consecutive component pair ahead of the dot has a connection
             // Skip validation while a node is being dragged — dragging moves positions
             // but doesn't disconnect cables, so the position-based matching would give false positives
+            // Validate path against the connection graph.
+            // When originalNodeIds is set, use it as the authoritative route instead of
+            // the geometric pathComps, which can include spurious nodes that happen to
+            // sit on the path geometry.
             let pathInvalid = false;
-            for (let pc = 0; pc < pathComps.length - 1 && !state.draggingNodeId; pc++) {
-              // Only validate segments the dot hasn't passed yet
-              if (pathComps[pc + 1].idx / (dot.path.length - 1) < dot.progress - 0.01) continue;
-              const a = pathComps[pc].comp;
-              const b = pathComps[pc + 1].comp;
-              const bothBrokers = a.type === 'broker' && b.type === 'broker';
-              const connExists = state.connections.some(c =>
-                (c.fromId === a.id && c.toId === b.id) ||
-                (bothBrokers && c.fromId === b.id && c.toId === a.id)
-              );
-              if (!connExists) {
-                pathInvalid = true;
-                break;
+            const validationNodes = dot.originalNodeIds
+              ? dot.originalNodeIds.map(id => state.components.find(c => c.id === id)).filter(Boolean) as typeof state.components
+              : pathComps.map(pc => pc.comp);
+            if (dot.originalNodeIds) {
+              // Validate using authoritative node IDs — no geometric ambiguity
+              for (let ni = 0; ni < validationNodes.length - 1 && !state.draggingNodeId; ni++) {
+                const a = validationNodes[ni];
+                const b = validationNodes[ni + 1];
+                const bothBrokers = a.type === 'broker' && b.type === 'broker';
+                const connExists = state.connections.some(c =>
+                  (c.fromId === a.id && c.toId === b.id) ||
+                  (bothBrokers && c.fromId === b.id && c.toId === a.id)
+                );
+                if (!connExists) {
+                  pathInvalid = true;
+                  break;
+                }
+              }
+            } else {
+              for (let pc = 0; pc < pathComps.length - 1 && !state.draggingNodeId; pc++) {
+                // Only validate segments the dot hasn't passed yet
+                if (pathComps[pc + 1].idx / (dot.path.length - 1) < dot.progress - 0.01) continue;
+                const a = pathComps[pc].comp;
+                const b = pathComps[pc + 1].comp;
+                const bothBrokers = a.type === 'broker' && b.type === 'broker';
+                const connExists = state.connections.some(c =>
+                  (c.fromId === a.id && c.toId === b.id) ||
+                  (bothBrokers && c.fromId === b.id && c.toId === a.id)
+                );
+                if (!connExists) {
+                  pathInvalid = true;
+                  break;
+                }
               }
             }
             if (pathInvalid) {
@@ -552,6 +576,7 @@ export function useGameLoop() {
                         value: dot.value,
                         originalValue: dot.originalValue,
                         originalNodeIds: forkStartNodeIds,
+                        nextNodeId: findNextInteractableId(forkStartNodeIds, state.components),
                       });
                     }
                   }
@@ -561,13 +586,16 @@ export function useGameLoop() {
               }
             }
 
-            // Find the next component the dot should interact with (queue or subscriber)
-            // This prevents dots from being captured by nodes they pass through spatially
-            // but haven't reached yet along their connection path
-            const nextInteractable = pathComps.find(pc => {
-              const compProgress = pc.idx / (dot.path.length - 1);
-              return compProgress > dot.progress - 0.01 && (pc.comp.type === 'queue' || pc.comp.type === 'subscriber');
-            });
+            // Find the next component the dot should interact with (queue or subscriber).
+            // If the dot has a nextNodeId tag, only that specific component can capture it.
+            // This prevents dots from being intercepted by unrelated nodes that happen to
+            // sit on the geometric path (e.g. a queue placed on top of a DMQ→broker line).
+            const nextInteractable = dot.nextNodeId
+              ? pathComps.findLast(pc => pc.comp.id === dot.nextNodeId)
+              : pathComps.find(pc => {
+                  const compProgress = pc.idx / (dot.path.length - 1);
+                  return compProgress > dot.progress - 0.01 && (pc.comp.type === 'queue' || pc.comp.type === 'subscriber');
+                });
 
             // Check collision with queues — only the next queue on the path
             let queued = false;
@@ -578,7 +606,12 @@ export function useGameLoop() {
               // Fall back to progress-based capture when dot reaches the queue's waypoint.
               const queueProgress = nextInteractable.idx / (dot.path.length - 1);
               const reachedByProgress = state.draggingNodeId && newProgress >= queueProgress;
-              if (reachedByProgress || dotTouchesNode(newPos.x, newPos.y, queue.x, queue.y)) {
+              // When nextNodeId is set, use only progress-based detection to avoid
+              // premature capture when the queue is physically on an earlier path segment.
+              const touchesQueue = dot.nextNodeId
+                ? newProgress >= queueProgress - 0.01
+                : dotTouchesNode(newPos.x, newPos.y, queue.x, queue.y);
+              if (reachedByProgress || touchesQueue) {
                 const bufferSize = 3 + (queue.upgrades['bufferSize'] ?? 0) + getPermanentQueueBufferBonus(state);
                 // Count from the already-processed updated array for accurate counts
                 const queuedCount = updated.filter(d =>
@@ -602,7 +635,11 @@ export function useGameLoop() {
               const subscriber = nextInteractable.comp;
               const lastPathPoint = dot.path[dot.path.length - 1];
 
-              if (dotTouchesNode(newPos.x, newPos.y, subscriber.x, subscriber.y)) {
+              const subProgress = nextInteractable.idx / (dot.path.length - 1);
+              const touchesSub = dot.nextNodeId
+                ? newProgress >= subProgress - 0.01
+                : dotTouchesNode(newPos.x, newPos.y, subscriber.x, subscriber.y);
+              if (touchesSub) {
                 // Check updated array for accurate subscriber occupancy
                 // A subscriber is occupied only if the consuming dot still has time remaining
                 const subscriberForOccupancy = state.components.find(c =>
@@ -943,7 +980,7 @@ export function useGameLoop() {
               );
               const releaseNodeIds = [queueId, ...(releaseSubComp ? [releaseSubComp.id] : [])];
               if (ti === 0) {
-                updated[i] = { ...releaseDot, status: 'traveling', progress: releaseProgress, speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined, originalNodeIds: releaseNodeIds, nodeWpIndices: undefined } as Dot;
+                updated[i] = { ...releaseDot, status: 'traveling', progress: releaseProgress, speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined, originalNodeIds: releaseNodeIds, nextNodeId: releaseSubComp?.id, nodeWpIndices: undefined } as Dot;
               } else {
                 updated.push({
                   ...releaseDot,
@@ -954,6 +991,7 @@ export function useGameLoop() {
                   pauseStartTime: undefined,
                   queuedAtNodeId: undefined,
                   originalNodeIds: releaseNodeIds,
+                  nextNodeId: releaseSubComp?.id,
                   nodeWpIndices: undefined,
                 } as Dot);
               }
@@ -1101,6 +1139,7 @@ export function useGameLoop() {
                   value: retryValue,
                   isRetry: true,
                   originalNodeIds: [dmqComp.id, ...nodeIdsFromBroker],
+                  nextNodeId: targetComp.id,
                   originalValue: undefined,
                   pauseStartTime: undefined,
                   queuedAtNodeId: undefined,

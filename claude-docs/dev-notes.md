@@ -5,7 +5,7 @@
 - **Component IDs**: initial components use fixed IDs (`pub-1`, `webhook-1`, `sub-1`, `conn-1`, `conn-2`). Dynamically added components use counter-based IDs starting at 10 (`comp-10+`, `conn-10+`). Counters are initialized from saved state on load via `initCountersFromSaved()` to prevent duplicate IDs.
 
 ## Collision & Thresholds
-- `useGameLoop.ts` uses `dotTouchesNode()` bounding-box collision for all node interactions: webhook slowdown, queue capture, subscriber pause/drop.
+- `useGameLoop.ts` uses `dotTouchesNode()` bounding-box collision for all node interactions: webhook slowdown, queue capture, subscriber pause/drop. Exception: when a dot has `nextNodeId` set, queue/subscriber capture uses progress-based detection instead of hitbox collision to avoid premature capture by nodes on unrelated path segments.
 - Webhook blockage uses a 20px approach zone before the node's left edge; `isComponentOccupied()` detects traveling dots inside the webhook via `dotTouchesNode()`. Brokers skip blockage entirely.
 
 ## Viewport (Pan/Zoom)
@@ -54,7 +54,7 @@
 - `dedupeConsecutiveWaypoints()` removes consecutive duplicate waypoints (within 1px) from rebuilt paths in Pass 2 queue release. Without this, when queue and subscriber share the same x-coordinate, `isPastAllQueues` fails and queues drain at ~60×/s.
 
 ## Connection-Aware Dot Lifecycle
-- Traveling dots validate their remaining path against the current connection graph each frame — if a connection was removed, the dot drops immediately.
+- Traveling dots validate their remaining path against the current connection graph each frame — if a connection was removed, the dot drops immediately. When `originalNodeIds` is set, validation uses the authoritative node ID list instead of geometric `pathComps`, avoiding false invalidation from unrelated nodes sitting on the path geometry.
 - Queued dots only release when the queue has an active connection to a subscriber (checked via `state.connections`, not baked path).
 - Queue collision check skips waypoints the dot has already passed to prevent re-capture after release.
 
