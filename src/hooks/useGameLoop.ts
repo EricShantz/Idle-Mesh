@@ -23,6 +23,9 @@ const queueRoundRobinIdx = new Map<string, number>();
 let firstDropTime: number | null = null;
 let firstDropTutorialShown = false;
 
+/** Throttle DMQ releases to ~1 every 500ms */
+let lastDmqReleaseTime = 0;
+
 /** Drop reason tracking for the warning "!" button */
 export type DropReason = 'path-invalid' | 'webhook-occupied' | 'broker-capped' | 'queue-full' | 'subscriber-occupied' | 'path-incomplete';
 
@@ -828,17 +831,7 @@ export function useGameLoop() {
 
                 let canRelease = false;
                 if (targetComp.type === 'queue') {
-                  // Check if queue has buffer space, counting both queued and in-flight dots
-                  const queueComp = state.components.find(c => c.id === targetComp!.id);
-                  const queuedCount = updated.filter(d => d.status === 'queued' && d.queuedAtNodeId === targetComp!.id).length;
-                  const inFlightToQueue = updated.filter(d => {
-                    if (d.id === dot.id || d.status !== 'traveling' || d.path.length === 0) return false;
-                    // Check if this dot's path passes through the target queue
-                    return d.path.some(p => Math.hypot(p.x - targetComp!.x, p.y - targetComp!.y) < 50);
-                  }).length;
-                  const bufferLevel = queueComp?.upgrades['bufferSize'] ?? 0;
-                  const capacity = 3 + bufferLevel + getPermanentQueueBufferBonus(state);
-                  canRelease = (queuedCount + inFlightToQueue) < capacity;
+                  canRelease = (Date.now() - lastDmqReleaseTime) >= 500;
                 } else {
                   // Subscriber — predictive timing (same logic as queue release)
                   const actualSpeed = speed * state.upgrades.propagationSpeed;
@@ -874,6 +867,7 @@ export function useGameLoop() {
 
                 if (!canRelease) break; // Only attempt the oldest queued dot — if it can't release, wait
 
+                lastDmqReleaseTime = Date.now();
                 updated[i] = {
                   ...dot,
                   status: 'traveling',
@@ -892,7 +886,7 @@ export function useGameLoop() {
                   dropY: undefined,
                   dropVY: undefined,
                 } as Dot;
-                break; // Only release one per frame
+                break; // Only release one per interval
               }
           }
         }
