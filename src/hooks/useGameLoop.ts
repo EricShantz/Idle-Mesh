@@ -76,18 +76,20 @@ export function getBrokerUtilization(brokerId: string, cap: number): number {
   return recent.length / cap;
 }
 
-/** Rebuild orthogonal waypoints from node IDs using current component positions */
+/** Rebuild orthogonal waypoints from node IDs using current component positions.
+ *  Returns the path AND the waypoint index of each node center in the path. */
 function rebuildPathFromNodeIds(
   nodeIds: string[],
   components: { id: string; type: string; x: number; y: number }[]
-): { x: number; y: number }[] {
+): { path: { x: number; y: number }[]; nodeWpIndices: number[] } {
   const nodes: { id: string; type: string; x: number; y: number }[] = [];
   for (const id of nodeIds) {
     const comp = components.find(c => c.id === id);
     if (comp) nodes.push(comp);
   }
-  if (nodes.length === 0) return [];
+  if (nodes.length === 0) return { path: [], nodeWpIndices: [] };
   const path: { x: number; y: number }[] = [{ x: nodes[0].x, y: nodes[0].y }];
+  const nodeWpIndices: number[] = [0]; // first node is always at index 0
   for (let i = 0; i < nodes.length - 1; i++) {
     const a = nodes[i], b = nodes[i + 1];
     if (Math.abs(a.y - b.y) >= 5) {
@@ -131,8 +133,9 @@ function rebuildPathFromNodeIds(
       }
     }
     path.push({ x: b.x, y: b.y });
+    nodeWpIndices.push(path.length - 1); // record where this node landed
   }
-  return path;
+  return { path, nodeWpIndices };
 }
 
 /** Project a point onto a polyline path, returning the progress (0-1) of the closest point */
@@ -154,6 +157,92 @@ function projectOntoPath(path: { x: number; y: number }[], px: number, py: numbe
     }
   }
   return bestProgress;
+}
+
+/** Compute nodeWpIndices for an existing path by matching waypoints to component positions.
+ *  Uses a generous tolerance to handle cases where a node has moved slightly since the path was built. */
+function computeNodeWpIndices(
+  path: { x: number; y: number }[],
+  originalNodeIds: string[],
+  components: { id: string; type: string; x: number; y: number }[]
+): number[] | undefined {
+  const indices: number[] = [];
+  for (const nodeId of originalNodeIds) {
+    const comp = components.find(c => c.id === nodeId);
+    if (!comp) return undefined;
+    // Find the closest waypoint to this component's current position
+    let bestIdx = -1;
+    let bestDist = Infinity;
+    for (let wp = 0; wp < path.length; wp++) {
+      const d = Math.hypot(path[wp].x - comp.x, path[wp].y - comp.y);
+      if (d < bestDist) { bestDist = d; bestIdx = wp; }
+    }
+    if (bestIdx < 0 || bestDist > 100) return undefined; // too far, bail out
+    indices.push(bestIdx);
+  }
+  // Indices must be monotonically increasing
+  for (let i = 1; i < indices.length; i++) {
+    if (indices[i] <= indices[i - 1]) return undefined;
+  }
+  return indices;
+}
+
+/** Remap dot progress from old path to new path.
+ *  Uses node waypoint indices to identify which logical segment the dot is in
+ *  (preventing dots from jumping past queues), then projects the dot's pixel
+ *  position onto that segment of the new path (preventing progress oscillation
+ *  when waypoint counts change between frames). */
+function remapProgressSemantic(
+  oldNodeWpIndices: number[],
+  newNodeWpIndices: number[],
+  oldPath: { x: number; y: number }[],
+  newPath: { x: number; y: number }[],
+  oldProgress: number
+): number | null {
+  if (oldNodeWpIndices.length < 2 || newNodeWpIndices.length < 2) return null;
+  if (oldNodeWpIndices.length !== newNodeWpIndices.length) return null;
+
+  // Convert progress to waypoint-space position on old path
+  const oldWpPos = oldProgress * (oldPath.length - 1);
+
+  // Step 1: Determine which logical segment the dot is in
+  let segIdx = oldNodeWpIndices.length - 2; // default to last segment
+  for (let k = 0; k < oldNodeWpIndices.length - 1; k++) {
+    if (oldWpPos <= oldNodeWpIndices[k + 1] + 0.001) {
+      segIdx = k;
+      break;
+    }
+  }
+
+  // Step 2: Get the dot's current pixel position from the old path
+  const px = interpolatePath(oldPath, oldProgress);
+
+  // Step 3: Project that pixel position onto ONLY the matching segment of the new path
+  // This prevents cross-segment jumping while avoiding progress oscillation
+  const newSegStart = newNodeWpIndices[segIdx];
+  const newSegEnd = newNodeWpIndices[segIdx + 1];
+
+  let bestProgress = newSegStart / (newPath.length - 1);
+  let bestDist = Infinity;
+  for (let i = newSegStart; i < newSegEnd; i++) {
+    const ax = newPath[i].x, ay = newPath[i].y;
+    const bx = newPath[i + 1].x, by = newPath[i + 1].y;
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 > 0 ? ((px.x - ax) * dx + (px.y - ay) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + t * dx, cy = ay + t * dy;
+    const dist = Math.hypot(px.x - cx, px.y - cy);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestProgress = (i + t) / (newPath.length - 1);
+    }
+  }
+
+  // Clamp to segment boundaries
+  const segStartProgress = newSegStart / (newPath.length - 1);
+  const segEndProgress = newSegEnd / (newPath.length - 1);
+  return Math.max(segStartProgress, Math.min(segEndProgress, bestProgress));
 }
 
 /** Remove consecutive duplicate waypoints (within 1px) that break isPastAllQueues checks */
@@ -201,6 +290,10 @@ export function useGameLoop() {
         type Dot = import('../store/gameStore').EventDot;
         // Use a mutable array so each dot sees the results of earlier dots in the same frame
         const updated: Dot[] = [];
+        // Track queues whose dots were rebuilt during drag or post-drag cleanup this frame.
+        // Releases are paused for these queues because approaching dots can't enter
+        // (pixel collision fails on constantly-rebuilding orthogonal paths).
+        const dragAffectedQueues = new Set<string>();
 
         for (let i = 0; i < dots.length; i++) {
           let dot = dots[i];
@@ -225,14 +318,73 @@ export function useGameLoop() {
             });
           };
 
+          // Post-drag cleanup: if dot was rebuilt during drag (has nodeWpIndices) but drag ended,
+          // rebuild one final time from current positions to account for Y-snap
+          if (!state.draggingNodeId && dot.nodeWpIndices && dot.originalNodeIds &&
+              (dot.status === 'traveling' || dot.status === 'queued')) {
+            const oldPath = dot.path;
+            const oldNodeWpIndices = dot.nodeWpIndices;
+            const { path: freshPath, nodeWpIndices: freshIndices } = rebuildPathFromNodeIds(dot.originalNodeIds, state.components);
+            if (freshPath.length >= 2) {
+              if (dot.status === 'queued' && dot.queuedAtNodeId) {
+                dragAffectedQueues.add(dot.queuedAtNodeId);
+                const queueNodeIdx = dot.originalNodeIds.indexOf(dot.queuedAtNodeId);
+                if (queueNodeIdx >= 0 && queueNodeIdx < freshIndices.length) {
+                  const queueWpIdx = freshIndices[queueNodeIdx];
+                  dot = { ...dot, path: freshPath, progress: queueWpIdx / (freshPath.length - 1), nodeWpIndices: undefined } as typeof dot;
+                } else {
+                  dot = { ...dot, path: freshPath, nodeWpIndices: undefined } as typeof dot;
+                }
+              } else {
+                let newProgress: number | null = remapProgressSemantic(oldNodeWpIndices, freshIndices, oldPath, freshPath, dot.progress);
+                if (newProgress === null) {
+                  const currentPos = interpolatePath(oldPath, dot.progress);
+                  newProgress = projectOntoPath(freshPath, currentPos.x, currentPos.y);
+                }
+                const newSpeed = dot.speed * Math.max(oldPath.length - 1, 1) / Math.max(freshPath.length - 1, 1);
+                dot = { ...dot, path: freshPath, progress: newProgress, speed: newSpeed, nodeWpIndices: undefined } as typeof dot;
+              }
+            } else {
+              dot = { ...dot, nodeWpIndices: undefined } as typeof dot;
+            }
+          }
+
           // Rebuild path in real-time when a component on this dot's route is being dragged
           if (state.draggingNodeId && dot.originalNodeIds?.includes(state.draggingNodeId) &&
               (dot.status === 'traveling' || dot.status === 'queued')) {
-            const currentPos = dot.status === 'traveling' ? interpolatePath(dot.path, dot.progress) : null;
-            const newPath = rebuildPathFromNodeIds(dot.originalNodeIds, state.components);
+            const oldPath = dot.path;
+            const { path: newPath, nodeWpIndices: newNodeWpIndices } = rebuildPathFromNodeIds(dot.originalNodeIds, state.components);
             if (newPath.length >= 2) {
-              const newProgress = currentPos ? projectOntoPath(newPath, currentPos.x, currentPos.y) : dot.progress;
-              dot = { ...dot, path: newPath, progress: newProgress } as typeof dot;
+              // For queued dots: pin progress to the queue's waypoint on the new path
+              if (dot.status === 'queued' && dot.queuedAtNodeId) {
+                dragAffectedQueues.add(dot.queuedAtNodeId);
+                const queueNodeIdx = dot.originalNodeIds.indexOf(dot.queuedAtNodeId);
+                if (queueNodeIdx >= 0 && queueNodeIdx < newNodeWpIndices.length) {
+                  const queueWpIdx = newNodeWpIndices[queueNodeIdx];
+                  dot = { ...dot, path: newPath, progress: queueWpIdx / (newPath.length - 1), nodeWpIndices: newNodeWpIndices } as typeof dot;
+                } else {
+                  dot = { ...dot, path: newPath, nodeWpIndices: newNodeWpIndices } as typeof dot;
+                }
+              } else {
+                // Traveling dots: semantic remap preserves logical segment position
+                let oldNodeWpIndices = dot.nodeWpIndices;
+                // First drag frame: compute old indices by matching waypoints to components
+                if (!oldNodeWpIndices && dot.originalNodeIds) {
+                  oldNodeWpIndices = computeNodeWpIndices(oldPath, dot.originalNodeIds, state.components);
+                }
+                let newProgress: number | null = null;
+                if (oldNodeWpIndices && oldNodeWpIndices.length >= 2) {
+                  newProgress = remapProgressSemantic(oldNodeWpIndices, newNodeWpIndices, oldPath, newPath, dot.progress);
+                }
+                // Fall back to spatial projection if semantic remap fails
+                if (newProgress === null) {
+                  const currentPos = interpolatePath(oldPath, dot.progress);
+                  newProgress = projectOntoPath(newPath, currentPos.x, currentPos.y);
+                }
+                // Recalculate speed for new waypoint count
+                const newSpeed = dot.speed * Math.max(oldPath.length - 1, 1) / Math.max(newPath.length - 1, 1);
+                dot = { ...dot, path: newPath, progress: newProgress, speed: newSpeed, nodeWpIndices: newNodeWpIndices } as typeof dot;
+              }
             }
           }
 
@@ -563,6 +715,11 @@ export function useGameLoop() {
           const queueComp = state.components.find(c => c.id === queueId);
           if (queueComp?.type === 'dmq') continue;
 
+          // Pause releases for queues whose paths are being rebuilt during drag or
+          // post-drag cleanup. Rebuilding prevents approaching dots from entering the queue
+          // (pixel collision fails on constantly-changing orthogonal paths), so releasing
+          // while inflow is blocked would drain the queue.
+          if (dragAffectedQueues.has(queueId)) continue;
 
           // Only release the oldest queued dot in this queue (FIFO by pauseStartTime)
           let isOldest = true;
@@ -719,11 +876,16 @@ export function useGameLoop() {
             queueReleaseCounts.set(queueId, (queueReleaseCounts.get(queueId) ?? 0) + 1);
 
             for (let ti = 0; ti < releaseData.length; ti++) {
-              const { path: releasePath, progress: releaseProgress } = releaseData[ti];
+              const { path: releasePath, progress: releaseProgress, sub: releaseSub } = releaseData[ti];
               const releaseDot = { ...dot, path: releasePath };
               const releaseSpeed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, releasePath);
+              // Find subscriber ID for this target so originalNodeIds stays in sync with the release path
+              const releaseSubComp = state.components.find(c =>
+                c.type === 'subscriber' && Math.hypot(c.x - releaseSub.x, c.y - releaseSub.y) < 1
+              );
+              const releaseNodeIds = [queueId, ...(releaseSubComp ? [releaseSubComp.id] : [])];
               if (ti === 0) {
-                updated[i] = { ...releaseDot, status: 'traveling', progress: releaseProgress, speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined } as Dot;
+                updated[i] = { ...releaseDot, status: 'traveling', progress: releaseProgress, speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined, originalNodeIds: releaseNodeIds, nodeWpIndices: undefined } as Dot;
               } else {
                 updated.push({
                   ...releaseDot,
@@ -733,6 +895,8 @@ export function useGameLoop() {
                   speed: releaseSpeed,
                   pauseStartTime: undefined,
                   queuedAtNodeId: undefined,
+                  originalNodeIds: releaseNodeIds,
+                  nodeWpIndices: undefined,
                 } as Dot);
               }
             }

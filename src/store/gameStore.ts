@@ -48,6 +48,7 @@ export type EventDot = {
   moneyAdded?: boolean;
   isRetry?: boolean;
   originalNodeIds?: string[];
+  nodeWpIndices?: number[];
   originalValue?: number;
   forkPaths?: { waypoints: { x: number; y: number }[]; nodeIds: string[] }[];
   forkNodeId?: string;
