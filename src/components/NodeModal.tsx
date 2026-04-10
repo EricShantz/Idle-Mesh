@@ -28,7 +28,7 @@ function getUpgradesForType(type: string): UpgradeDef[] {
   }
 }
 
-function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number, topic?: string): string {
+function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number, _topic?: string): string {
   const nextLevel = currentLevel + 1;
 
   switch (upgradeKey) {

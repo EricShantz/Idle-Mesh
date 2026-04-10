@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useRef, useCallback, useEffect, useState } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { AnimatePresence, motion } from 'framer-motion';
 import { NodeCard } from './NodeCard';

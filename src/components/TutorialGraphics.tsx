@@ -381,7 +381,7 @@ export function UpgradeExpandGraphic() {
 export function BrokerUpgradeGraphic() {
   const bX = W / 2, bY = H / 2;
   const outY1 = bY - 32, outY2 = bY, outY3 = bY + 32;
-  const brokerLeft = bX - 36, brokerRight = bX + 36;
+  const brokerRight = bX + 36;
 
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderRadius: 8, background: C.bg }}>
@@ -458,7 +458,7 @@ export function BrokerUpgradeGraphic() {
 
 export function QueueGraphic() {
   const bX = 70, qX = W / 2, sX = W - 70, y = H / 2;
-  const qNodeW = 72, qNodeH = 40;
+  const qNodeW = 72;
 
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderRadius: 8, background: C.bg }}>
@@ -825,7 +825,7 @@ export function NewComponentsGraphic() {
 export function FanOutGraphic() {
   const qX = 100, sX = W - 80;
   const row1 = H / 2 - 44, row2 = H / 2, row3 = H / 2 + 44;
-  const qNodeW = 72, qNodeH = 40;
+  const qNodeW = 72;
 
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderRadius: 8, background: C.bg }}>
