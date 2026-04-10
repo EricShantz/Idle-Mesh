@@ -367,7 +367,7 @@ export function HelpButton() {
       {activeDrops.length > 0 && (
         <button
           onClick={() => { setWarningOpen(o => !o); if (!warningOpen) { setOpen(false); setViewingComponent(null); } }}
-          className="fixed top-3 left-14 w-9 h-9 rounded-full border border-amber-500 bg-amber-900/50 hover:bg-amber-800/60 text-amber-400 hover:text-amber-300 flex items-center justify-center text-lg font-bold backdrop-blur-sm transition-colors animate-pulse"
+          className="fixed top-3 left-22 w-9 h-9 rounded-full border border-amber-500 bg-amber-900/50 hover:bg-amber-800/60 text-amber-400 hover:text-amber-300 flex items-center justify-center text-lg font-bold backdrop-blur-sm transition-colors animate-pulse"
           style={{ zIndex: 50 }}
           title="Events are dropping!"
         >
@@ -382,7 +382,7 @@ export function HelpButton() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.15 }}
-            className="fixed top-14 left-14 w-72 rounded-lg border border-gray-700 bg-gray-900/95 backdrop-blur-sm shadow-xl overflow-hidden"
+            className="fixed top-14 left-22 w-72 rounded-lg border border-gray-700 bg-gray-900/95 backdrop-blur-sm shadow-xl overflow-hidden"
             style={{ zIndex: 50 }}
           >
             <div className="p-3">
