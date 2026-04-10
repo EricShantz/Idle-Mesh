@@ -349,6 +349,14 @@ export function useGameLoop() {
             } else {
               dot = { ...dot, nodeWpIndices: undefined } as typeof dot;
             }
+            // Also rebuild forkPaths one final time for Y-snap
+            if (dot.forkPaths) {
+              const updatedForks = dot.forkPaths.map(fork => {
+                const { path: newForkPath } = rebuildPathFromNodeIds(fork.nodeIds, state.components);
+                return newForkPath.length >= 2 ? { ...fork, waypoints: newForkPath } : fork;
+              });
+              dot = { ...dot, forkPaths: updatedForks } as typeof dot;
+            }
           }
 
           // Rebuild path in real-time when a component on this dot's route is being dragged
@@ -386,6 +394,17 @@ export function useGameLoop() {
                 const newSpeed = dot.speed * Math.max(oldPath.length - 1, 1) / Math.max(newPath.length - 1, 1);
                 dot = { ...dot, path: newPath, progress: newProgress, speed: newSpeed, nodeWpIndices: newNodeWpIndices } as typeof dot;
               }
+            }
+            // Also rebuild forkPaths so fork dots don't follow stale waypoints
+            if (dot.forkPaths) {
+              const updatedForks = dot.forkPaths.map(fork => {
+                if (fork.nodeIds.includes(state.draggingNodeId!)) {
+                  const { path: newForkPath } = rebuildPathFromNodeIds(fork.nodeIds, state.components);
+                  return { ...fork, waypoints: newForkPath };
+                }
+                return fork;
+              });
+              dot = { ...dot, forkPaths: updatedForks } as typeof dot;
             }
           }
 
