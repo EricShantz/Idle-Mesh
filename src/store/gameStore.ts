@@ -1380,11 +1380,30 @@ export const useGameStore = create<GameState>()(
   })
 );
 
-// Auto-save middleware — only save when non-transient state changes
+// Auto-save middleware — only save when non-transient state changes.
+// Debounced (500ms) for the common case, but with a max-wait ceiling so
+// continuous changes (e.g. balance ticking up during active auto-play)
+// can't push the actual write back indefinitely.
+const SAVE_DEBOUNCE_MS = 500;
+const SAVE_MAX_WAIT_MS = 3000;
+
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 let lastSaveSnapshot = '';
-useGameStore.subscribe((state) => {
-  // Build save data
+let pendingSnapshot: string | null = null;
+let lastFlushTime = 0;
+
+function flushSave() {
+  if (saveTimeout) {
+    clearTimeout(saveTimeout);
+    saveTimeout = null;
+  }
+  if (pendingSnapshot === null) return;
+  localStorage.setItem(SAVE_KEY, pendingSnapshot);
+  lastFlushTime = Date.now();
+  pendingSnapshot = null;
+}
+
+function buildSaveSnapshot(state: GameState): string {
   const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, activeTutorial: ________, showPrestigeTree: _________, ...toSave } = state;
   const data: Record<string, any> = {};
   for (const [key, val] of Object.entries(toSave)) {
@@ -1392,16 +1411,38 @@ useGameStore.subscribe((state) => {
       data[key] = val;
     }
   }
-  const snapshot = JSON.stringify(data);
+  return JSON.stringify(data);
+}
+
+useGameStore.subscribe((state) => {
+  const snapshot = buildSaveSnapshot(state);
   // Skip if only transient state (eventDots/recentEarnings) changed
   if (snapshot === lastSaveSnapshot) return;
   lastSaveSnapshot = snapshot;
+  pendingSnapshot = snapshot;
 
   if (saveTimeout) clearTimeout(saveTimeout);
-  saveTimeout = setTimeout(() => {
-    localStorage.setItem(SAVE_KEY, snapshot);
-  }, 500);
+
+  // Force a write now if we've gone too long without one, even though
+  // state is still actively changing.
+  if (Date.now() - lastFlushTime >= SAVE_MAX_WAIT_MS) {
+    flushSave();
+    return;
+  }
+
+  saveTimeout = setTimeout(flushSave, SAVE_DEBOUNCE_MS);
 });
+
+// Flush immediately when the tab/iframe is about to be hidden or unloaded —
+// browsers can suspend timers in a backgrounded iframe before the debounce fires.
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushSave();
+  });
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushSave);
+}
 
 // Expose store globally for console debugging
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
