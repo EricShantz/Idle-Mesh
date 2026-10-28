@@ -181,8 +181,9 @@ export function getPermanentSubPayoutMult(state: Pick<GameState, 'prestige'>): n
   return (state.prestige.permanentUpgradeLevels['subRoot'] ?? 0) > 0 ? 1.25 : 1.0;
 }
 
-// Permanent broker routing speed multiplier (brokerRouting)
-export function getPermanentBrokerSpeedMult(state: Pick<GameState, 'prestige'>): number {
+// Permanent broker throughput cap multiplier (brokerRouting) — stacks on top of
+// whatever level the broker's "Increase Throughput" shop upgrade is at.
+export function getPermanentBrokerThroughputMult(state: Pick<GameState, 'prestige'>): number {
   return (state.prestige.permanentUpgradeLevels['brokerRouting'] ?? 0) > 0 ? 1.25 : 1.0;
 }
 
@@ -195,6 +196,70 @@ export function getPermanentQueueBufferBonus(state: Pick<GameState, 'prestige'>)
 // Whether batch consume (prefetch) is active
 export function hasPermanentBatchConsume(state: Pick<GameState, 'prestige'>): boolean {
   return (state.prestige.permanentUpgradeLevels['queueBatchConsume'] ?? 0) > 0;
+}
+
+// Apply "start each run with X" permanent prestige bonuses to existing components.
+// Uses Math.max so an already-upgraded component is never downgraded, and applies to
+// every matching component (not just "the first one") so this works both right after
+// a prestige reset (one component of each type) and immediately when a node is bought
+// mid-run (any number of components).
+function applyPermanentStartBonuses(draft: GameState) {
+  const p = draft.prestige.permanentUpgradeLevels;
+  const owns = (key: string) => (p[key] ?? 0) > 0;
+
+  // --- Publisher branch ---
+  const pubAutoPubLevel = owns('pubAutoPub2') ? 2 : owns('pubAutoPub1') ? 1 : 0;
+  for (const pub of draft.components) {
+    if (pub.type !== 'publisher') continue;
+    if (pubAutoPubLevel > 0) pub.upgrades['autoPub'] = Math.max(pub.upgrades['autoPub'] ?? 0, pubAutoPubLevel);
+    if (owns('pubSpeed')) pub.upgrades['publishSpeed'] = Math.max(pub.upgrades['publishSpeed'] ?? 0, 1);
+  }
+  if (owns('pubBatchStart')) {
+    draft.upgrades.batchFire = Math.max(draft.upgrades.batchFire, 2);
+    draft.globalUpgradeLevels['batchFire'] = Math.max(draft.globalUpgradeLevels['batchFire'] ?? 0, 1);
+  }
+
+  // --- Broker branch ---
+  if (owns('brokerRoot')) {
+    for (const webhook of draft.components) {
+      if (webhook.type !== 'webhook') continue;
+      webhook.type = 'broker';
+      webhook.label = 'Broker';
+      webhook.upgrades['upgradeToBroker'] = 1;
+    }
+  }
+  for (const broker of draft.components) {
+    if (broker.type !== 'broker') continue;
+    if (owns('brokerThroughput')) broker.upgrades['increaseThroughput'] = Math.max(broker.upgrades['increaseThroughput'] ?? 0, 1);
+    if (owns('brokerBridge')) broker.upgrades['addBridgeSlot'] = Math.max(broker.upgrades['addBridgeSlot'] ?? 0, 1);
+  }
+
+  // --- Subscriber branch ---
+  for (const sub of draft.components) {
+    if (sub.type !== 'subscriber') continue;
+    if (owns('subConsumeSpeed')) sub.upgrades['fasterConsumption'] = Math.max(sub.upgrades['fasterConsumption'] ?? 0, 1);
+    if (owns('subConsumeValue')) sub.upgrades['consumptionValue'] = Math.max(sub.upgrades['consumptionValue'] ?? 0, 1);
+  }
+
+  // --- Queue branch ---
+  if (owns('queueBroaden')) {
+    for (const queue of draft.components) {
+      if (queue.type !== 'queue') continue;
+      queue.upgrades['subscriptionBroaden'] = Math.max(queue.upgrades['subscriptionBroaden'] ?? 0, 1);
+    }
+  }
+  if (owns('queueFreeQueue') && !draft.components.some(c => c.type === 'queue')) {
+    const brokerOrWebhook = draft.components.find(c => c.type === 'broker' || c.type === 'webhook');
+    if (brokerOrWebhook) {
+      const qId = `comp-${++componentIdCounter}`;
+      const qx = Math.round(brokerOrWebhook.x + 150);
+      const qy = brokerOrWebhook.y + 140;
+      const queueUpgrades: Record<string, number> = {};
+      if (owns('queueBroaden')) queueUpgrades['subscriptionBroaden'] = 1;
+      draft.components.push({ id: qId, type: 'queue', x: qx, y: qy, label: 'Queue', tags: {}, upgrades: queueUpgrades });
+      draft.connections.push({ id: `conn-${++connectionIdCounter}`, fromId: brokerOrWebhook.id, toId: qId });
+    }
+  }
 }
 
 let dotIdCounter = 0;
@@ -771,6 +836,9 @@ export const useGameStore = create<GameState>()(
             comp.topic = topic;
             comp.topicSegments = topic.split('/');
           }
+          if (type === 'queue' && (draft.prestige.permanentUpgradeLevels['queueBroaden'] ?? 0) > 0) {
+            comp.upgrades['subscriptionBroaden'] = 1;
+          }
           draft.components.push(comp);
 
           // Tutorial triggers for first-time component purchases
@@ -1279,80 +1347,13 @@ export const useGameStore = create<GameState>()(
           draft.draggingNodeId = null;
           draft.activeTutorial = null;
 
-          // Apply permanent node effects
-          const p = draft.prestige.permanentUpgradeLevels;
-
-          // --- Publisher branch ---
-          const pub = draft.components.find(c => c.type === 'publisher');
-          if (pub) {
-            if ((p['pubAutoPub2'] ?? 0) > 0) pub.upgrades['autoPub'] = 2;
-            else if ((p['pubAutoPub1'] ?? 0) > 0) pub.upgrades['autoPub'] = 1;
-            if ((p['pubSpeed'] ?? 0) > 0) pub.upgrades['publishSpeed'] = 1;
-          }
-          if ((p['pubBatchStart'] ?? 0) > 0) {
-            draft.upgrades.batchFire = 2; // level 1 = 2 events/click
-            draft.globalUpgradeLevels['batchFire'] = 1;
-          }
-
-          // --- Broker branch ---
-          if ((p['brokerRoot'] ?? 0) > 0) {
-            const webhook = draft.components.find(c => c.type === 'webhook');
-            if (webhook) {
-              webhook.type = 'broker';
-              webhook.label = 'Broker';
-              webhook.upgrades['upgradeToBroker'] = 1;
-            }
-          }
-          const broker = draft.components.find(c => c.type === 'broker');
-          if (broker) {
-            if ((p['brokerThroughput'] ?? 0) > 0) broker.upgrades['increaseThroughput'] = 1;
-            if ((p['brokerBridge'] ?? 0) > 0) broker.upgrades['addBridgeSlot'] = 1;
-          }
-
-          // --- Subscriber branch ---
-          if ((p['subConsumeSpeed'] ?? 0) > 0) {
-            const sub = draft.components.find(c => c.type === 'subscriber');
-            if (sub) sub.upgrades['fasterConsumption'] = 1;
-          }
-          if ((p['subConsumeValue'] ?? 0) > 0) {
-            const sub = draft.components.find(c => c.type === 'subscriber');
-            if (sub) sub.upgrades['consumptionValue'] = 1;
-          }
-
-          // --- Queue branch ---
-          const brokerOrWebhook = draft.components.find(c => c.type === 'broker' || c.type === 'webhook');
-          if ((p['queueFreeQueue'] ?? 0) > 0 && brokerOrWebhook) {
-            const qx = Math.round(brokerOrWebhook.x + 150);
-            const qy = 300 + 140;
-            const queueUpgrades: Record<string, number> = {};
-            if ((p['queueBroaden'] ?? 0) > 0) queueUpgrades['subscriptionBroaden'] = 1;
-            draft.components.push({
-              id: 'comp-10',
-              type: 'queue',
-              x: qx,
-              y: qy,
-              label: 'Queue',
-              tags: {},
-              upgrades: queueUpgrades,
-            });
-            draft.connections.push({
-              id: 'conn-10',
-              fromId: brokerOrWebhook.id,
-              toId: 'comp-10',
-            });
-            componentIdCounter = 11;
-            connectionIdCounter = 11;
-          }
+          // Apply permanent node effects to the freshly-reset starting components
+          applyPermanentStartBonuses(draft);
 
           // Show prestige tree
           draft.showPrestigeTree = true;
         });
 
-        // Reset ID counters (unless queueFreeQueue bumped them)
-        if (!((get().prestige.permanentUpgradeLevels['queueFreeQueue'] ?? 0) > 0)) {
-          componentIdCounter = 10;
-          connectionIdCounter = 10;
-        }
         dotIdCounter = 0;
 
         return true;
@@ -1369,6 +1370,9 @@ export const useGameStore = create<GameState>()(
         set(draft => {
           draft.prestige.points -= node.cost;
           draft.prestige.permanentUpgradeLevels[upgradeKey] = 1;
+          // "Start each run with X" nodes also apply immediately to the current mesh,
+          // not just on the next prestige reset.
+          applyPermanentStartBonuses(draft);
         });
         return true;
       },

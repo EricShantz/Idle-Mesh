@@ -65,6 +65,26 @@ function PrestigeTreeInner({ viewport }: { viewport: ReturnType<typeof useViewpo
   const isPanning = useRef(false);
   const spaceHeld = useRef(false);
 
+  // Custom tooltip — shows fast on hover instead of the browser's slow native `title` delay
+  const [hoveredNodeKey, setHoveredNodeKey] = useState<string | null>(null);
+  const tooltipShowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const TOOLTIP_DELAY_MS = 100;
+
+  const scheduleTooltip = useCallback((key: string) => {
+    if (tooltipShowTimer.current) clearTimeout(tooltipShowTimer.current);
+    tooltipShowTimer.current = setTimeout(() => setHoveredNodeKey(key), TOOLTIP_DELAY_MS);
+  }, []);
+  const cancelTooltip = useCallback(() => {
+    if (tooltipShowTimer.current) {
+      clearTimeout(tooltipShowTimer.current);
+      tooltipShowTimer.current = null;
+    }
+    setHoveredNodeKey(null);
+  }, []);
+  useEffect(() => () => {
+    if (tooltipShowTimer.current) clearTimeout(tooltipShowTimer.current);
+  }, []);
+
   // Subscribe to viewport changes for re-render
   const [, forceRender] = useState(0);
   useEffect(() => {
@@ -243,6 +263,8 @@ function PrestigeTreeInner({ viewport }: { viewport: ReturnType<typeof useViewpo
                 if (available && canAfford) purchasePrestigeUpgrade(n.key);
               }}
               onPointerDown={(e) => e.stopPropagation()}
+              onMouseEnter={() => scheduleTooltip(n.key)}
+              onMouseLeave={cancelTooltip}
               disabled={isPurchasedNode || locked || !canAfford}
               className="absolute flex flex-col items-center justify-center rounded-lg border-2 transition-colors duration-200 cursor-pointer disabled:cursor-default select-none p-1"
               style={{
@@ -257,7 +279,6 @@ function PrestigeTreeInner({ viewport }: { viewport: ReturnType<typeof useViewpo
                 color: textColor,
                 ...glowStyle,
               }}
-              title={`${n.label}\n${n.description}\nCost: ${n.cost} pts`}
             >
               <span className="text-2xl leading-none mb-1">
                 {locked ? '\u{1F512}' : isPurchasedNode ? '\u2713' : getNodeIcon(n.key)}
@@ -276,6 +297,28 @@ function PrestigeTreeInner({ viewport }: { viewport: ReturnType<typeof useViewpo
             </button>
           );
         })}
+
+        {/* Fast custom tooltip — replaces the native `title` attribute's slow hover delay */}
+        {hoveredNodeKey && (() => {
+          const n = prestigeNodes.find(x => x.key === hoveredNodeKey);
+          if (!n) return null;
+          const screen = viewport.worldToScreen(n.position.x * GRID_SPACING, n.position.y * GRID_SPACING);
+          return (
+            <div
+              className="absolute pointer-events-none rounded-lg border border-gray-600 bg-gray-900/95 backdrop-blur-sm shadow-xl px-3 py-2 z-50"
+              style={{
+                left: screen.x,
+                top: screen.y - (NODE_SIZE / 2) * vp.zoom - 10,
+                transform: 'translate(-50%, -100%)',
+                maxWidth: 220,
+              }}
+            >
+              <div className="font-bold text-sm mb-1" style={{ color: getBranchColor(n.branch).primary }}>{n.label}</div>
+              <div className="text-xs text-gray-300 mb-1">{n.description}</div>
+              <div className="text-xs text-gray-500 font-mono">{n.cost} pt{n.cost !== 1 ? 's' : ''}</div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

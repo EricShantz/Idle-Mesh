@@ -29,7 +29,7 @@ export const prestigeNodes: PrestigeNode[] = [
   { key: 'brokerRoot', label: 'Broker Affinity', description: 'Start with webhook auto-upgraded to broker', cost: 3, requires: 'globalIncome', position: { x: 2, y: -1 }, branch: 'broker' },
   { key: 'brokerThroughput', label: 'Throughput Boost', description: 'Start with Increase Throughput lv1 on broker', cost: 6, requires: 'brokerRoot', position: { x: 2, y: -2 }, branch: 'broker' },
   { key: 'brokerBridge', label: 'Bridge Ready', description: 'Start with 1 free Bridge Slot on broker', cost: 10, requires: 'brokerThroughput', position: { x: 3, y: -3 }, branch: 'broker' },
-  { key: 'brokerRouting', label: 'Smart Routing', description: '+25% event propagation speed through brokers', cost: 8, requires: 'brokerThroughput', position: { x: 1, y: -3 }, branch: 'broker' },
+  { key: 'brokerRouting', label: 'Smart Routing', description: '+25% permanent broker throughput cap (stacks with Increase Throughput upgrades)', cost: 8, requires: 'brokerThroughput', position: { x: 1, y: -3 }, branch: 'broker' },
 
   // ── Queue Branch (southeast) ──
   { key: 'queueRoot', label: 'Queue Affinity', description: '+2 base queue size for all queues', cost: 2, requires: 'globalIncome', position: { x: 2, y: 1 }, branch: 'queue' },

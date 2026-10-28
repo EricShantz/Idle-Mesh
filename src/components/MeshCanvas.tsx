@@ -223,7 +223,7 @@ function MeshCanvasInner({ viewport }: { viewport: ReturnType<typeof useViewport
                 setTimeout(() => useGameStore.setState({ meshError: null }), 2500);
               }
             }}
-            className="absolute top-3 left-3 px-3 py-2 rounded text-xs font-semibold"
+            className="absolute top-3 right-3 px-3 py-2 rounded text-xs font-semibold"
             style={{ zIndex: 50, background: '#7f1d1dee', color: '#fecaca', border: '1px solid #ef4444' }}
           >
             {meshError}

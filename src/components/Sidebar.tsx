@@ -207,7 +207,7 @@ export function Sidebar() {
         <button
           type="button"
           onClick={handleStatsClick}
-          className="text-gray-500 text-xs uppercase tracking-wider mb-2 cursor-pointer hover:text-gray-400 transition-colors select-none"
+          className="text-gray-500 text-xs uppercase tracking-wider mb-2 select-none bg-transparent border-none p-0 m-0 text-left block appearance-none"
         >
           Stats
         </button>
