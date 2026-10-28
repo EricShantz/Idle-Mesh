@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 import { tutorials } from '../store/tutorialConfig';
@@ -207,6 +207,9 @@ export function HelpButton() {
   const [viewingComponent, setViewingComponent] = useState<string | null>(null);
   const [warningOpen, setWarningOpen] = useState(false);
   const [activeDrops, setActiveDrops] = useState<Array<{ nodeId: string; nodeLabel: string; reason: DropReason }>>([]);
+  const [warningVisible, setWarningVisible] = useState(false);
+  const [hoveringWarning, setHoveringWarning] = useState(false);
+  const warningHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tutorialsSeen = useGameStore(s => s.tutorialsSeen);
 
   useEffect(() => {
@@ -214,6 +217,28 @@ export function HelpButton() {
       setActiveDrops(getActiveDrops());
     }, 500);
     return () => clearInterval(interval);
+  }, []);
+
+  // Keep the warning icon visible while hovered, and linger for 1s after drops
+  // stop before dismissing, instead of vanishing the instant activeDrops clears.
+  useEffect(() => {
+    if (activeDrops.length > 0) {
+      if (warningHideTimer.current) {
+        clearTimeout(warningHideTimer.current);
+        warningHideTimer.current = null;
+      }
+      setWarningVisible(true);
+      return;
+    }
+    if (hoveringWarning || warningHideTimer.current) return;
+    warningHideTimer.current = setTimeout(() => {
+      setWarningVisible(false);
+      warningHideTimer.current = null;
+    }, 1000);
+  }, [activeDrops, hoveringWarning]);
+
+  useEffect(() => () => {
+    if (warningHideTimer.current) clearTimeout(warningHideTimer.current);
   }, []);
 
   const seenTutorials = tutorials.filter(t => tutorialsSeen[t.key]);
@@ -364,9 +389,11 @@ export function HelpButton() {
       )}
 
       {/* Warning "!" button */}
-      {activeDrops.length > 0 && (
+      {warningVisible && (
         <button
           onClick={() => { setWarningOpen(o => !o); if (!warningOpen) { setOpen(false); setViewingComponent(null); } }}
+          onMouseEnter={() => setHoveringWarning(true)}
+          onMouseLeave={() => setHoveringWarning(false)}
           className="fixed top-3 left-22 w-9 h-9 rounded-full border border-amber-500 bg-amber-900/50 hover:bg-amber-800/60 text-amber-400 hover:text-amber-300 flex items-center justify-center text-lg font-bold backdrop-blur-sm transition-colors animate-pulse"
           style={{ zIndex: 50 }}
           title="Events are dropping!"
@@ -376,7 +403,7 @@ export function HelpButton() {
       )}
 
       <AnimatePresence>
-        {warningOpen && activeDrops.length > 0 && (
+        {warningOpen && warningVisible && (
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}

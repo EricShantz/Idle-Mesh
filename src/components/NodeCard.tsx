@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { motion } from 'framer-motion';
-import { type GameComponent, useGameStore, getPermanentQueueBufferBonus } from '../store/gameStore';
+import { type GameComponent, useGameStore, getPermanentQueueBufferBonus, getPermanentBrokerThroughputMult } from '../store/gameStore';
 import { interpolatePath } from '../utils/pathUtils';
 import { getBrokerUtilization } from '../hooks/useGameLoop';
 import {
@@ -188,8 +188,9 @@ export function NodeCard({ component }: Props) {
     : false;
 
   // Broker throughput utilization (0-1)
+  const brokerThroughputMult = useGameStore(s => getPermanentBrokerThroughputMult(s));
   const brokerUtilization = component.type === 'broker'
-    ? getBrokerUtilization(component.id, 8 + (component.upgrades['increaseThroughput'] ?? 0) * ((component.upgrades['increaseThroughput'] ?? 0) + 9) / 2)
+    ? getBrokerUtilization(component.id, (8 + (component.upgrades['increaseThroughput'] ?? 0) * ((component.upgrades['increaseThroughput'] ?? 0) + 9) / 2) * brokerThroughputMult)
     : 0;
 
   // Compute dot's normalized x-position through this webhook/broker (0→1), or -1 if none

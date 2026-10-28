@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useGameStore, nextDotId, getPermanentQueueBufferBonus, hasPermanentBatchConsume, findNextInteractableId } from '../store/gameStore';
+import { useGameStore, nextDotId, getPermanentQueueBufferBonus, hasPermanentBatchConsume, findNextInteractableId, getPermanentBrokerThroughputMult } from '../store/gameStore';
 import { interpolatePath, normalizedSpeed, getSegmentSpeedScale, scaledTravelTime } from '../utils/pathUtils';
 import { computeOrthogonalWaypoints, computeVerticalFirstWaypoints } from '../utils/orthogonalPath';
 
@@ -64,11 +64,11 @@ function tryBrokerRelay(brokerId: string, cap: number, now: number): boolean {
   return true;
 }
 
-/** Get broker throughput cap from upgrade level */
-function getBrokerCap(brokerComp: { upgrades: Record<string, number> }): number {
+/** Get broker throughput cap from upgrade level, plus any permanent prestige multiplier */
+function getBrokerCap(brokerComp: { upgrades: Record<string, number> }, permanentMult: number): number {
   const level = brokerComp.upgrades['increaseThroughput'] ?? 0;
   const bonus = level * (level + 9) / 2;
-  return BROKER_BASE_THROUGHPUT + bonus;
+  return (BROKER_BASE_THROUGHPUT + bonus) * permanentMult;
 }
 
 /** Get current utilization ratio (0-1+) for a broker */
@@ -531,7 +531,7 @@ export function useGameLoop() {
             if (firstBroker) {
               const brokerProgress = firstBroker.idx / (dot.path.length - 1);
               if (dot.progress < brokerProgress && newProgress >= brokerProgress) {
-                const cap = getBrokerCap(firstBroker.comp);
+                const cap = getBrokerCap(firstBroker.comp, getPermanentBrokerThroughputMult(state));
                 if (!tryBrokerRelay(firstBroker.comp.id, cap, now)) {
                   droppedCount++;
                   recordDrop(firstBroker.comp.id, 'broker-capped', firstBroker.comp.label);
@@ -563,7 +563,7 @@ export function useGameLoop() {
                   if (forkWaypoints.length >= 2) {
                     // Fork dots spawn at the publisher's first broker (ingestion point),
                     // so they count against that broker's throughput cap
-                    const forkCap = getBrokerCap(forkComp);
+                    const forkCap = getBrokerCap(forkComp, getPermanentBrokerThroughputMult(state));
                     if (!tryBrokerRelay(forkComp.id, forkCap, now)) {
                       droppedCount++;
                       recordDrop(forkComp.id, 'broker-capped', forkComp.label);
