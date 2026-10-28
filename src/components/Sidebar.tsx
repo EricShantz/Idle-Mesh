@@ -67,9 +67,29 @@ export function Sidebar() {
   const addComponent = useGameStore(s => s.addComponent);
   const tutorialsSeen = useGameStore(s => s.tutorialsSeen);
   const activeTutorial = useGameStore(s => s.activeTutorial);
+  const earn = useGameStore(s => s.earn);
 
   const meshComponentsRef = useRef<HTMLDivElement>(null);
   const [highlightComponents, setHighlightComponents] = useState(false);
+
+  // Easter egg: click "Stats" 10 times within 5 seconds for a windfall
+  const statsClickTimes = useRef<number[]>([]);
+  const [cheatMessage, setCheatMessage] = useState<string | null>(null);
+  const STATS_CLICK_THRESHOLD = 10;
+  const STATS_CLICK_WINDOW_MS = 5000;
+
+  function handleStatsClick() {
+    const now = Date.now();
+    const recent = statsClickTimes.current.filter(t => now - t <= STATS_CLICK_WINDOW_MS);
+    recent.push(now);
+    statsClickTimes.current = recent;
+    if (recent.length >= STATS_CLICK_THRESHOLD) {
+      statsClickTimes.current = [];
+      earn(1_000_000);
+      setCheatMessage('Schema Registry backdoor found: +$1,000,000');
+      setTimeout(() => setCheatMessage(null), 3000);
+    }
+  }
 
   // After brokerUpgrade tutorial is dismissed, scroll to Mesh Components and highlight
   useEffect(() => {
@@ -184,7 +204,16 @@ export function Sidebar() {
 
       {/* Stats */}
       <div className="border-t border-gray-800 pt-3">
-        <div className="text-gray-500 text-xs uppercase tracking-wider mb-2">Stats</div>
+        <button
+          type="button"
+          onClick={handleStatsClick}
+          className="text-gray-500 text-xs uppercase tracking-wider mb-2 cursor-pointer hover:text-gray-400 transition-colors select-none"
+        >
+          Stats
+        </button>
+        {cheatMessage && (
+          <div className="text-cyan-400 text-xs font-semibold mb-1.5 animate-pulse">{cheatMessage}</div>
+        )}
         <div className="grid grid-cols-2 gap-y-1.5 text-xs">
           <span className="text-gray-500">Lifetime Earnings</span>
           <span className="text-gray-300 text-right">{formatMoney(totalEarned)}</span>
