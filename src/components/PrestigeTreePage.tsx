@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 import { prestigeNodes, isNodePurchased, isNodeAvailable, branchColors } from '../store/prestigeUpgradeConfig';
 import type { PrestigeBranch } from '../store/prestigeUpgradeConfig';
@@ -59,7 +60,10 @@ function PrestigeTreeInner({ viewport }: { viewport: ReturnType<typeof useViewpo
   const prestige = useGameStore(s => s.prestige);
   const purchasePrestigeUpgrade = useGameStore(s => s.purchasePrestigeUpgrade);
   const setShowPrestigeTree = useGameStore(s => s.setShowPrestigeTree);
+  const wipeSaveAndRestart = useGameStore(s => s.wipeSaveAndRestart);
   const purchased = prestige.permanentUpgradeLevels;
+
+  const [showRestartConfirm, setShowRestartConfirm] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const isPanning = useRef(false);
@@ -176,12 +180,20 @@ function PrestigeTreeInner({ viewport }: { viewport: ReturnType<typeof useViewpo
             )}
           </span>
         </div>
-        <button
-          onClick={() => setShowPrestigeTree(false)}
-          className="px-4 py-2 rounded text-sm font-bold border border-gray-600 text-gray-300 hover:border-cyan-400 hover:text-cyan-400 transition-colors cursor-pointer"
-        >
-          Return to Mesh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowRestartConfirm(true)}
+            className="px-4 py-2 rounded text-sm font-bold border border-red-800 text-red-400 hover:border-red-500 hover:text-red-300 transition-colors cursor-pointer"
+          >
+            Restart Game
+          </button>
+          <button
+            onClick={() => setShowPrestigeTree(false)}
+            className="px-4 py-2 rounded text-sm font-bold border border-gray-600 text-gray-300 hover:border-cyan-400 hover:text-cyan-400 transition-colors cursor-pointer"
+          >
+            Return to Mesh
+          </button>
+        </div>
       </div>
 
       {/* Tree canvas */}
@@ -320,6 +332,52 @@ function PrestigeTreeInner({ viewport }: { viewport: ReturnType<typeof useViewpo
           );
         })()}
       </div>
+
+      {/* Restart confirmation modal */}
+      <AnimatePresence>
+        {showRestartConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 flex items-center justify-center"
+            style={{ zIndex: 70, background: 'rgba(0,0,0,0.7)' }}
+            onClick={() => setShowRestartConfirm(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="rounded-lg border border-red-800 shadow-xl p-6"
+              style={{ background: '#1a0a0a', maxWidth: 420 }}
+              onClick={e => e.stopPropagation()}
+            >
+              <h2 className="text-lg font-bold text-red-400 mb-2">Restart Game?</h2>
+              <p className="text-sm text-gray-300 mb-4">
+                This will permanently wipe <span className="text-red-400 font-semibold">everything</span> — your
+                balance, mesh layout, upgrades, and all Schema Registry prestige points — and take you back to
+                the very beginning, including the intro sequence. This cannot be undone.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowRestartConfirm(false)}
+                  className="flex-1 px-3 py-2 rounded text-sm border border-gray-600 text-gray-300 hover:border-gray-400 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={wipeSaveAndRestart}
+                  className="flex-1 px-3 py-2 rounded text-sm font-bold cursor-pointer"
+                  style={{ background: '#dc2626', color: '#fff1f1' }}
+                >
+                  Wipe Everything
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
