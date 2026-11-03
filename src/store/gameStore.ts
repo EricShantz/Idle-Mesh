@@ -145,6 +145,7 @@ export type GameState = {
   performPrestige: () => boolean;
   purchasePrestigeUpgrade: (upgradeKey: string) => boolean;
   setShowPrestigeTree: (show: boolean) => void;
+  wipeSaveAndRestart: () => void;
 };
 
 // Permanent prestige speed multiplier (count of purchased speed nodes)
@@ -1379,6 +1380,11 @@ export const useGameStore = create<GameState>()(
 
       setShowPrestigeTree: (show: boolean) => {
         set(draft => { draft.showPrestigeTree = show; });
+      },
+
+      wipeSaveAndRestart: () => {
+        localStorage.removeItem(SAVE_KEY);
+        window.location.reload();
       },
     };
   })
