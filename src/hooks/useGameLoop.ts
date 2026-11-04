@@ -534,20 +534,23 @@ export function useGameLoop() {
             const newProgress = Math.min(dot.progress + actualSpeed * dt, 1);
             const newPos = interpolatePath(dot.path, newProgress);
 
-            // Broker throughput cap (ingestion only): only the FIRST broker on the path
-            // counts against throughput. Bridged events flow freely through subsequent brokers.
+            // Broker throughput cap: every broker the dot passes through gates against its OWN
+            // cap (not just the first) — a bridge hop is a real relay, not a free pass, so
+            // chaining brokers no longer lets a route dodge capacity limits. The DMR Cluster
+            // upgrade is the intended way to raise a given broker's own ceiling instead.
             let brokerCapped = false;
             const now = performance.now();
-            const firstBroker = pathComps.find(pc => pc.comp.type === 'broker');
-            if (firstBroker) {
-              const brokerProgress = firstBroker.idx / (dot.path.length - 1);
+            for (const pc of pathComps) {
+              if (pc.comp.type !== 'broker') continue;
+              const brokerProgress = pc.idx / (dot.path.length - 1);
               if (dot.progress < brokerProgress && newProgress >= brokerProgress) {
-                const cap = getBrokerCap(firstBroker.comp, getPermanentBrokerThroughputMult(state));
-                if (!tryBrokerRelay(firstBroker.comp.id, cap, now)) {
+                const cap = getBrokerCap(pc.comp, getPermanentBrokerThroughputMult(state));
+                if (!tryBrokerRelay(pc.comp.id, cap, now)) {
                   droppedCount++;
-                  recordDrop(firstBroker.comp.id, 'broker-capped', firstBroker.comp.label);
-                  updated.push({ ...dot, status: 'dropped', dropX: firstBroker.comp.x, dropY: firstBroker.comp.y, dropVY: 0, color: dropColor } as Dot);
+                  recordDrop(pc.comp.id, 'broker-capped', pc.comp.label);
+                  updated.push({ ...dot, status: 'dropped', dropX: pc.comp.x, dropY: pc.comp.y, dropVY: 0, color: dropColor } as Dot);
                   brokerCapped = true;
+                  break;
                 }
               }
             }
