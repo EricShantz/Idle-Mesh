@@ -1048,14 +1048,22 @@ export function useGameLoop() {
             ...buildReleasePath(sub),
           }));
 
-          // Each successive same-frame release starts a little further back (negative progress
-          // clamps to the queue's center, hidden under its card) so they emerge as a visible
-          // stream instead of all rendering on the same pixel for the whole trip. The timing
-          // check must evaluate the same staggered start the dot will actually get.
-          const releaseStagger = releaseSeq * 0.08;
+          // Same-frame releases are spread across the frame's own travel distance (the k-th of
+          // N starts k/N of one frame's movement behind, as negative progress that clamps to
+          // the queue's center, hidden under its card) so they emerge as a stream instead of
+          // all rendering on the same pixel. The spread is deliberately bounded by ONE frame:
+          // a fixed per-release offset made a dot's lifetime proportional to how many released
+          // that frame — at low fps that was ~90 releases/frame, dots hidden for over a second,
+          // and a feedback loop (more live dots → slower frames → more releases per frame →
+          // longer lives). The timing check must evaluate the same staggered start the dot gets.
+          const releaseStaggerFor = (path: { x: number; y: number }[]) => {
+            const progressPerMs = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, path)
+              * state.upgrades.propagationSpeed * getSegmentSpeedScale(path, 0);
+            return (releaseSeq / Math.max(1, indices.length)) * dt * progressPerMs;
+          };
 
           // With fanout: all subscribers must be ready; without: just the target
-          let canRelease = releaseData.every(rd => shouldReleaseTo(rd.sub, rd.path, rd.progress - releaseStagger));
+          let canRelease = releaseData.every(rd => shouldReleaseTo(rd.sub, rd.path, rd.progress - releaseStaggerFor(rd.path)));
 
           // During drag, shouldReleaseTo timing is unreliable (in-flight dots' paths/speeds
           // are rebuilt each frame). Enforce a minimum interval based on consume duration
@@ -1088,13 +1096,13 @@ export function useGameLoop() {
             );
             const releaseNodeIds = [queueId, ...(releaseSubComp ? [releaseSubComp.id] : [])];
             if (ti === 0) {
-              updated[i] = { ...releaseDot, status: 'traveling', progress: releaseProgress - releaseStagger, speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined, originalNodeIds: releaseNodeIds, nextNodeId: releaseSubComp?.id, nodeWpIndices: undefined } as Dot;
+              updated[i] = { ...releaseDot, status: 'traveling', progress: releaseProgress - releaseStaggerFor(releasePath), speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined, originalNodeIds: releaseNodeIds, nextNodeId: releaseSubComp?.id, nodeWpIndices: undefined } as Dot;
             } else {
               updated.push({
                 ...releaseDot,
                 id: nextDotId(),
                 status: 'traveling',
-                progress: releaseProgress - releaseStagger,
+                progress: releaseProgress - releaseStaggerFor(releasePath),
                 speed: releaseSpeed,
                 pauseStartTime: undefined,
                 queuedAtNodeId: undefined,
@@ -1324,19 +1332,11 @@ export function useGameLoop() {
         useGameStore.getState().showTutorial('firstDrop');
       }
 
-      // Add money for dots that reached 50% of animation
-      for (const { id, value, subscriberId } of toConsume) {
-        useGameStore.getState().consumeEvent(id, value, subscriberId);
-      }
-
-      // Prune old earnings (keep last 5s)
-      const now = Date.now();
-      const { recentEarnings } = useGameStore.getState();
-      if (recentEarnings.length > 0 && recentEarnings[0].time < now - 5000) {
-        useGameStore.setState(state => ({
-          ...state,
-          recentEarnings: state.recentEarnings.filter(e => e.time > now - 5000),
-        }));
+      // Add money for dots that reached 50% of animation — one store commit for the whole
+      // frame's consumes (each commit notifies every selector in the app and wakes the
+      // auto-save subscriber); the 5s earnings window is pruned inside that same commit.
+      if (toConsume.length > 0) {
+        useGameStore.getState().consumeEvents(toConsume);
       }
 
       rafRef.current = requestAnimationFrame(loop);

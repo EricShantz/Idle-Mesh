@@ -117,7 +117,7 @@ export function Sidebar() {
   const earningsPerSec = recent.length > 0
     ? recent.reduce((sum, e) => sum + e.amount, 0) / 5
     : 0;
-  const eventsPerSec = recent.length > 0 ? recent.length / 5 : 0;
+  const eventsPerSec = recent.length > 0 ? recent.reduce((sum, e) => sum + e.count, 0) / 5 : 0;
 
   const handleGlobalUpgrade = (key: string, cost: number) => {
     if (spend(cost)) {

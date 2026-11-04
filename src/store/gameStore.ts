@@ -111,7 +111,8 @@ export type GameState = {
     globalValueMultiplier: number;
   };
 
-  recentEarnings: { time: number; amount: number }[];
+  // One aggregated entry per frame (not per event): `count` events worth `amount` total.
+  recentEarnings: { time: number; amount: number; count: number }[];
   coinPops: { id: string; x: number; y: number; amount: number }[];
   selectedNodeId: string | null;
   meshError: string | null;
@@ -143,6 +144,7 @@ export type GameState = {
   // Actions
   fireEvent: (publisherId: string) => void;
   consumeEvent: (dotId: string, value: number, subscriberId: string) => void;
+  consumeEvents: (batch: { value: number; subscriberId: string }[]) => void;
   removeCoinPop: (id: string) => void;
   dropEvent: (dotId: string) => void;
   updateDots: (updateFn: (dots: EventDot[]) => EventDot[]) => void;
@@ -775,53 +777,76 @@ export const useGameStore = create<GameState>()(
         });
       },
 
-      consumeEvent: (_dotId: string, value: number, subscriberId: string) => {
+      // All of a frame's consumes in ONE store commit. Every commit runs an immer produce over
+      // the whole state, notifies every hook selector in the app, and wakes the auto-save
+      // subscriber — at high throughput (thousands of consumes/sec) doing that per event was
+      // the dominant per-frame cost. Results are identical to applying them one at a time.
+      consumeEvents: (batch: { value: number; subscriberId: string }[]) => {
+        if (batch.length === 0) return;
         set(draft => {
           const hasIncome = (draft.prestige.permanentUpgradeLevels['globalIncome'] ?? 0) > 0;
           const permMult = (hasIncome ? 1.1 : 1.0) * getPermanentSubPayoutMult(draft);
-          const earned = value * draft.upgrades.globalValueMultiplier * permMult;
-          draft.balance += earned;
-          draft.totalEarned += earned;
+          const now = Date.now();
+
+          // Adaptive coin pop throttling based on frame rate
+          const fps = getSmoothedFps();
+          let maxPopsPerSec: number;
+          let maxActivePops: number;
+          if (fps >= 50) {
+            // Smooth — show generously
+            maxPopsPerSec = 5;
+            maxActivePops = 12;
+          } else if (fps >= 35) {
+            // Starting to dip — moderate throttle
+            maxPopsPerSec = 2;
+            maxActivePops = 6;
+          } else {
+            // Struggling — aggressive throttle
+            maxPopsPerSec = 1;
+            maxActivePops = 3;
+          }
+
+          let earnedTotal = 0;
+          for (const { value, subscriberId } of batch) {
+            const earned = value * draft.upgrades.globalValueMultiplier * permMult;
+            earnedTotal += earned;
+            draft.balance += earned;
+            draft.totalEarned += earned;
+            draft.eventsConsumed += 1;
+
+            const sub = draft.components.find(c => c.id === subscriberId);
+            if (sub) {
+              let track = coinPopTracking[subscriberId];
+              if (!track || now - track.windowStart > 1000) {
+                track = { count: 0, windowStart: now, pendingAmount: 0 };
+                coinPopTracking[subscriberId] = track;
+              }
+              track.count++;
+              track.pendingAmount += earned;
+              const showEveryN = track.count <= maxPopsPerSec ? 1 : Math.ceil(track.count / maxPopsPerSec);
+              if (track.count % showEveryN === 0 && draft.coinPops.length < maxActivePops) {
+                draft.coinPops.push({ id: `coin-${++dotIdCounter}`, x: sub.x, y: sub.y, amount: track.pendingAmount });
+                track.pendingAmount = 0;
+              }
+            }
+          }
+
           if (draft.totalEarned >= 1_000_000 && !draft.tutorialsSeen['prestigeAvailable'] && !draft.activeTutorial) {
             draft.activeTutorial = 'prestigeAvailable';
           }
-          draft.eventsConsumed += 1;
-          draft.recentEarnings.push({ time: Date.now(), amount: earned });
-          const sub = draft.components.find(c => c.id === subscriberId);
-          if (sub) {
-            const now = Date.now();
-            let track = coinPopTracking[subscriberId];
-            if (!track || now - track.windowStart > 1000) {
-              track = { count: 0, windowStart: now, pendingAmount: 0 };
-              coinPopTracking[subscriberId] = track;
-            }
-            track.count++;
-            track.pendingAmount += earned;
 
-            // Adaptive coin pop throttling based on frame rate
-            const fps = getSmoothedFps();
-            let maxPopsPerSec: number;
-            let maxActivePops: number;
-            if (fps >= 50) {
-              // Smooth — show generously
-              maxPopsPerSec = 5;
-              maxActivePops = 12;
-            } else if (fps >= 35) {
-              // Starting to dip — moderate throttle
-              maxPopsPerSec = 2;
-              maxActivePops = 6;
-            } else {
-              // Struggling — aggressive throttle
-              maxPopsPerSec = 1;
-              maxActivePops = 3;
-            }
-            const showEveryN = track.count <= maxPopsPerSec ? 1 : Math.ceil(track.count / maxPopsPerSec);
-            if (track.count % showEveryN === 0 && draft.coinPops.length < maxActivePops) {
-              draft.coinPops.push({ id: `coin-${++dotIdCounter}`, x: sub.x, y: sub.y, amount: track.pendingAmount });
-              track.pendingAmount = 0;
-            }
+          // Keep the 5s earnings window bounded here, in the same commit, rather than with a
+          // separate store write per frame — and record one aggregated entry per batch.
+          const cutoff = now - 5000;
+          if (draft.recentEarnings.length > 0 && draft.recentEarnings[0].time < cutoff) {
+            draft.recentEarnings = draft.recentEarnings.filter(e => e.time > cutoff);
           }
+          draft.recentEarnings.push({ time: now, amount: earnedTotal, count: batch.length });
         });
+      },
+
+      consumeEvent: (_dotId: string, value: number, subscriberId: string) => {
+        get().consumeEvents([{ value, subscriberId }]);
       },
 
       removeCoinPop: (id: string) => {
@@ -864,7 +889,7 @@ export const useGameStore = create<GameState>()(
           if (draft.totalEarned >= 1_000_000 && !draft.tutorialsSeen['prestigeAvailable'] && !draft.activeTutorial) {
             draft.activeTutorial = 'prestigeAvailable';
           }
-          draft.recentEarnings.push({ time: Date.now(), amount });
+          draft.recentEarnings.push({ time: Date.now(), amount, count: 1 });
         });
       },
 
@@ -1523,35 +1548,62 @@ function buildSaveSnapshot(state: GameState): string {
   return JSON.stringify(data);
 }
 
-useGameStore.subscribe((state) => {
-  if (saveSuspended) return;
-  const snapshot = buildSaveSnapshot(state);
-  // Skip if only transient state (eventDots/recentEarnings) changed
-  if (snapshot === lastSaveSnapshot) return;
+// The subscriber fires on every store commit — many times per frame at high throughput —
+// so it must not serialize anything itself (buildSaveSnapshot JSON-stringifies the whole
+// save). It only records that something changed and makes sure a check is scheduled; the
+// debounced check is what builds and compares the snapshot.
+let lastChangeTime = 0;
+
+function captureSnapshotIfChanged(): boolean {
+  const snapshot = buildSaveSnapshot(useGameStore.getState());
+  // Unchanged means only transient state (eventDots/recentEarnings/...) moved
+  if (snapshot === lastSaveSnapshot) return false;
   lastSaveSnapshot = snapshot;
   pendingSnapshot = snapshot;
+  return true;
+}
 
-  if (saveTimeout) clearTimeout(saveTimeout);
-
-  // Force a write now if we've gone too long without one, even though
-  // state is still actively changing.
-  if (Date.now() - lastFlushTime >= SAVE_MAX_WAIT_MS) {
-    flushSave();
+function runSaveCheck() {
+  saveTimeout = null;
+  if (saveSuspended) return;
+  const now = Date.now();
+  const quietFor = now - lastChangeTime;
+  const sinceFlush = now - lastFlushTime;
+  // Same policy as before: write once changes go quiet for the debounce window, but never
+  // let continuous activity push the write back past the max-wait ceiling.
+  if (quietFor < SAVE_DEBOUNCE_MS && sinceFlush < SAVE_MAX_WAIT_MS) {
+    saveTimeout = setTimeout(runSaveCheck, Math.min(SAVE_DEBOUNCE_MS - quietFor, SAVE_MAX_WAIT_MS - sinceFlush));
     return;
   }
+  if (captureSnapshotIfChanged()) {
+    flushSave();
+  } else {
+    // Nothing to write — reset the max-wait clock so the next check isn't immediate.
+    lastFlushTime = now;
+  }
+}
 
-  saveTimeout = setTimeout(flushSave, SAVE_DEBOUNCE_MS);
+useGameStore.subscribe(() => {
+  if (saveSuspended) return;
+  lastChangeTime = Date.now();
+  if (saveTimeout === null) saveTimeout = setTimeout(runSaveCheck, SAVE_DEBOUNCE_MS);
 });
 
-// Flush immediately when the tab/iframe is about to be hidden or unloaded —
-// browsers can suspend timers in a backgrounded iframe before the debounce fires.
+// Flush immediately when the tab/iframe is about to be hidden or unloaded — browsers can
+// suspend timers in a backgrounded iframe before the debounce fires. Snapshot first: the
+// lazy check above may not have captured the latest changes yet.
+function flushSaveNow() {
+  if (saveSuspended) return;
+  captureSnapshotIfChanged();
+  flushSave();
+}
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') flushSave();
+    if (document.visibilityState === 'hidden') flushSaveNow();
   });
 }
 if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', flushSave);
+  window.addEventListener('pagehide', flushSaveNow);
 }
 
 // Expose store globally for console debugging
