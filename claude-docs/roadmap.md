@@ -52,6 +52,8 @@
 - [x] add intro sequence the first time the game loads that shows a super messy spaghetti code graphic full of point to point connections that are failing all over, the screen should pulse red, then a message should show up saying something like "Ugh! this legacy code is a nightmare to deal with... That's it! I'm going to rebuild it using Event-Driven Architecture'
 - [x] DMQ releases to any connected broker via bridge routing to the original destination
 - [x] user should be able to change queue subscription even when queue is fully broadened
+- [x] prestige page: "Restart Game" text button replaced with an icon-only trash button (with tooltip) spaced away from "Return to Mesh", so the two can't be mistaken for each other
+- [x] intro: bigger spaghetti (32 services, seeded local-biased wiring, more dropping events), zoomed in, and the red vignette dithered so its gradient no longer shows concentric bands
 ---
 
 ## Clarification Needed
