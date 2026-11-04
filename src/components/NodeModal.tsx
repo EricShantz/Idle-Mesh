@@ -1,6 +1,6 @@
 import { useSyncExternalStore, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useGameStore } from '../store/gameStore';
+import { useGameStore, getPublisherTierMultiplier } from '../store/gameStore';
 import { useViewport } from '../hooks/useViewport';
 import {
   publisherUpgrades,
@@ -28,7 +28,7 @@ function getUpgradesForType(type: string): UpgradeDef[] {
   }
 }
 
-function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number, _topic?: string): string {
+function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number, _topic?: string, tierMultiplier: number = 1): string {
   const nextLevel = currentLevel + 1;
 
   switch (upgradeKey) {
@@ -50,9 +50,11 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number, _topic
 
     // Value upgrades ($X.XX per unit)
     case 'eventValue': {
-      const curVal = (1.0 + currentLevel * 0.45 + currentLevel * currentLevel * 0.05).toFixed(2);
-      const nxtVal = (1.0 + nextLevel * 0.45 + nextLevel * nextLevel * 0.05).toFixed(2);
-      const increment = (nextLevel * 0.45 + nextLevel * nextLevel * 0.05 - currentLevel * 0.45 - currentLevel * currentLevel * 0.05).toFixed(2);
+      const curBase = 1.0 + currentLevel * 0.45 + currentLevel * currentLevel * 0.05;
+      const nxtBase = 1.0 + nextLevel * 0.45 + nextLevel * nextLevel * 0.05;
+      const curVal = (curBase * tierMultiplier).toFixed(2);
+      const nxtVal = (nxtBase * tierMultiplier).toFixed(2);
+      const increment = ((nxtBase - curBase) * tierMultiplier).toFixed(2);
       return `$${curVal} → $${nxtVal} (+$${increment})`;
     }
     case 'consumptionValue': {
@@ -315,7 +317,7 @@ export function NodeModal() {
                   <span className="font-bold">
                     {def.label}
                     {['fasterConsumption', 'publishSpeed'].includes(def.key) && level > 0 && ` (${Math.min(level * (level + 9) / 2, 100)}%)`}
-                    {def.key === 'eventValue' && level > 0 && ` ($${(1.0 + level * 0.45 + level * level * 0.05).toFixed(2)})`}
+                    {def.key === 'eventValue' && level > 0 && ` ($${((1.0 + level * 0.45 + level * level * 0.05) * getPublisherTierMultiplier(node.upgrades['networkTier'])).toFixed(2)})`}
                     {def.key === 'consumptionValue' && level > 0 && ` (${(1.0 + level * 0.08 + level * level * 0.02).toFixed(2)}x)`}
                     {def.key === 'increaseThroughput' && ` (${8 + level * (level + 9) / 2}/sec)`}
                   </span>
@@ -327,7 +329,7 @@ export function NodeModal() {
                     {computeBroadenedTopic(node.subscriptionSegments, level)} → {computeBroadenedTopic(node.subscriptionSegments, level + 1)}
                   </div>
                 ) : !maxed && (
-                  <div className="text-xs text-blue-300 mt-0.5">{getUpgradeValueDisplay(def.key, level, node.topic)}</div>
+                  <div className="text-xs text-blue-300 mt-0.5">{getUpgradeValueDisplay(def.key, level, node.topic, getPublisherTierMultiplier(node.upgrades['networkTier']))}</div>
                 )}
                 <div className="mt-0.5 flex items-center justify-between">
                   <span>{maxed ? 'MAX' : formatMoney(cost)}</span>

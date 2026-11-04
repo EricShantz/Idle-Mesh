@@ -62,9 +62,15 @@ Global upgrades use the same `UpgradeDef` system as node upgrades — each is a 
 |---|---|---|---|
 | Queue | $30 | ×1.3 | Places unconnected on canvas, user wires via drag-to-connect |
 | Dead Message Queue | $100 (one-time) | — | Catches dropped events, retries through broker. Connect top port to broker. |
-| Publisher | $150 | ×1.8 | Additional publisher, placed unconnected. Single-broker connection limit. |
+| Publisher | $150 | ×1.8 | Additional publisher, placed unconnected. Single-broker connection limit. Capped at 24 total (one per unique topic) — button disables and shows "MAX" once reached. |
 | Subscriber | $75 | ×1.8 | Additional subscriber, placed unconnected. |
 | Broker | $200 | ×2.0 | Additional broker for multi-broker mesh. Bridge to other brokers via broker→broker connections. |
+
+## Mesh-Wide Value Modifiers
+These aren't bought or leveled directly — they're derived from how the mesh is built.
+
+- **Publisher Network Tier**: each publisher bought from the shop (not the free starter) gets a permanent tier equal to its purchase order (1st purchased = tier 1, 2nd = tier 2, ...), stored as `upgrades.networkTier`. `getPublisherTierMultiplier(tier)` returns `1 + tier * 0.1`, multiplied into that publisher's `getEventValue()` result. The badge on a purchased publisher's node shows `Base Value + N0%`. Shown on the Event Value upgrade card too (starting $ reflects the tier). Publisher purchases are capped at 24 (`TOPIC_POOL.length`) since every publisher needs a unique topic.
+- **Broker Bridge Bonus**: an event whose route crosses a broker-to-broker bridge connection earns ×1.5 value (`BRIDGE_VALUE_MULT`), applied once per event regardless of how many bridges it crosses. Visually, the dot is cyan until it exits the broker it bridges from, then switches to gold (`BRIDGE_GOLD_COLOR`, `#fde047`) for the rest of the trip.
 
 ## Accelerating Upgrade Curves
 - Most percentage-based upgrades use: `boostPct = level * (level + 9) / 2` (5%, 11%, 18%, 26%... 95% at level 10)

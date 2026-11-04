@@ -50,9 +50,11 @@ export type EventDot = {
   originalNodeIds?: string[];
   nodeWpIndices?: number[];
   originalValue?: number;
-  forkPaths?: { waypoints: { x: number; y: number }[]; nodeIds: string[] }[];
+  forkPaths?: { waypoints: { x: number; y: number }[]; nodeIds: string[]; value?: number; color?: string }[];
   forkNodeId?: string;
   nextNodeId?: string;
+  /** Broker node this dot must pass before switching to the bridge-crossing gold color. */
+  bridgeGoldAfterNodeId?: string;
 };
 
 /** Find the first queue or subscriber ID in a route's node list. */
@@ -63,6 +65,24 @@ export function findNextInteractableId(nodeIds: string[], components: GameCompon
   }
   return undefined;
 }
+
+/** The node right before the first broker-to-broker bridge hop on a route, if any. */
+export function firstBridgeExitNodeId(nodeIds: string[], components: GameComponent[]): string | undefined {
+  for (let i = 0; i < nodeIds.length - 1; i++) {
+    const a = components.find(c => c.id === nodeIds[i]);
+    const b = components.find(c => c.id === nodeIds[i + 1]);
+    if (a?.type === 'broker' && b?.type === 'broker') return nodeIds[i];
+  }
+  return undefined;
+}
+
+/** True if a route's node list crosses a broker-to-broker bridge connection anywhere. */
+export function pathCrossesBridge(nodeIds: string[], components: GameComponent[]): boolean {
+  return firstBridgeExitNodeId(nodeIds, components) !== undefined;
+}
+
+export const BRIDGE_GOLD_COLOR = '#fde047';
+export const BRIDGE_VALUE_MULT = 1.5;
 
 export type GameState = {
   balance: number;
@@ -197,6 +217,18 @@ export function getPermanentQueueBufferBonus(state: Pick<GameState, 'prestige'>)
 // Whether batch consume (prefetch) is active
 export function hasPermanentBatchConsume(state: Pick<GameState, 'prestige'>): boolean {
   return (state.prestige.permanentUpgradeLevels['queueBatchConsume'] ?? 0) > 0;
+}
+
+// Publisher network effect: each purchased publisher is permanently assigned a tier at
+// purchase time (1st purchased = tier 1, 2nd = tier 2, ...), set once in addComponent via
+// upgrades.networkTier. Each tier adds another 10 percentage points to that publisher's
+// own base event value (tier 1 = +10%, tier 2 = +20%, tier 3 = +30%, ...), so the Nth
+// publisher you buy produces events worth 10% more than the (N-1)th. This only ever pays
+// off through that specific publisher's own events, so a publisher that never fires (e.g.
+// unconnected) simply never realizes the bonus — no separate "is it connected" check needed.
+export function getPublisherTierMultiplier(tier: number | undefined): number {
+  if (!tier) return 1;
+  return 1 + tier * 0.1;
 }
 
 // Single source of truth for the upgrade levels a component of a given type should
@@ -543,7 +575,9 @@ export const useGameStore = create<GameState>()(
             }
           }
           truncatedWaypoints.push(nodePath[1]);
-          const value = state.getEventValue(publisherId);
+          const baseValue = state.getEventValue(publisherId);
+          const bridgeExitNodeId = firstBridgeExitNodeId([publisherId, target.id], state.components);
+          const value = bridgeExitNodeId ? baseValue * BRIDGE_VALUE_MULT : baseValue;
           const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state), truncatedWaypoints);
           set(draft => {
             draft.publisherCooldowns[publisherId] = Date.now();
@@ -562,6 +596,7 @@ export const useGameStore = create<GameState>()(
                 originalValue: value,
                 originalNodeIds: [publisherId, target.id],
                 nextNodeId: findNextInteractableId([publisherId, target.id], state.components),
+                bridgeGoldAfterNodeId: bridgeExitNodeId,
               });
             }
           });
@@ -599,7 +634,9 @@ export const useGameStore = create<GameState>()(
               truncatedWaypoints.push(brokerLeftEdge);
               const truncatedNodeIds = anyPath.nodeIds.slice(0, brokerIdx + 1);
 
-              const value = state.getEventValue(publisherId);
+              const baseValue = state.getEventValue(publisherId);
+              const bridgeExitNodeId = firstBridgeExitNodeId(truncatedNodeIds, state.components);
+              const value = bridgeExitNodeId ? baseValue * BRIDGE_VALUE_MULT : baseValue;
               const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state), truncatedWaypoints);
               set(draft => {
                 draft.publisherCooldowns[publisherId] = Date.now();
@@ -618,6 +655,7 @@ export const useGameStore = create<GameState>()(
                     originalValue: value,
                     originalNodeIds: truncatedNodeIds,
                     nextNodeId: findNextInteractableId(truncatedNodeIds, state.components),
+                    bridgeGoldAfterNodeId: bridgeExitNodeId,
                   });
                 }
               });
@@ -659,8 +697,12 @@ export const useGameStore = create<GameState>()(
           }
         }
 
-        const value = state.getEventValue(publisherId);
+        const baseValue = state.getEventValue(publisherId);
         const baseSpeed = 0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state);
+        const valueForPath = (nodeIds: string[]) =>
+          pathCrossesBridge(nodeIds, state.components) ? baseValue * BRIDGE_VALUE_MULT : baseValue;
+        const colorForPath = (nodeIds: string[]) =>
+          pathCrossesBridge(nodeIds, state.components) ? BRIDGE_GOLD_COLOR : '#22d3ee';
 
         // Group selected paths by their first broker so we create one dot per broker fork point
         const forkGroups = new Map<string, typeof selectedPaths>();
@@ -678,7 +720,10 @@ export const useGameStore = create<GameState>()(
           for (let batch = 0; batch < fireCount; batch++) {
             for (const [brokerId, group] of forkGroups) {
               const primary = group[0];
-              const forks = group.length > 1 ? group.slice(1) : undefined;
+              const forks = group.length > 1
+                ? group.slice(1).map(f => ({ ...f, value: valueForPath(f.nodeIds), color: colorForPath(f.nodeIds) }))
+                : undefined;
+              const primaryValue = valueForPath(primary.nodeIds);
               const dotId = `dot-${++dotIdCounter}`;
               draft.eventDots.push({
                 id: dotId,
@@ -688,12 +733,13 @@ export const useGameStore = create<GameState>()(
                 status: 'traveling',
                 color: '#22d3ee',
                 opacity: 1,
-                value,
-                originalValue: value,
+                value: primaryValue,
+                originalValue: primaryValue,
                 originalNodeIds: primary.nodeIds,
                 nextNodeId: findNextInteractableId(primary.nodeIds, state.components),
                 forkPaths: forks,
                 forkNodeId: brokerId !== 'none' ? brokerId : undefined,
+                bridgeGoldAfterNodeId: firstBridgeExitNodeId(primary.nodeIds, state.components),
               });
             }
           }
@@ -840,6 +886,9 @@ export const useGameStore = create<GameState>()(
             const topic = getNextTopic(pubCount);
             comp.topic = topic;
             comp.topicSegments = topic.split('/');
+            // Network effect tier is fixed at purchase order (1st purchased = 1, 2nd = 2, ...)
+            // and never changes, even if earlier publishers are later deleted.
+            comp.upgrades['networkTier'] = pubCount;
           }
           draft.components.push(comp);
 
@@ -1307,7 +1356,8 @@ export const useGameStore = create<GameState>()(
         const pub = state.components.find(c => c.id === publisherId);
         if (!pub) return 0.5;
         const valueLevel = pub.upgrades['eventValue'] ?? 0;
-        return 1.0 + valueLevel * 0.45 + valueLevel * valueLevel * 0.05 + getPermanentValueBoost(state);
+        const base = 1.0 + valueLevel * 0.45 + valueLevel * valueLevel * 0.05 + getPermanentValueBoost(state);
+        return base * getPublisherTierMultiplier(pub.upgrades['networkTier']);
       },
 
       performPrestige: () => {

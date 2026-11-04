@@ -4,7 +4,8 @@
 
 ## Design Decisions
 
-- **Publishers**: fixed specific topics, never change, displayed from game start. All publishers have uniform base value ($1.00).
+- **Publishers**: fixed specific topics, never change, displayed from game start. Base event value is set by the Event Value upgrade level; each publisher purchased from the shop also carries a permanent tier (by purchase order) that multiplies its own value by another 10% per tier — see `claude-docs/upgrades.md`.
+- **Publisher purchase cap**: limited to 24 total (starter + purchased) — one per unique topic in `TOPIC_POOL`. No wraparound; the shop disables further purchases at the cap.
 - **Queues**: start with subscription matching their first connected publisher, broaden via upgrade
 - **Broadening is pure upside** — wider subscriptions catch more events with no payout penalty
 - **Clustered topic hierarchies**: publishers come in thematic groups (orders, payments, etc.)
@@ -65,7 +66,7 @@ acme/shipping/delivered/na/logistics/SHP005   (pub-23)
 acme/orders/tracking/na/logistics/SHP006      (pub-24)
 ```
 
-Pool wraps around after 24 publishers.
+Publisher purchases are capped at 24 (`TOPIC_POOL.length`) so every publisher always has a unique topic.
 
 ## Topic Matching
 

@@ -497,7 +497,13 @@ export function NodeCard({ component }: Props) {
             </div>
           )}
           {isPublisher && (
-            <div className="text-[10px] opacity-60">(click to fire)</div>
+            component.id === 'pub-1' ? (
+              <div className="text-[10px] opacity-60">(click to fire)</div>
+            ) : !!component.upgrades['networkTier'] && (
+              <div className="text-[9px] font-semibold whitespace-nowrap" style={{ color: '#fde047' }}>
+                Base Value + {component.upgrades['networkTier'] * 10}%
+              </div>
+            )
           )}
           {isDmq && (
             <div className="flex flex-col gap-1 mt-1 items-center">

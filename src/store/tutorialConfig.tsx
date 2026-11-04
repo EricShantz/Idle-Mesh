@@ -67,7 +67,7 @@ export const tutorials: TutorialDef[] = [
   {
     key: 'firstPublisher',
     slides: [
-      { title: 'New Publisher!', body: 'More publishers means more events flowing through your mesh. Each publisher has its own topic — connect it to a broker to start publishing.', graphic: MultiPublisherGraphic },
+      { title: 'New Publisher!', body: 'Each publisher you buy produces events worth 10% more than the previous one.', graphic: MultiPublisherGraphic },
     ],
   },
   {
@@ -85,7 +85,7 @@ export const tutorials: TutorialDef[] = [
   {
     key: 'firstBroker',
     slides: [
-      { title: 'Additional Broker!', body: 'Bridge brokers together to create a full event mesh. Use the bridge slot upgrade to connect brokers and route events across multiple paths.', graphic: MultiBrokerGraphic },
+      { title: 'Additional Broker!', body: 'Bridge brokers together to create a full event mesh. Use the bridge slot upgrade to connect brokers and route events across multiple paths. Any event that crosses a bridge turns gold and earns +50% value!', graphic: MultiBrokerGraphic },
     ],
   },
   {

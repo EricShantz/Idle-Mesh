@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useGameStore, nextDotId, getPermanentQueueBufferBonus, hasPermanentBatchConsume, findNextInteractableId, getPermanentBrokerThroughputMult } from '../store/gameStore';
+import { useGameStore, nextDotId, getPermanentQueueBufferBonus, hasPermanentBatchConsume, findNextInteractableId, getPermanentBrokerThroughputMult, BRIDGE_GOLD_COLOR } from '../store/gameStore';
 import { interpolatePath, normalizedSpeed, getSegmentSpeedScale, scaledTravelTime } from '../utils/pathUtils';
 import { computeOrthogonalWaypoints, computeVerticalFirstWaypoints } from '../utils/orthogonalPath';
 
@@ -578,8 +578,8 @@ export function useGameLoop() {
                         dropVY: 0,
                         color: dropColor,
                         opacity: 1,
-                        value: dot.value,
-                        originalValue: dot.originalValue,
+                        value: fork.value ?? dot.value,
+                        originalValue: fork.value ?? dot.originalValue,
                         originalNodeIds: forkStartNodeIds,
                       });
                     } else {
@@ -589,10 +589,10 @@ export function useGameLoop() {
                         progress: 0,
                         speed: normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, forkWaypoints),
                         status: 'traveling' as const,
-                        color: dot.color,
+                        color: fork.color ?? dot.color,
                         opacity: 1,
-                        value: dot.value,
-                        originalValue: dot.originalValue,
+                        value: fork.value ?? dot.value,
+                        originalValue: fork.value ?? dot.originalValue,
                         originalNodeIds: forkStartNodeIds,
                         nextNodeId: findNextInteractableId(forkStartNodeIds, state.components),
                       });
@@ -601,6 +601,15 @@ export function useGameLoop() {
                 }
                 // Clear fork data from this dot
                 dot = { ...dot, forkPaths: undefined, forkNodeId: undefined };
+              }
+            }
+
+            // Bridge color switch: once the dot passes the broker it exits before crossing
+            // a bridge, flip it gold in place (it stays cyan for the publisher→broker leg).
+            if (dot.bridgeGoldAfterNodeId) {
+              const bridgeExitComp = state.components.find(c => c.id === dot.bridgeGoldAfterNodeId);
+              if (bridgeExitComp && dotTouchesNode(newPos.x, newPos.y, bridgeExitComp.x, bridgeExitComp.y)) {
+                dot = { ...dot, color: BRIDGE_GOLD_COLOR, bridgeGoldAfterNodeId: undefined };
               }
             }
 
