@@ -31,8 +31,8 @@
 ---
 
 ## Known Bugs / Technical Debt
-- [ ] **Performance degradation in mid/late game** — frame rate suffers when many nodes, connections, and event dots are active simultaneously
-- [ ] **Queue overflow with fanout + broadened subscriptions** — queues drop excessive events when subscriptions accept from multiple publishers, even at max subscriber consumption speed
+- [ ] **Performance degradation in mid/late game** — frame rate suffers when many nodes, connections, and event dots are active simultaneously. First pass done (see Completed: game loop no longer runs against an immer draft, canvas glow is a cached sprite, canvas no longer reallocates per frame); remaining cost is proportional to live dot count — next candidates are per-node React re-renders on every `eventDots` change and the per-dot component scans in Pass 1.
+- [x] ~~**Queue overflow with fanout + broadened subscriptions**~~ — root cause was two-fold: (1) Pass 1 counted same-frame arrivals against the buffer before Pass 2 released them, so any burst larger than the buffer dropped its tail even though the queue drained completely a moment later; (2) a fixed per-frame release cap (1, or 3 with Prefetch) that no upgrade could raise. Fixed by gating the buffer on previous-frame backlog and removing the cap in favor of the chained, order-aware subscriber timing check. Verified: zero drops at ~400 events/sec into a 9-slot queue, including fan-out to 5 maxed subscribers.
 
 ---
 

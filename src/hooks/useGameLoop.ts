@@ -716,13 +716,21 @@ export function useGameLoop() {
                 const occFcLevel = subscriberForOccupancy?.upgrades['fasterConsumption'] ?? 0;
                 const occBoostPct = Math.min(occFcLevel * (occFcLevel + 9) / 2, 100);
                 const occConsumeDuration = 1000 * (1 - occBoostPct / 100);
-                const isSubscriberOccupied = [...updated, ...dots.slice(i + 1)].some(d => {
+                const isOccupyingThisSubscriber = (d: Dot) => {
                   if (d.status !== 'pausing' || d.moneyAdded || d.path.length === 0) return false;
                   if (Math.hypot(d.path[d.path.length - 1].x - lastPathPoint.x, d.path[d.path.length - 1].y - lastPathPoint.y) >= 50) return false;
                   const elapsed = Date.now() - (d.pauseStartTime ?? Date.now());
                   // Allow arrival within 50ms of consumption finishing to account for frame timing
                   return elapsed < occConsumeDuration - 50;
-                });
+                };
+                // Scan already-processed dots, then the not-yet-processed remainder, without
+                // allocating a concatenated copy of both per arriving dot.
+                let isSubscriberOccupied = updated.some(isOccupyingThisSubscriber);
+                if (!isSubscriberOccupied) {
+                  for (let j = i + 1; j < dots.length; j++) {
+                    if (isOccupyingThisSubscriber(dots[j])) { isSubscriberOccupied = true; break; }
+                  }
+                }
                 if (!isSubscriberOccupied) {
                   updated.push({ ...dot, status: 'pausing', pauseStartTime: Date.now(), progress: newProgress } as Dot);
                 } else {

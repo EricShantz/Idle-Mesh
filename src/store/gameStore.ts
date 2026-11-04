@@ -843,9 +843,12 @@ export const useGameStore = create<GameState>()(
       },
 
       updateDots: (updateFn: (dots: EventDot[]) => EventDot[]) => {
-        set(draft => {
-          draft.eventDots = updateFn(draft.eventDots);
-        });
+        // Run the game loop against the plain committed array and bypass immer for the
+        // commit. Inside produce(), eventDots is a draft Proxy — every property read in the
+        // loop's nested per-dot scans is a trap, and `{ ...dot }` enumerates keys through it.
+        // At a few hundred live dots that is hundreds of thousands of trapped reads per frame.
+        // The loop never mutates a dot in place (it rebuilds via spreads), so this is safe.
+        set({ eventDots: updateFn(get().eventDots) });
       },
 
       removeDot: (dotId: string) => {
