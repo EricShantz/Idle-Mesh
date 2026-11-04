@@ -6,7 +6,7 @@ import { topicMatches, computeBroadenedTopic } from '../utils/topicMatching';
 import { normalizedSpeed } from '../utils/pathUtils';
 import { computeOrthogonalWaypoints } from '../utils/orthogonalPath';
 import { getSmoothedFps } from '../hooks/useGameLoop';
-import { getNodeHalfExtents } from './upgradeConfig';
+import { getNodeHalfExtents, WIN_THRESHOLD } from './upgradeConfig';
 import { prestigeNodes, isNodeAvailable, isNodePurchased, type PrestigeNode } from './prestigeUpgradeConfig';
 
 export type ComponentType = 'publisher' | 'webhook' | 'broker' | 'queue' | 'subscriber' | 'dmq';
@@ -141,6 +141,10 @@ export type GameState = {
   draggingNodeId: string | null;
   showPrestigeTree: boolean;
 
+  // End-game. `winSeen` persists (only a full wipe clears it); `showWinScreen` is transient.
+  winSeen: boolean;
+  showWinScreen: boolean;
+
   // Actions
   fireEvent: (publisherId: string) => void;
   consumeEvent: (dotId: string, value: number, subscriberId: string) => void;
@@ -177,8 +181,21 @@ export type GameState = {
   performPrestige: () => boolean;
   purchasePrestigeUpgrade: (upgradeKey: string) => boolean;
   setShowPrestigeTree: (show: boolean) => void;
+  dismissWinScreen: () => void;
   wipeSaveAndRestart: () => void;
 };
+
+// Run after every change to totalEarned (both earning paths): fires the prestige-available
+// tutorial at $1M and the end-game win screen at WIN_THRESHOLD. The win fires once per save;
+// `winSeen` survives prestige and only a full wipe clears it.
+function checkEarningMilestones(draft: GameState) {
+  if (draft.totalEarned >= 1_000_000 && !draft.tutorialsSeen['prestigeAvailable'] && !draft.activeTutorial) {
+    draft.activeTutorial = 'prestigeAvailable';
+  }
+  if (draft.totalEarned >= WIN_THRESHOLD && !draft.winSeen && !draft.showWinScreen) {
+    draft.showWinScreen = true;
+  }
+}
 
 // Permanent prestige speed multiplier (count of purchased speed nodes)
 function getPermanentSpeedMult(state: Pick<GameState, 'prestige'>): number {
@@ -588,6 +605,8 @@ export const useGameStore = create<GameState>()(
       draggingConnection: null,
       draggingNodeId: null,
       showPrestigeTree: false,
+      winSeen: saved?.winSeen ?? false,
+      showWinScreen: false,
 
       prestige: refundRemovedPrestigeNodes(migratePrestigeKeys(saved?.prestige ?? { points: 0, totalPoints: 0, count: 0, permanentUpgradeLevels: {} })),
 
@@ -871,9 +890,7 @@ export const useGameStore = create<GameState>()(
             }
           }
 
-          if (draft.totalEarned >= 1_000_000 && !draft.tutorialsSeen['prestigeAvailable'] && !draft.activeTutorial) {
-            draft.activeTutorial = 'prestigeAvailable';
-          }
+          checkEarningMilestones(draft);
 
           // Keep the 5s earnings window bounded here, in the same commit, rather than with a
           // separate store write per frame — and record one aggregated entry per batch.
@@ -926,9 +943,7 @@ export const useGameStore = create<GameState>()(
         set(draft => {
           draft.balance += amount;
           draft.totalEarned += amount;
-          if (draft.totalEarned >= 1_000_000 && !draft.tutorialsSeen['prestigeAvailable'] && !draft.activeTutorial) {
-            draft.activeTutorial = 'prestigeAvailable';
-          }
+          checkEarningMilestones(draft);
           draft.recentEarnings.push({ time: Date.now(), amount, count: 1 });
         });
       },
@@ -1539,6 +1554,13 @@ export const useGameStore = create<GameState>()(
         set(draft => { draft.showPrestigeTree = show; });
       },
 
+      dismissWinScreen: () => {
+        set(draft => {
+          draft.showWinScreen = false;
+          draft.winSeen = true;
+        });
+      },
+
       wipeSaveAndRestart: () => {
         // Suspend autosave first so a pending debounce timer or an unload-triggered
         // flush (reload() fires `pagehide`) can't rewrite the save after we clear it.
@@ -1583,7 +1605,7 @@ function flushSave() {
 }
 
 function buildSaveSnapshot(state: GameState): string {
-  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, activeTutorial: ________, showPrestigeTree: _________, ...toSave } = state;
+  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, activeTutorial: ________, showPrestigeTree: _________, showWinScreen: __________, ...toSave } = state;
   const data: Record<string, any> = {};
   for (const [key, val] of Object.entries(toSave)) {
     if (typeof val !== 'function') {

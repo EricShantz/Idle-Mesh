@@ -5,6 +5,7 @@ import { TutorialModal } from './components/TutorialModal';
 import { HelpButton } from './components/HelpButton';
 import { PrestigeTreePage } from './components/PrestigeTreePage';
 import { IntroSequence } from './components/IntroSequence';
+import { WinScreen } from './components/WinScreen';
 import { useGameLoop, useAutoPublisher } from './hooks/useGameLoop';
 import { useGameStore } from './store/gameStore';
 
@@ -39,6 +40,7 @@ function App() {
       <Sidebar />
       <TutorialModal />
       <HelpButton />
+      <WinScreen />
     </div>
   );
 }

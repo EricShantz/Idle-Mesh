@@ -99,7 +99,7 @@ export const tutorials: TutorialDef[] = [
   {
     key: 'prestigeAvailable',
     slides: [
-      { title: 'Schema Registry Available!', body: 'You\'ve earned enough to register your first schema! Open the Schema Registry in the sidebar to reset your progress in exchange for permanent upgrades that carry over between runs.', graphic: PrestigeTreeGraphic },
+      { title: 'Schema Registry Available!', body: 'You\'ve earned enough to register your first schema! Open the Schema Registry in the sidebar to reset your progress in exchange for permanent upgrades that carry over between runs. Those upgrades are how you\'ll climb faster next time — the goal is $1 billion earned in a single run.', graphic: PrestigeTreeGraphic },
     ],
   },
 ];

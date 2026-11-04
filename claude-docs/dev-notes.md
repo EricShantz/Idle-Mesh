@@ -31,13 +31,13 @@
 
 ## Draggable Connections
 - `draggingConnection` transient state tracks active drag (type, fromId, connectionId, mouseX, mouseY).
-- `MeshCanvas.tsx` handles pointer move/up for drop detection (bounding-box: 70px × 38px).
+- `MeshCanvas.tsx` handles pointer move/up for drop detection. The hit box is the target's `getNodeHalfExtents` footprint plus 10px on every side (so 70×38 half-extents for a normal card, 146×82 for a DMR cluster).
 - `ConnectionLine.tsx` hides itself during reassign drag and initiates detach on click.
 - `cancelDragConnection` deletes the connection when a reassign drag is dropped on nothing. Validation via `connectionRules.ts`.
 
 ## Connection Line Geometry
 - Orthogonal (Boomi-style) lines routed horizontal → vertical → horizontal with rounded 12px corners.
-- Port position = `from.x + halfW + 16` where halfW is 60 (120px nodes) or 70 (140px queue nodes).
+- Port position = `from.x + halfW + 16` where halfW comes from `getNodeHalfExtents()` in `upgradeConfig.ts`: 60 for every normal card (queues included — they render 120px wide like everything else), `CLUSTER_HALF_W` (136) for a DMR cluster. The DMQ's dynamic width is handled separately in `NodeCard`/`useGameLoop`. A stale queue-specific 70 lived here until 2026-11-04 and made broker→queue arrows stop 10px short of the card; don't reintroduce per-type widths outside that helper.
 - DMQ uses top-center port (`from.x, from.y - 28 - 16`) with vertical-first routing via `computeVerticalFirstWaypoints()`, terminating at broker's bottom edge (`to.x, to.y + 30`). Node-aware: detours around node bodies when the simple path would clip, descending on the broker-facing side of the DMQ and entering the broker from below.
 - All nodes use `minHeight: 56` and fixed `width` for consistent port alignment (DMQ width is dynamic: 120 + 40 * dmqWidthLevel).
 - **Node-aware routing**: `computeOrthogonalWaypoints()` in `orthogonalPath.ts` is the single source of truth for routing. It accepts optional `NodeBounds` for source and target nodes. When the midpoint vertical segment would clip through either node (e.g. nodes vertically aligned or target to the left), it routes a 6-point detour: right to clear source → vertically past source → left to clear target → vertically to target Y → right into target. Lines always exit right from the source port and enter left into the target.
@@ -133,8 +133,17 @@
 - **Queue Head Start** (`queueFreeQueue`) is granted by `grantHeadStartQueue(draft)`, which requires an actual `broker` (not a webhook — queues need a broker in normal play too). It runs from `applyPermanentStartBonuses` (reset / node purchase) and again from the `upgradeToBroker` branch of `upgradeComponent`, so a run without Broker Affinity gets its queue the moment the webhook is upgraded. If the broker feeds a subscriber directly (the starter chain), that link is replaced with broker → queue → subscriber, the queue is placed on the broker's row halfway to the subscriber (subscriber nudged right to keep a 400px gap), and the queue inherits the feeding publisher's topic (respecting a `queueBroaden` start level). No-ops if any queue already exists.
 - `showPrestigeTree` (transient, excluded from save) controls full-page tree view.
 
+## End Game (Win Screen)
+- Trigger: `checkEarningMilestones(draft)` in `gameStore.ts` runs after both earning paths (`consumeEvents`, `earn`). When `totalEarned >= WIN_THRESHOLD` (`upgradeConfig.ts`, $1B) and `!winSeen`, it sets `showWinScreen = true`. Because `performPrestige` zeroes `totalEarned`, progress toward the win resets every prestige — the design intent is that prestige upgrades make the next run's climb faster.
+- `winSeen` persists and survives prestige; only `wipeSaveAndRestart` clears it. So the screen fires once per save; later runs that re-cross $1B just turn the sidebar bar gold. `showWinScreen` is transient and excluded from the save snapshot so a reload mid-screen does not reopen it.
+- While `showWinScreen` is set, `useGameLoop` reschedules its RAF and returns before touching dots, and `useAutoPublisher` skips firing — the mesh freezes in place behind the overlay. dt is already clamped by `MAX_FRAME_DT_MS`, so dismissal resumes at normal pace.
+- `WinScreen.tsx`: z-index 80 (above tutorials at 60 and the intro at 70). Confetti is a hand-rolled canvas RAF: two corner cannons at mount + ~9s of rain, self-terminating when empty. Dave uses `PixelCharacter outfit="tux"` (top hat rows extend the SVG viewBox upward so bottom-anchored scaling still lines up) and `useTypewriter` from `hooks/useTypewriter.ts` (shared with the intro). "Start Over" reuses `wipeSaveAndRestart` after a confirm dialog cloned from the prestige tree's restart dialog.
+- `TutorialModal` renders Dave in the tux once `winSeen` is true.
+- The banner's "Lowest frame rate" stat comes from `getMinFps()` in `useGameLoop.ts`: the session-low of the smoothed FPS, ignoring the first 120 frames and any clamped frame (tab switch / hitch). Module-level, not saved, so it resets on reload.
+- Testing: the Stats-click easter egg in `Sidebar.tsx` earns $1B in one call, which trips the threshold immediately. Alternatively lower `WIN_THRESHOLD` temporarily.
+
 ## Prestige Tree
-- `prestigeUpgradeConfig.ts` defines 16 `PrestigeNode` entries with `key`, `cost`, `requires`, and grid `position`.
+- `prestigeUpgradeConfig.ts` defines 23 `PrestigeNode` entries with `key`, `cost`, `requires`, and grid `position` (5 global, 5 publisher, 4 broker, 4 queue, 5 subscriber). Removed nodes (e.g. the old Prefetch `queueBatchConsume`) are listed in `REMOVED_PRESTIGE_NODES` in `gameStore.ts` so existing saves get their points refunded on load.
 - Radial layout: center Income Boost with 4 arms. `isNodePurchased()` and `isNodeAvailable()` helpers check `permanentUpgradeLevels`.
 - `PrestigeTreePage.tsx` uses same `useViewportApi()` + `ViewportContext.Provider` pattern as `MeshCanvas`.
 

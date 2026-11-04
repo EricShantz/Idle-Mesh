@@ -1,51 +1,100 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTypewriter } from '../hooks/useTypewriter';
 
-// Legacy service boxes — dense, messy layout
+// Legacy service boxes — hand-scattered across a 1100×560 canvas, deliberately uneven
+// (loose clusters and gaps, nothing on a grid)
 const services = [
-  { label: 'Auth API',      x: 90,  y: 40  },
-  { label: 'Orders DB',     x: 560, y: 30  },
-  { label: 'Payment Svc',   x: 330, y: 130 },
-  { label: 'Email Svc',     x: 60,  y: 250 },
-  { label: 'User Svc',      x: 620, y: 220 },
-  { label: 'Inventory',     x: 180, y: 380 },
-  { label: 'Logging',       x: 500, y: 360 },
-  { label: 'Gateway',       x: 350, y: 10  },
-  { label: 'Notif Svc',     x: 710, y: 120 },
-  { label: 'Cache',         x: 10,  y: 140 },
-  { label: 'Analytics',     x: 450, y: 250 },
-  { label: 'Config Svc',    x: 200, y: 170 },
-  { label: 'Billing',       x: 680, y: 370 },
-  { label: 'Search API',    x: 100, y: 440 },
-  { label: 'Session Mgr',   x: 420, y: 430 },
+  { label: 'Auth API',      x: 40,   y: 35  },
+  { label: 'Gateway',       x: 255,  y: 10  },
+  { label: 'Orders DB',     x: 465,  y: 45  },
+  { label: 'Fraud Check',   x: 640,  y: 15  },
+  { label: 'Notif Svc',     x: 905,  y: 55  },
+  { label: 'Image CDN',     x: 1010, y: 5   },
+  { label: 'Cache',         x: 15,   y: 160 },
+  { label: 'Config Svc',    x: 190,  y: 125 },
+  { label: 'Payment Svc',   x: 380,  y: 140 },
+  { label: 'User Svc',      x: 735,  y: 115 },
+  { label: 'Rate Limiter',  x: 1000, y: 150 },
+  { label: 'Email Svc',     x: 95,   y: 260 },
+  { label: 'Analytics',     x: 545,  y: 230 },
+  { label: 'Feature Flags', x: 300,  y: 275 },
+  { label: 'Catalog',       x: 815,  y: 215 },
+  { label: 'Pricing',       x: 660,  y: 170 },
+  { label: 'Inventory',     x: 165,  y: 385 },
+  { label: 'Logging',       x: 650,  y: 340 },
+  { label: 'Billing',       x: 925,  y: 320 },
+  { label: 'Reviews',       x: 430,  y: 335 },
+  { label: 'Webhooks',      x: 1015, y: 260 },
+  { label: 'Search API',    x: 30,   y: 475 },
+  { label: 'Session Mgr',   x: 400,  y: 430 },
+  { label: 'Ledger',        x: 25,   y: 330 },
+  // Bottom-right corner is kept clear so Dave's speech bubble doesn't sit on top of boxes
+  { label: 'Shipping',      x: 840,  y: 395 },
+  { label: 'Audit Log',     x: 555,  y: 505 },
+  { label: 'Cron Jobs',     x: 270,  y: 520 },
+  { label: 'Reporting',     x: 640,  y: 470 },
+  { label: 'Metrics',       x: 250,  y: 350 },
+  { label: 'SMS Svc',       x: 1010, y: 365 },
+  { label: 'Warehouse',     x: 120,  y: 530 },
+  { label: 'Recommender',   x: 700,  y: 400 },
 ];
 
-// Tons of messy diagonal connections
-const wires: [number, number][] = [
-  [0, 1], [0, 2], [0, 3], [0, 7], [0, 9],
-  [1, 2], [1, 4], [1, 7], [1, 8],
-  [2, 3], [2, 4], [2, 5], [2, 6], [2, 10], [2, 11],
-  [3, 5], [3, 9], [3, 13],
-  [4, 6], [4, 8], [4, 10], [4, 12],
-  [5, 6], [5, 13], [5, 14],
-  [6, 7], [6, 10], [6, 12], [6, 14],
-  [7, 8], [7, 10],
-  [8, 4], [8, 12],
-  [9, 11], [9, 3],
-  [10, 11], [10, 14],
-  [11, 5], [11, 0],
-  [12, 14], [13, 14],
-];
+// Messy point-to-point connections. Generated deterministically (seeded LCG) so the intro
+// looks the same every load: each service calls a couple of random others, no duplicate pairs.
+function seededRandom(seed: number) {
+  let s = seed >>> 0;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
 
-// Which wires have failing dots
-const failingWires = new Set([3, 6, 9, 15, 18, 22, 27, 30, 35, 39]);
+const WIRES_PER_SERVICE = 2;
+const SECOND_WIRE_CHANCE = 0.7; // some services only make one call, trimming the total a little
+const FAILING_WIRE_RATIO = 0.32;
+// Prefer neighbours: wires longer than this are mostly rejected, so the centre of the canvas
+// isn't criss-crossed by edge-to-edge lines. A few long ones still get through.
+const MAX_WIRE_DIST = 400;
+const LONG_WIRE_CHANCE = 0.12;
+
+const { wires, failingWires } = (() => {
+  const rand = seededRandom(20240617);
+  const seen = new Set<string>();
+  const list: [number, number][] = [];
+  for (let a = 0; a < services.length; a++) {
+    const target = rand() < SECOND_WIRE_CHANCE ? WIRES_PER_SERVICE : WIRES_PER_SERVICE - 1;
+    let added = 0;
+    let guard = 0;
+    while (added < target && guard++ < 40) {
+      const b = Math.floor(rand() * services.length);
+      if (b === a) continue;
+      const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+      if (seen.has(key)) continue;
+      const dist = Math.hypot(services[a].x - services[b].x, services[a].y - services[b].y);
+      if (dist > MAX_WIRE_DIST && rand() >= LONG_WIRE_CHANCE) continue;
+      seen.add(key);
+      list.push([a, b]);
+      added++;
+    }
+  }
+  const failing = new Set<number>();
+  list.forEach((_, i) => { if (rand() < FAILING_WIRE_RATIO) failing.add(i); });
+  return { wires: list, failingWires: failing };
+})();
 
 const BOX_W = 82;
 const BOX_H = 28;
 
+// Tiling fractal-noise texture used at very low opacity to dither the vignette gradient.
+const NOISE_TEXTURE =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E" +
+  "%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E" +
+  "%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")";
+
 function SpaghettiDiagram() {
   return (
-    <svg viewBox="0 0 820 480" className="w-full h-full" style={{ maxWidth: 820, maxHeight: 480 }}>
+    <svg viewBox="0 0 1100 560" className="w-full h-full" style={{ maxWidth: 1280, maxHeight: 652 }}>
       {/* Wires */}
       {wires.map(([a, b], i) => {
         const sa = services[a], sb = services[b];
@@ -73,8 +122,11 @@ function SpaghettiDiagram() {
         const delay = (i % 7) * 0.3;
 
         if (failing) {
-          const midX = (x1 + x2) / 2;
-          const midY = (y1 + y2) / 2;
+          // Drop at a varying point along the wire, then fall away with a little drift
+          const t = 0.35 + (i % 4) * 0.1;
+          const midX = x1 + (x2 - x1) * t;
+          const midY = y1 + (y2 - y1) * t;
+          const drift = ((i % 3) - 1) * 12;
           return (
             <motion.circle
               key={`d${i}`}
@@ -82,8 +134,8 @@ function SpaghettiDiagram() {
               fill="#ef4444"
               initial={{ cx: x1, cy: y1, opacity: 0 }}
               animate={{
-                cx: [x1, midX, midX],
-                cy: [y1, midY, midY + 50],
+                cx: [x1, midX, midX + drift],
+                cy: [y1, midY, midY + 60],
                 opacity: [0, 1, 0],
               }}
               transition={{
@@ -136,8 +188,10 @@ function SpaghettiDiagram() {
         if (i >= wires.length) return null;
         const [a, b] = wires[i];
         const sa = services[a], sb = services[b];
-        const mx = (sa.x + sb.x + BOX_W) / 2;
-        const my = (sa.y + sb.y + BOX_H) / 2;
+        // Same drop point as the failing dot on this wire
+        const t = 0.35 + (i % 4) * 0.1;
+        const mx = sa.x + BOX_W / 2 + (sb.x - sa.x) * t;
+        const my = sa.y + BOX_H / 2 + (sb.y - sa.y) * t;
         return (
           <motion.text
             key={`x${i}`}
@@ -157,16 +211,41 @@ function SpaghettiDiagram() {
 
 // Pixel art developer character (32px style, SVG rects)
 const PX = 4;
-export function PixelCharacter({ frustrated }: { frustrated: boolean }) {
+// Rows the top hat adds above the head in the tux outfit. The viewBox origin moves up by
+// this much so the body stays put and callers that scale from the bottom edge still line up.
+const HAT_ROWS = 3;
+export type PixelOutfit = 'hoodie' | 'tux';
+export function PixelCharacter({ frustrated, outfit = 'hoodie' }: { frustrated: boolean; outfit?: PixelOutfit }) {
+  const tux = outfit === 'tux';
   const skin = '#fbbf24';
   const hair = '#92400e';
-  const hoodie = '#3b82f6';
-  const hoodieShade = '#2563eb';
-  const pants = '#374151';
+  const hoodie = tux ? '#0f172a' : '#3b82f6';
+  const hoodieShade = tux ? '#1e293b' : '#2563eb';
+  const pants = tux ? '#0f172a' : '#374151';
   const eye = '#1e293b';
+  const monocle = '#b45309'; // dark brass — must stay distinct from the skin tone
+  const topRows = tux ? HAT_ROWS : 0;
 
   return (
-    <svg width={10 * PX} height={16 * PX} viewBox={`0 0 ${10 * PX} ${16 * PX}`}>
+    <svg
+      width={10 * PX}
+      height={(16 + topRows) * PX}
+      viewBox={`0 ${-topRows * PX} ${10 * PX} ${(16 + topRows) * PX}`}
+    >
+      {/* Top hat (tux only): crown with a red band, wide brim resting on the hair */}
+      {tux && (
+        <>
+          {[[3,-3],[4,-3],[5,-3],[6,-3]].map(([x,y],i) =>
+            <rect key={`hc${i}`} x={x*PX} y={y*PX} width={PX} height={PX} fill="#0f172a" />
+          )}
+          {[[3,-2],[4,-2],[5,-2],[6,-2]].map(([x,y],i) =>
+            <rect key={`hb${i}`} x={x*PX} y={y*PX} width={PX} height={PX} fill="#b91c1c" />
+          )}
+          {[[2,-1],[3,-1],[4,-1],[5,-1],[6,-1],[7,-1]].map(([x,y],i) =>
+            <rect key={`hr${i}`} x={x*PX} y={y*PX} width={PX} height={PX} fill="#0f172a" />
+          )}
+        </>
+      )}
       {/* Hair */}
       {[[3,0],[4,0],[5,0],[6,0],[2,1],[3,1],[4,1],[5,1],[6,1],[7,1]].map(([x,y],i) =>
         <rect key={`h${i}`} x={x*PX} y={y*PX} width={PX} height={PX} fill={hair} />
@@ -202,6 +281,19 @@ export function PixelCharacter({ frustrated }: { frustrated: boolean }) {
       ].map(([x,y],i) =>
         <rect key={`b${i}`} x={x*PX} y={y*PX} width={PX} height={PX} fill={y >= 8 ? hoodieShade : hoodie} />
       )}
+      {/* Tux details: white shirt front, red bow tie, monocle on the right eye */}
+      {tux && (
+        <>
+          {[[4,6],[5,6],[4,7],[5,7]].map(([x,y],i) =>
+            <rect key={`s${i}`} x={x*PX} y={y*PX} width={PX} height={PX} fill="#f8fafc" />
+          )}
+          <rect x={4*PX} y={5*PX} width={PX} height={PX} fill="#dc2626" />
+          <rect x={5*PX} y={5*PX} width={PX} height={PX} fill="#dc2626" />
+          <rect x={4.75*PX} y={5.25*PX} width={PX*0.5} height={PX*0.5} fill="#7f1d1d" />
+          <circle cx={6.5*PX} cy={3.5*PX} r={PX*0.95} fill="none" stroke={monocle} strokeWidth={1.4} />
+          <line x1={7.3*PX} y1={4.2*PX} x2={8.2*PX} y2={6*PX} stroke={monocle} strokeWidth={0.9} />
+        </>
+      )}
       {/* Arms */}
       {[[0,6],[0,7],[9,6],[9,7]].map(([x,y],i) =>
         <rect key={`a${i}`} x={x*PX} y={y*PX} width={PX} height={PX} fill={skin} />
@@ -224,27 +316,10 @@ const SPEECH_LINES = [
   "Point-to-point connections everywhere. If one service goes down, it takes half the system with it!",
   "No buffering, no retry logic, no fault tolerance. Events just get lost when things go wrong.",
   "That's it! I'm going to rebuild this using Event-Driven Architecture!",
+  "...and I'm going to make a BILLION dollars doing it!",
 ];
-
-// Typewriter hook
-function useTypewriter(text: string, active: boolean, speed = 25) {
-  const [displayed, setDisplayed] = useState('');
-  const indexRef = useRef(0);
-
-  useEffect(() => {
-    if (!active) { setDisplayed(''); indexRef.current = 0; return; }
-    indexRef.current = 0;
-    setDisplayed('');
-    const id = setInterval(() => {
-      indexRef.current++;
-      setDisplayed(text.slice(0, indexRef.current));
-      if (indexRef.current >= text.length) clearInterval(id);
-    }, speed);
-    return () => clearInterval(id);
-  }, [active, text, speed]);
-
-  return displayed;
-}
+// Lines before this index use the frustrated expression
+const FRUSTRATED_LINE_COUNT = 3;
 
 export function IntroSequence({ onComplete }: { onComplete: () => void }) {
   // phase 0 = spaghetti fades in, 1 = character appears, 2 = dialogue
@@ -268,7 +343,7 @@ export function IntroSequence({ onComplete }: { onComplete: () => void }) {
   const isTyping = phase >= 2;
   const typedText = useTypewriter(SPEECH_LINES[lineIndex], isTyping, 25);
   const lineComplete = typedText.length >= SPEECH_LINES[lineIndex].length;
-  const isFrustrated = lineIndex < SPEECH_LINES.length - 1;
+  const isFrustrated = lineIndex < FRUSTRATED_LINE_COUNT;
   const isLastLine = lineIndex === SPEECH_LINES.length - 1;
 
   const handleNext = () => {
@@ -293,26 +368,34 @@ export function IntroSequence({ onComplete }: { onComplete: () => void }) {
         Skip &rsaquo;
       </div>
 
-      {/* Red pulsing vignette */}
+      {/* Red pulsing vignette. Eased stops keep the per-band alpha step small, and the noise
+          layer below dithers what's left — a single linear stop on a near-black background
+          quantises into visible concentric ovals. */}
       <motion.div
         className="absolute inset-0 pointer-events-none"
         style={{
-          background: 'radial-gradient(ellipse at center, transparent 30%, rgba(127,29,29,0.5) 100%)',
+          background:
+            'radial-gradient(ellipse at center, transparent 25%, rgba(127,29,29,0.06) 40%, ' +
+            'rgba(127,29,29,0.16) 55%, rgba(127,29,29,0.3) 70%, rgba(127,29,29,0.45) 85%, rgba(127,29,29,0.55) 100%)',
         }}
         animate={{
-          opacity: phase >= 1 ? [0.4, 1, 0.4] : 0.2,
+          opacity: phase >= 1 ? [0.5, 0.95, 0.5] : 0.25,
         }}
         transition={{
-          duration: 1.2,
+          duration: 1.4,
           repeat: Infinity,
           ease: 'easeInOut',
         }}
+      />
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{ backgroundImage: NOISE_TEXTURE, opacity: 0.045, mixBlendMode: 'overlay' }}
       />
 
       {/* Spaghetti diagram */}
       <motion.div
         className="relative"
-        style={{ width: '85%', maxWidth: 820 }}
+        style={{ width: '94%', maxWidth: 1280, marginBottom: 70 }} // sit a little above Dave's bubble
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 1.5 }}

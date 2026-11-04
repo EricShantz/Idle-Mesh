@@ -7,6 +7,8 @@ import { PixelCharacter } from './IntroSequence';
 export function TutorialModal() {
   const activeTutorial = useGameStore(s => s.activeTutorial);
   const dismissTutorial = useGameStore(s => s.dismissTutorial);
+  // Once the player has hit the billion, Dave keeps the tux.
+  const winSeen = useGameStore(s => s.winSeen);
   const [slideIndex, setSlideIndex] = useState(0);
 
   useEffect(() => { setSlideIndex(0); }, [activeTutorial]);
@@ -117,7 +119,7 @@ export function TutorialModal() {
 
           {/* Dave */}
           <div className="flex-shrink-0" style={{ transform: 'scale(2.5)', transformOrigin: 'bottom right' }}>
-            <PixelCharacter frustrated={false} />
+            <PixelCharacter frustrated={false} outfit={winSeen ? 'tux' : 'hoodie'} />
           </div>
         </motion.div>
       </motion.div>

@@ -8,6 +8,9 @@ export type UpgradeDef = {
   hidden?: boolean;
 };
 
+// End-game: reaching this much earned in a single run (resets on prestige) wins the game.
+export const WIN_THRESHOLD = 1_000_000_000;
+
 export const publisherUpgrades: UpgradeDef[] = [
   {
     key: 'eventValue',
