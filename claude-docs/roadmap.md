@@ -18,6 +18,7 @@
 - [x] Collapsible Sidebar Sections
 - [x] Publisher Network Tier (each publisher purchased raises its own base event value by 10% over the previous one, by purchase order; capped at 24 publishers total)
 - [x] Broker Bridge Value Bonus (events crossing a broker-to-broker bridge earn +50% value and render as gold dots once they exit the broker they bridge from)
+- [x] Queue Value Bonus (events routed through a queue earn +5% value, stacking with the bridge bonus)
 
 ---
 

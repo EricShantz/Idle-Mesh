@@ -114,6 +114,7 @@ const componentDetails: ComponentDetail[] = [
       'If the queue is full, new events are dropped',
       'Topic filter determines which events the queue accepts from the broker',
       'Fan-out mode sends every event to ALL connected subscribers instead of just one',
+      'Every event that passes through a queue on its way to a subscriber earns +5% value',
     ],
     upgrades: [
       { name: 'Add Subscriber Slot', effect: 'Connect one more subscriber to this queue' },
@@ -125,6 +126,7 @@ const componentDetails: ComponentDetail[] = [
       'Fan-out is extremely powerful — each extra subscriber multiplies your income from that queue',
       'Broaden subscription early so your queue accepts events from multiple publishers',
       'Queue size prevents drops during traffic spikes — upgrade it if you see events falling',
+      'Routing events through a queue instead of straight to a subscriber pays out more — it\'s not just about reliability',
     ],
   },
   {

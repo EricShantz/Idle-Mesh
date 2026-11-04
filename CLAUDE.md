@@ -58,6 +58,7 @@ src/
 9. Prestige ("Schema Registry") for permanent upgrades — scaling cost: Nth point costs $N million (triangular)
 10. Publisher network tier: each publisher purchased (beyond the starter) permanently raises its own base event value by another 10% over the previous one, assigned by purchase order. Publisher purchases are capped at 24 (one per unique topic in the pool)
 11. Broker bridge bonus: events whose route crosses a broker-to-broker bridge connection earn +50% value and render as gold dots once they exit the broker they bridge from
+12. Queue value bonus: any event that passes through a queue on its way to a subscriber earns +5% value
 
 ## Key Conventions
 
