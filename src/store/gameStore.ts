@@ -925,6 +925,9 @@ export const useGameStore = create<GameState>()(
             // apply) — it just relabels and unlocks uncapped throughput via slot upgrades.
             if (upgradeKey === 'upgradeToCluster' && comp.type === 'broker') {
               comp.label = 'DMR Cluster';
+              if (!draft.tutorialsSeen['dmrCluster']) {
+                draft.activeTutorial = 'dmrCluster';
+              }
             }
             // Tutorial for first fan-out purchase
             if (upgradeKey === 'fanOut' && !draft.tutorialsSeen['firstFanOut']) {

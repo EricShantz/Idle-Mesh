@@ -1038,3 +1038,243 @@ export function PrestigeTreeGraphic() {
     </svg>
   );
 }
+
+/* ── DMR Cluster ── */
+/**
+ * One shared 7.2s cycle:
+ *   0.0–2.6s  a lone broker at center; its throughput meter climbs green → amber → red
+ *             as dots stream in; once red, arriving dots are rejected and fall.
+ *   2.6–3.2s  the broker slides into the top-left slot of a 2x2 grid, a dashed
+ *             "DMR Cluster" frame draws around it and three more slots appear
+ *             (one solid, two dashed/unpurchased).
+ *   3.2–6.7s  dots zip through the cluster at 2.5x speed; meters fill in order —
+ *             slot 1 fills, then spills into slot 2; slot 3 is "purchased" mid-cycle
+ *             and starts filling too. Nothing drops.
+ *   6.7–7.2s  fade out, reset.
+ */
+export function DmrClusterGraphic() {
+  const D = 7.2;
+  const t = (s: number) => s / D;
+  const nW = 72, nH = 40;
+  const y = H / 2;
+  const loneX = W / 2;
+  const loneLeft = loneX - nW / 2;
+
+  // Cluster layout: 2x2 grid of full-size broker cards, gap 8, frame padding 8
+  const gap = 8, pad = 8;
+  const colX = [loneX - nW / 2 - gap / 2, loneX + nW / 2 + gap / 2]; // card centers
+  const rowY = [y - nH / 2 - gap / 2, y + nH / 2 + gap / 2];
+  const frameX = colX[0] - nW / 2 - pad, frameW = nW * 2 + gap + pad * 2;
+  const frameY = rowY[0] - nH / 2 - pad, frameH = nH * 2 + gap + pad * 2;
+  const frameRight = frameX + frameW;
+
+  const tStart = 2.6, tEnd = 3.2; // transform window
+  const dx = colX[0] - loneX, dy = rowY[0] - y;
+
+  const meterColor = (v: number) => (v > 0.9 ? '#ef4444' : v > 0.7 ? '#f59e0b' : '#22c55e');
+  const meterW = 52;
+
+  /** Meter track + fill whose value follows (seconds, value) keyframes. */
+  const meter = (cx: number, cy: number, keys: [number, number][]) => {
+    const times = keys.map(([s]) => t(s));
+    const widths = keys.map(([, v]) => Math.max(0.01, v * meterW));
+    const fills = keys.map(([, v]) => meterColor(v));
+    return (
+      <g>
+        <rect x={cx - meterW / 2} y={cy + 8} width={meterW} height={3} rx={1.5} fill="#1e293b" />
+        <motion.rect
+          x={cx - meterW / 2} y={cy + 8} height={3} rx={1.5}
+          animate={{ width: widths, fill: fills }}
+          transition={{ duration: D, repeat: Infinity, ease: 'linear', times }}
+        />
+      </g>
+    );
+  };
+
+  // Phase A — dots that pass straight through the lone broker
+  const passDots = [0.1, 0.5, 0.9, 1.3];
+  // Phase A — dots that arrive once the meter is red and get rejected
+  const dropDots = [1.75, 2.1, 2.4];
+  // Phase C — dots that cross the cluster (fast inside the frame)
+  const clusterDots = Array.from({ length: 9 }, (_, k) => 3.3 + k * 0.3);
+
+  const dimBorder = C.broker.border + '55';
+
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderRadius: 8, background: C.bg }}>
+      <defs>
+        <linearGradient id="dmr-fade-left" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor={C.bg} stopOpacity="1" />
+          <stop offset="100%" stopColor={C.bg} stopOpacity="0" />
+        </linearGradient>
+        <linearGradient id="dmr-fade-right" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor={C.bg} stopOpacity="0" />
+          <stop offset="100%" stopColor={C.bg} stopOpacity="1" />
+        </linearGradient>
+      </defs>
+
+      <motion.g
+        animate={{ opacity: [0, 1, 1, 0, 0] }}
+        transition={{ duration: D, repeat: Infinity, ease: 'linear', times: [0, t(0.25), t(6.7), t(7.0), 1] }}
+      >
+        {/* Through-line (hidden under the node / frame) */}
+        <line x1={0} y1={y} x2={W} y2={y} stroke={C.line} strokeWidth={1.5} strokeDasharray="4 3" />
+        <rect x={0} y={0} width={60} height={H} fill="url(#dmr-fade-left)" />
+        <rect x={W - 60} y={0} width={60} height={H} fill="url(#dmr-fade-right)" />
+
+        {/* Opaque frame background — appears during the transform, hides the wire inside */}
+        <motion.rect
+          x={frameX} y={frameY} width={frameW} height={frameH} rx={10}
+          fill={C.bg}
+          animate={{ opacity: [0, 0, 1, 1] }}
+          transition={{ duration: D, repeat: Infinity, ease: 'linear', times: [0, t(tStart), t(tStart + 0.15), 1] }}
+        />
+
+        {/* Phase A: pass-through dots */}
+        {passDots.map((s, i) => (
+          <motion.circle
+            key={`pass-${i}`} r={3} fill={C.dot} filter={`drop-shadow(0 0 4px ${C.dotGlow})`}
+            cy={y}
+            animate={{ cx: [20, 20, W - 20, W - 20], opacity: [0, 1, 1, 0] }}
+            transition={{ duration: D, repeat: Infinity, ease: 'linear', times: [0, t(s), t(s + 1.3), t(s + 1.31)] }}
+          />
+        ))}
+
+        {/* Phase A: rejected dots — reach the broker, flash red, fall */}
+        {dropDots.map((s, i) => (
+          <motion.circle
+            key={`drop-${i}`} r={3} filter={`drop-shadow(0 0 4px ${C.dotGlow})`}
+            animate={{
+              cx: [20, 20, loneLeft, loneLeft, loneLeft + 4, loneLeft + 8, loneLeft + 8],
+              cy: [y, y, y, y, y + 40, y + 75, y + 75],
+              fill: [C.dot, C.dot, C.dot, '#ff4444', '#ff4444', '#ff4444', '#ff4444'],
+              opacity: [0, 1, 1, 1, 0.7, 0, 0],
+            }}
+            transition={{
+              duration: D, repeat: Infinity, ease: 'linear',
+              times: [0, t(s), t(s + 0.5), t(s + 0.52), t(s + 0.8), t(s + 1.05), 1],
+            }}
+          />
+        ))}
+
+        {/* Phase A: ✕ flashes beside the broker on each rejection */}
+        {dropDots.map((s, i) => (
+          <motion.text
+            key={`x-${i}`} x={loneLeft} textAnchor="middle" fill="#ff4444" fontSize={14} fontWeight="800"
+            animate={{ y: [y - 12, y - 12, y - 12, y - 24, y - 24], opacity: [0, 0, 1, 0, 0] }}
+            transition={{ duration: D, repeat: Infinity, ease: 'easeOut', times: [0, t(s + 0.5), t(s + 0.52), t(s + 0.9), 1] }}
+          >
+            ✕
+          </motion.text>
+        ))}
+
+        {/* Phase C: dots cross the cluster — normal speed outside, 2.5x inside the frame */}
+        {clusterDots.map((s, i) => (
+          <motion.circle
+            key={`fast-${i}`} r={3} fill={C.dot} filter={`drop-shadow(0 0 4px ${C.dotGlow})`}
+            cy={y}
+            animate={{
+              cx: [20, 20, frameX, frameRight, W - 20, W - 20],
+              opacity: [0, 1, 1, 1, 1, 0],
+            }}
+            transition={{
+              duration: D, repeat: Infinity, ease: 'linear',
+              times: [0, t(s), t(s + 0.4), t(s + 0.65), t(s + 1.05), t(s + 1.06)],
+            }}
+          />
+        ))}
+
+        {/* The original broker: lone at center, then slides into slot 1 of the grid */}
+        <motion.g
+          animate={{ x: [0, 0, dx, dx], y: [0, 0, dy, dy] }}
+          transition={{ duration: D, repeat: Infinity, ease: 'easeInOut', times: [0, t(tStart), t(tEnd), 1] }}
+        >
+          <rect
+            x={loneX - nW / 2} y={y - nH / 2} width={nW} height={nH} rx={6}
+            fill={C.broker.bg} stroke={C.broker.border} strokeWidth={1.5}
+            filter={`drop-shadow(0 0 6px ${C.broker.glow})`}
+          />
+          <text x={loneX} y={y + 1} textAnchor="middle" fill={C.broker.border} fontSize={11} fontWeight="600">Broker</text>
+          {meter(loneX, y, [
+            [0, 0], [0.2, 0], [1.1, 0.72], [1.4, 0.92], [1.6, 1], [tStart, 1], [tEnd, 0],
+            [3.3, 0], [4.2, 1], [6.7, 1], [D, 1],
+          ])}
+        </motion.g>
+
+        {/* Slot 2: solid, appears during the transform, fills after slot 1 */}
+        <motion.g
+          style={{ transformOrigin: `${colX[1]}px ${rowY[0]}px` }}
+          animate={{ opacity: [0, 0, 1, 1], scale: [0.7, 0.7, 1, 1] }}
+          transition={{ duration: D, repeat: Infinity, ease: 'easeOut', times: [0, t(tStart + 0.2), t(tEnd), 1] }}
+        >
+          <rect
+            x={colX[1] - nW / 2} y={rowY[0] - nH / 2} width={nW} height={nH} rx={6}
+            fill={C.broker.bg} stroke={C.broker.border} strokeWidth={1.5}
+            filter={`drop-shadow(0 0 6px ${C.broker.glow})`}
+          />
+          <text x={colX[1]} y={rowY[0] + 1} textAnchor="middle" fill={C.broker.border} fontSize={11} fontWeight="600">Broker</text>
+          {meter(colX[1], rowY[0], [[0, 0], [4.2, 0], [5.2, 1], [D, 1]])}
+        </motion.g>
+
+        {/* Slot 3: dashed/unpurchased at first, "purchased" at 5.0s (pops solid) and starts filling */}
+        <motion.g
+          style={{ transformOrigin: `${colX[0]}px ${rowY[1]}px` }}
+          animate={{ opacity: [0, 0, 1, 1, 1, 1, 1], scale: [0.7, 0.7, 1, 1, 1.08, 1, 1] }}
+          transition={{ duration: D, repeat: Infinity, ease: 'easeOut', times: [0, t(tStart + 0.3), t(tEnd), t(5.0), t(5.12), t(5.25), 1] }}
+        >
+          <motion.rect
+            x={colX[0] - nW / 2} y={rowY[1] - nH / 2} width={nW} height={nH} rx={6}
+            strokeWidth={1.5}
+            animate={{
+              fill: ['rgba(67,20,7,0)', 'rgba(67,20,7,0)', C.broker.bg, C.broker.bg],
+              stroke: [dimBorder, dimBorder, C.broker.border, C.broker.border],
+              strokeDasharray: ['4 3', '4 3', '0 0', '0 0'],
+            }}
+            transition={{ duration: D, repeat: Infinity, ease: 'linear', times: [0, t(5.0), t(5.12), 1] }}
+          />
+          <motion.text
+            x={colX[0]} y={rowY[1] + 1} textAnchor="middle" fontSize={11} fontWeight="600"
+            animate={{ fill: [dimBorder, dimBorder, C.broker.border, C.broker.border] }}
+            transition={{ duration: D, repeat: Infinity, ease: 'linear', times: [0, t(5.0), t(5.12), 1] }}
+          >
+            Broker
+          </motion.text>
+          <motion.g
+            animate={{ opacity: [0, 0, 1, 1] }}
+            transition={{ duration: D, repeat: Infinity, ease: 'linear', times: [0, t(5.0), t(5.12), 1] }}
+          >
+            {meter(colX[0], rowY[1], [[0, 0], [5.3, 0], [6.4, 0.55], [D, 0.55]])}
+          </motion.g>
+        </motion.g>
+
+        {/* Slot 4: dashed/unpurchased for the whole cycle */}
+        <motion.g
+          style={{ transformOrigin: `${colX[1]}px ${rowY[1]}px` }}
+          animate={{ opacity: [0, 0, 0.6, 0.6], scale: [0.7, 0.7, 1, 1] }}
+          transition={{ duration: D, repeat: Infinity, ease: 'easeOut', times: [0, t(tStart + 0.4), t(tEnd + 0.1), 1] }}
+        >
+          <rect
+            x={colX[1] - nW / 2} y={rowY[1] - nH / 2} width={nW} height={nH} rx={6}
+            fill="none" stroke={dimBorder} strokeWidth={1.5} strokeDasharray="4 3"
+          />
+          <text x={colX[1]} y={rowY[1] + 4} textAnchor="middle" fill={dimBorder} fontSize={11} fontWeight="600">Broker</text>
+        </motion.g>
+
+        {/* Dashed cluster outline + label — drawn after the cards, like the game's frame */}
+        <motion.rect
+          x={frameX} y={frameY} width={frameW} height={frameH} rx={10}
+          fill="none" stroke={C.broker.border + '99'} strokeWidth={1.5} strokeDasharray="5 3"
+          animate={{ opacity: [0, 0, 1, 1] }}
+          transition={{ duration: D, repeat: Infinity, ease: 'easeInOut', times: [0, t(tStart), t(tEnd + 0.1), 1] }}
+        />
+        <motion.text
+          x={frameX + 4} y={frameY - 5} fill={C.broker.border + 'cc'} fontSize={8} fontFamily="monospace" letterSpacing={0.5}
+          animate={{ opacity: [0, 0, 1, 1] }}
+          transition={{ duration: D, repeat: Infinity, ease: 'linear', times: [0, t(tEnd), t(tEnd + 0.2), 1] }}
+        >
+          DMR Cluster
+        </motion.text>
+      </motion.g>
+    </svg>
+  );
+}
