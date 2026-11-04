@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect, useMemo, useSyncExternalStore } from 'react';
+import { memo, useState, useRef, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { motion } from 'framer-motion';
-import { type GameComponent, useGameStore, getPermanentQueueBufferBonus, getPermanentBrokerThroughputMult } from '../store/gameStore';
+import { type GameComponent, type EventDot, useGameStore, getPermanentQueueBufferBonus, getPermanentBrokerThroughputMult } from '../store/gameStore';
 import { interpolatePath } from '../utils/pathUtils';
 import { getBrokerUtilization } from '../hooks/useGameLoop';
 import {
@@ -48,18 +48,32 @@ type Props = {
   component: GameComponent;
 };
 
-export function NodeCard({ component }: Props) {
+const NO_DOTS: EventDot[] = [];
+
+function NodeCardInner({ component }: Props) {
   const fireEvent = useGameStore(s => s.fireEvent);
   const selectNode = useGameStore(s => s.selectNode);
   const selectedNodeId = useGameStore(s => s.selectedNodeId);
-  const balance = useGameStore(s => s.balance);
-  const costReduction = useGameStore(s => {
+  // Select the derived count rather than `balance` — balance changes every frame at any
+  // real throughput, which would re-render every card every frame just to recompute this.
+  const affordableUpgradeCount = useGameStore(s => {
     const p = s.prestige.permanentUpgradeLevels;
-    const permCost = (p['globalCostRed'] ?? 0) > 0 ? 0.10 : 0;
-    return s.upgrades.costReduction + permCost;
+    const costReduction = s.upgrades.costReduction + ((p['globalCostRed'] ?? 0) > 0 ? 0.10 : 0);
+    let count = 0;
+    for (const def of getUpgradesForType(component.type)) {
+      if (!isUpgradeVisible(def, component)) continue;
+      const level = component.upgrades[def.key] ?? 0;
+      const effectiveMax = getEffectiveMaxLevel(def, component.upgrades);
+      if (effectiveMax && level >= effectiveMax) continue; // maxed out
+      if (s.balance >= getEffectiveUpgradeCost(def, level, costReduction, component.upgrades)) count++;
+    }
+    return count;
   });
   const moveComponent = useGameStore(s => s.moveComponent);
-  const eventDots = useGameStore(s => s.eventDots);
+  // Only webhook (transit animation), queue and DMQ (slot dots) render anything from the
+  // live dot list; every other card would otherwise re-render on every frame for nothing.
+  const needsLiveDots = component.type === 'webhook' || component.type === 'queue' || component.type === 'dmq';
+  const eventDots = useGameStore(s => (needsLiveDots ? s.eventDots : NO_DOTS));
   const draggingConnection = useGameStore(s => s.draggingConnection);
   const startDragConnection = useGameStore(s => s.startDragConnection);
   const setDraggingNodeId = useGameStore(s => s.setDraggingNodeId);
@@ -87,13 +101,12 @@ export function NodeCard({ component }: Props) {
   const moveRaf = useRef(0);
 
   // Publisher cooldown overlay
-  const publisherCooldowns = useGameStore(s => s.publisherCooldowns);
+  const lastFire = useGameStore(s => s.publisherCooldowns[component.id] ?? 0);
   const [cooldownPct, setCooldownPct] = useState(0);
   const cooldownRaf = useRef<number>(0);
 
   useEffect(() => {
     if (!isPublisher) return;
-    const lastFire = publisherCooldowns[component.id] ?? 0;
     if (lastFire === 0) return;
 
     const publishSpeedLevel = component.upgrades['publishSpeed'] ?? 0;
@@ -114,7 +127,7 @@ export function NodeCard({ component }: Props) {
     };
     cooldownRaf.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(cooldownRaf.current);
-  }, [isPublisher, publisherCooldowns[component.id], component.upgrades]);
+  }, [isPublisher, lastFire, component.upgrades]);
 
   // Subscriber consume cooldown overlay
   const [subscriberCooldownPct, setSubscriberCooldownPct] = useState(0);
@@ -165,16 +178,6 @@ export function NodeCard({ component }: Props) {
     subscriberCooldownRaf.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(subscriberCooldownRaf.current);
   }, [isSubscriber, component.x, component.y, component.upgrades]);
-
-  // Count affordable upgrades
-  const upgrades = getUpgradesForType(component.type).filter(d => isUpgradeVisible(d, component));
-  const affordableUpgradeCount = upgrades.filter(def => {
-    const level = component.upgrades[def.key] ?? 0;
-    const effectiveMax = getEffectiveMaxLevel(def, component.upgrades);
-    if (effectiveMax && level >= effectiveMax) return false; // maxed out
-    const cost = getEffectiveUpgradeCost(def, level, costReduction, component.upgrades);
-    return balance >= cost;
-  }).length;
 
 
   // Connection port visibility
@@ -734,3 +737,8 @@ export function NodeCard({ component }: Props) {
     </div>
   );
 }
+
+// Memoized so MeshCanvas re-rendering (it subscribes to coinPops, which change constantly at
+// high throughput) doesn't cascade into every card. A card's `component` prop keeps the same
+// reference until that specific component actually changes (immer structural sharing).
+export const NodeCard = memo(NodeCardInner);

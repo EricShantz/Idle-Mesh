@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useGameStore, getPermanentShopDiscount } from '../store/gameStore';
 import { globalUpgrades, getUpgradeCost } from '../store/upgradeConfig';
+import { getSmoothedFps } from '../hooks/useGameLoop';
 import { TOPIC_POOL } from '../store/topicPool';
 import { formatMoney } from '../utils/formatMoney';
 import { PrestigePanel } from './PrestigePanel';
@@ -117,7 +118,14 @@ export function Sidebar() {
   const earningsPerSec = recent.length > 0
     ? recent.reduce((sum, e) => sum + e.amount, 0) / 5
     : 0;
-  const eventsPerSec = recent.length > 0 ? recent.length / 5 : 0;
+  const eventsPerSec = recent.length > 0 ? recent.reduce((sum, e) => sum + e.count, 0) / 5 : 0;
+  // Sampled once a second rather than read every render — the sidebar re-renders every frame
+  // (balance ticks), and a value that changes 60 times a second isn't readable.
+  const [fps, setFps] = useState(() => Math.round(getSmoothedFps()));
+  useEffect(() => {
+    const timer = setInterval(() => setFps(Math.round(getSmoothedFps())), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const handleGlobalUpgrade = (key: string, cost: number) => {
     if (spend(cost)) {
@@ -230,6 +238,8 @@ export function Sidebar() {
           <span className="text-cyan-400 text-right">{formatMoney(earningsPerSec)}</span>
           <span className="text-gray-500">Mesh size</span>
           <span className="text-gray-300 text-right">{components.length}</span>
+          <span className="text-gray-500">Frame rate</span>
+          <span className={`text-right ${fps >= 50 ? 'text-gray-300' : fps >= 30 ? 'text-amber-400' : 'text-red-400'}`}>{fps} fps</span>
         </div>
       </div>
 

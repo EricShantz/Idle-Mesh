@@ -15,6 +15,7 @@ import {
   FanOutGraphic,
   PrestigeTreeGraphic,
   ConnectionManageGraphic,
+  DmrClusterGraphic,
 } from '../components/TutorialGraphics';
 
 export type TutorialSlide = {
@@ -86,6 +87,13 @@ export const tutorials: TutorialDef[] = [
     key: 'firstBroker',
     slides: [
       { title: 'Additional Broker!', body: 'Bridge brokers together to create a full event mesh. Use the bridge slot upgrade to connect brokers and route events across multiple paths. Any event that crosses a bridge turns gold and earns +50% value!', graphic: MultiBrokerGraphic },
+    ],
+  },
+  {
+    key: 'dmrCluster',
+    slides: [
+      { title: 'DMR Cluster Online!', body: 'Your broker hit its throughput ceiling — so it\'s now a cluster of brokers working together. Events fill one broker, then spill over into the next, so the whole cluster shares the load and nothing has to drop.', graphic: DmrClusterGraphic },
+      { title: 'Scale It Up', body: 'The cluster starts with 2 brokers. Buy "Add Cluster Slot" to light up the remaining slots (up to 4), and keep buying "Increase Throughput" — it no longer has a max level. Every connection and bridge works exactly as before.', graphic: DmrClusterGraphic },
     ],
   },
   {

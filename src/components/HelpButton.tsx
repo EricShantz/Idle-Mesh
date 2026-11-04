@@ -12,6 +12,7 @@ import {
   DmqGraphic,
   MultiSubscriberGraphic,
   WebhookFlowGraphic,
+  DmrClusterGraphic,
 } from './TutorialGraphics';
 
 type ComponentDetail = {
@@ -86,19 +87,48 @@ const componentDetails: ComponentDetail[] = [
       'Routes events to connected queues based on topic matching',
       'Fans out to ALL matching queues — every connected queue with a matching topic gets a copy',
       'Has a throughput limit (events/sec) — excess events are dropped',
+      'Every broker an event passes through counts it against its own limit — bridging through a second broker is real work, not a free pass',
       'Can bridge to other brokers to create a wider event mesh',
       'Any event that crosses a broker-to-broker bridge earns +50% value and turns gold',
     ],
     upgrades: [
       { name: 'Add Queue Slot', effect: 'Allows connecting one more queue to this broker' },
       { name: 'Add Bridge Slot', effect: 'Allows connecting to another broker for mesh bridging' },
-      { name: 'Increase Throughput', effect: 'Raises the max events/sec the broker can relay (max 10 levels)' },
+      { name: 'Increase Throughput', effect: 'Raises the max events/sec the broker can relay (max 10 levels until clustered)' },
+      { name: 'Upgrade to DMR Cluster', effect: 'Appears once Increase Throughput is maxed — turns the broker into a cluster with no throughput ceiling (see the DMR Cluster page)' },
     ],
     tips: [
       'Throughput upgrades are critical once you have multiple auto-publishers feeding in',
       'Bridge two brokers together to share load and reach more queues',
       'Connect multiple queues with matching topics to multiply your event throughput',
       'Bridging isn\'t just about routing — every event that crosses the bridge pays out 50% more, so a multi-broker mesh earns more per event, not just more events',
+      'If the throughput bar is pinned red and Increase Throughput is maxed, the DMR Cluster upgrade is the way forward — you don\'t need a second broker',
+    ],
+  },
+  {
+    key: 'dmrCluster',
+    label: 'DMR Cluster',
+    unlockCheck: 'dmrCluster',
+    color: '#fb923c',
+    graphic: DmrClusterGraphic,
+    overview: 'A DMR Cluster is a broker that outgrew a single node — several brokers in one frame, sharing the load. It\'s how you keep scaling one broker instead of building a separate mesh.',
+    howItWorks: [
+      'Unlocked by maxing Increase Throughput on a broker, then buying "Upgrade to DMR Cluster"',
+      'Still a broker — every connection, queue slot, bridge and topic rule works exactly as before',
+      'Starts with 2 broker slots; each slot multiplies the cluster\'s combined throughput cap',
+      'Load fills the first broker, then spills over into the next — watch the meters fill in order',
+      'Events speed up while crossing the cluster, so the bigger footprint doesn\'t slow your mesh',
+      'Increase Throughput loses its max level once clustered — keep buying it as far as your wallet allows',
+    ],
+    upgrades: [
+      { name: 'Upgrade to DMR Cluster', effect: 'One-time purchase on a maxed broker — converts it to a 2-slot cluster and removes the throughput cap' },
+      { name: 'Add Cluster Slot', effect: 'Lights up another broker in the grid (up to 4 total); each slot multiplies combined throughput' },
+      { name: 'Increase Throughput', effect: 'Raises each slot\'s events/sec with no level limit; cost keeps doubling past level 10' },
+    ],
+    tips: [
+      'Cluster slots are the cheapest way to multiply capacity — buy them before pushing throughput levels deep into the cost curve',
+      'The cluster\'s meters are per slot: a red first slot is fine as long as the later slots still have room',
+      'A cluster on each side of a bridge keeps gold events flowing without either end becoming the bottleneck',
     ],
   },
   {
@@ -190,11 +220,13 @@ const tutorialLabels: Record<string, string> = {
   firstSubscriber: 'New Subscriber',
   firstFanOut: 'Persistent Delivery',
   firstBroker: 'Additional Broker',
+  dmrCluster: 'DMR Cluster',
+  prestigeAvailable: 'Schema Registry',
 };
 
 const dropReasonMessages: Record<DropReason, { label: string; fix: string }> = {
   'webhook-occupied': { label: 'Webhook is busy', fix: 'Upgrade to Broker to remove the bottleneck' },
-  'broker-capped': { label: 'Throughput limit reached', fix: 'Upgrade "Increase Throughput" on this broker' },
+  'broker-capped': { label: 'Throughput limit reached', fix: 'Upgrade "Increase Throughput" on this broker — or, if it\'s maxed, upgrade it to a DMR Cluster' },
   'queue-full': { label: 'Queue buffer is full', fix: 'Upgrade "Queue Size", add more subscribers, or (if you have persistent messaging), ensure all subscribers have the same event consumption speed' },
   'subscriber-occupied': { label: 'Subscriber is busy', fix: 'Upgrade "Faster Consumption" or add more subscribers' },
   'path-incomplete': { label: 'No matching destination', fix: 'Connect the broker to a queue with a matching topic subscription' },

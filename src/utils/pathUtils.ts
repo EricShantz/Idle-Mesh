@@ -72,6 +72,15 @@ export function scaledTravelTime(
 
   // Integrate time across each segment the dot will traverse
   let time = 0;
+
+  // A dot can start at negative progress (staggered queue release, batch fire). Movement
+  // advances it at segment 0's speed scale until it reaches the path start, so count that
+  // hidden stretch too — otherwise its predicted arrival comes out too early.
+  if (startProgress < 0) {
+    const scale0 = lengths[0] === 0 ? 1 : avgLen / lengths[0];
+    time += (Math.min(0, endProgress) - startProgress) / (baseActualSpeed * scale0);
+  }
+
   for (let i = 0; i < n; i++) {
     const segStart = i / n;
     const segEnd = (i + 1) / n;

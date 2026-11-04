@@ -13,13 +13,13 @@
 - [x] Multiple Brokers (shop purchase, $200 base x2 per extra)
 - [x] Broker Bridging (broker-to-broker bridge connections, topic-aware forwarding, bidirectional DFS)
 - [x] Dynamic Connection Rewiring (click-to-detach, drag-to-connect, output port creation)
-- [x] Schema Registry: Prestige System (16-node radial skill tree, permanent upgrades)
+- [x] Schema Registry: Prestige System (15-node radial skill tree, permanent upgrades)
 - [x] Tutorial System (intro slides + contextual popups)
 - [x] Collapsible Sidebar Sections
 - [x] Publisher Network Tier (each publisher purchased raises its own base event value by 10% over the previous one, by purchase order; capped at 24 publishers total)
 - [x] Broker Bridge Value Bonus (events crossing a broker-to-broker bridge earn +50% value and render as gold dots once they exit the broker they bridge from)
 - [x] Queue Value Bonus (events routed through a queue earn +5% value, stacking with the bridge bonus)
-- [x] DMR Cluster (broker upgrade, hidden until throughput is maxed — relabels broker to "DMR Cluster", uncaps Increase Throughput, and adds purchasable cluster slots up to 4x combined capacity; fixes the "only option is a separate mesh" dead-end at max broker throughput)
+- [x] DMR Cluster (broker upgrade, hidden until throughput is maxed — relabels broker to "DMR Cluster", uncaps Increase Throughput, and adds purchasable cluster slots up to 4x combined capacity; fixes the "only option is a separate mesh" dead-end at max broker throughput; has its own 2-slide Dave tutorial with an animated overload→cluster graphic, and a DMR Cluster page in the Guide)
 
 ---
 
@@ -31,8 +31,8 @@
 ---
 
 ## Known Bugs / Technical Debt
-- [ ] **Performance degradation in mid/late game** — frame rate suffers when many nodes, connections, and event dots are active simultaneously
-- [ ] **Queue overflow with fanout + broadened subscriptions** — queues drop excessive events when subscriptions accept from multiple publishers, even at max subscriber consumption speed
+- [ ] **Performance degradation in mid/late game** — frame rate suffers when many nodes, connections, and event dots are active simultaneously. Two passes done: (1) game loop no longer runs against an immer draft, canvas glow is a cached sprite, canvas no longer reallocates per frame; (2) consumes are batched into one store commit per frame (`consumeEvents`) with a bounded, per-frame-aggregated `recentEarnings`, the auto-save subscriber no longer JSON-stringifies on every commit (lazy debounced check), `NodeCard` is memoized and selects derived values (`affordableUpgradeCount`, its own cooldown) instead of `balance`/`publisherCooldowns`, and only webhook/queue/DMQ cards subscribe to `eventDots`. (3) Pass 1 no longer re-scans the component list per dot — waypoint→component matching, `originalNodeIds` resolution, connection-existence checks, the webhook lookup and DMR cluster bounds are all per-frame maps/sets/lists built once. Also fixed: returning from a hidden tab was glacial because the first frame's `dt` spanned the whole absence (every dot teleported to its destination and the queue released the entire pile spread across that one giant frame) and the auto-publisher's `setInterval` kept piling up dots while hidden — `dt` is now clamped to 100ms and auto-fire skips while `document.hidden`. Remaining cost is roughly linear in live dots (canvas arc+drawImage per dot, per-dot path interpolation) — the next lever would be culling off-screen dots in `EventCanvas`. The Sidebar shows a live "Frame rate" stat.
+- [x] ~~**Queue overflow with fanout + broadened subscriptions**~~ — root cause was two-fold: (1) Pass 1 counted same-frame arrivals against the buffer before Pass 2 released them, so any burst larger than the buffer dropped its tail even though the queue drained completely a moment later; (2) a fixed per-frame release cap (1, or 3 with Prefetch) that no upgrade could raise. Fixed by gating the buffer on previous-frame backlog and removing the cap in favor of the chained, order-aware subscriber timing check. Verified: zero drops at ~400 events/sec into a 9-slot queue, including fan-out to 5 maxed subscribers.
 
 ---
 

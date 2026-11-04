@@ -36,7 +36,6 @@ export const prestigeNodes: PrestigeNode[] = [
   { key: 'queueFreeQueue', label: 'Queue Head Start', description: 'Start each run with 1 free queue', cost: 8, requires: 'queueRoot', position: { x: 3, y: 2 }, branch: 'queue' },
   { key: 'queueBuffer', label: 'Deep Buffers', description: '+4 additional base queue size', cost: 5, requires: 'queueRoot', position: { x: 2, y: 2 }, branch: 'queue' },
   { key: 'queueBroaden', label: 'Wide Subscriptions', description: 'Start with Broaden Subscription lv1 on all queues', cost: 8, requires: 'queueBuffer', position: { x: 2, y: 3 }, branch: 'queue' },
-  { key: 'queueBatchConsume', label: 'Prefetch', description: 'Subscribers consume up to 3 events per tick', cost: 14, requires: 'queueBroaden', position: { x: 2, y: 4 }, branch: 'queue' },
 
   // ── Subscriber Branch (southwest) ──
   { key: 'subRoot', label: 'Subscriber Affinity', description: '+25% consumption payout for all subscribers', cost: 2, requires: 'globalIncome', position: { x: -2, y: 1 }, branch: 'subscriber' },
