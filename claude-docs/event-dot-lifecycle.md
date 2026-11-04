@@ -30,6 +30,7 @@ type EventDot = {
 ## Event value pipeline
 - Publisher sets initial value via `getEventValue(publisherId)`: `(1.0 + level * 0.45 + level² * 0.05 + permanentValueBoost) * getPublisherTierMultiplier(networkTier)`, where `networkTier` is the publisher's permanent purchase-order tier (`1 + tier * 0.1` multiplier; undefined/0 for the starter publisher)
 - If the dot's route crosses a broker-to-broker bridge, its value is multiplied by `BRIDGE_VALUE_MULT` (1.5) once at creation, flat regardless of hop count — computed per dot (and per fork, since a fan-out can send some paths across a bridge and others not) via `pathCrossesBridge()` / `firstBridgeExitNodeId()`
+- If the dot's route passes through a queue, its value is multiplied by `getQueueValueMultiplier()` (1 + 5% per queue hop) at creation, computed per dot and per fork from that path's `nodeIds`
 - Subscriber applies a consumption multiplier at consume time: `1.0 + level * 0.08 + level² * 0.02`, multiplied directly against `dot.value` (not additive)
 - Global multiplier and permanent payout multipliers applied in `consumeEvent()` on top of that
 - Value is passed directly to `consumeEvent(id, value)` — no dot lookup needed

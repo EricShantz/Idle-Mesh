@@ -143,6 +143,7 @@
 - `firstBridgeExitNodeId(nodeIds, components)` (`gameStore.ts`) returns the broker right before the first consecutive broker→broker pair in a route's node list, or `undefined`. `pathCrossesBridge()` is just `firstBridgeExitNodeId(...) !== undefined`.
 - All three `fireEvent` dot-creation sites (direct-fallback, no-matching-queue fallback, main fan-out) apply `BRIDGE_VALUE_MULT` (1.5) to `value`/`originalValue` when a bridge is crossed, create the dot cyan, and set `bridgeGoldAfterNodeId` to the exit broker. Fork path objects get their own precomputed `value`/`color` (immediately gold if applicable) since they spawn already past the fork broker.
 - `useGameLoop.ts`'s main dot-update loop flips `dot.color` to `BRIDGE_GOLD_COLOR` and clears `bridgeGoldAfterNodeId` once the dot's position touches the exit broker (`dotTouchesNode`), right after the fork-spawn check (same pattern, same hit test).
+- `getQueueValueMultiplier(nodeIds, components)` (`gameStore.ts`) counts how many `queue`-type nodes appear in a route's node list and returns `1 + count * QUEUE_VALUE_BONUS_PER_HOP` (5% each). Since `connectionRules.ts` only allows `queue -> subscriber`, a route can only ever pass through one queue today, but the helper is written to generalize. Multiplied into `value`/`originalValue` at all three `fireEvent` dot-creation sites and inside `valueForPath()` for forks, alongside the existing bridge multiplier — the two stack multiplicatively.
 
 ## Permanent Buff Integration
 - Income multiplier (`income` node) applied in `consumeEvent`.

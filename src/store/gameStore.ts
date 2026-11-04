@@ -84,6 +84,15 @@ export function pathCrossesBridge(nodeIds: string[], components: GameComponent[]
 export const BRIDGE_GOLD_COLOR = '#fde047';
 export const BRIDGE_VALUE_MULT = 1.5;
 
+/** Value bonus earned per queue a route passes through on its way to a subscriber. */
+export const QUEUE_VALUE_BONUS_PER_HOP = 0.05;
+
+/** Multiplier for the number of queue hops in a route's node list (1 + 5% per queue). */
+export function getQueueValueMultiplier(nodeIds: string[], components: GameComponent[]): number {
+  const queueHops = nodeIds.filter(id => components.find(c => c.id === id)?.type === 'queue').length;
+  return 1 + queueHops * QUEUE_VALUE_BONUS_PER_HOP;
+}
+
 export type GameState = {
   balance: number;
   totalEarned: number;
@@ -577,7 +586,8 @@ export const useGameStore = create<GameState>()(
           truncatedWaypoints.push(nodePath[1]);
           const baseValue = state.getEventValue(publisherId);
           const bridgeExitNodeId = firstBridgeExitNodeId([publisherId, target.id], state.components);
-          const value = bridgeExitNodeId ? baseValue * BRIDGE_VALUE_MULT : baseValue;
+          const queueMult = getQueueValueMultiplier([publisherId, target.id], state.components);
+          const value = (bridgeExitNodeId ? baseValue * BRIDGE_VALUE_MULT : baseValue) * queueMult;
           const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state), truncatedWaypoints);
           set(draft => {
             draft.publisherCooldowns[publisherId] = Date.now();
@@ -636,7 +646,8 @@ export const useGameStore = create<GameState>()(
 
               const baseValue = state.getEventValue(publisherId);
               const bridgeExitNodeId = firstBridgeExitNodeId(truncatedNodeIds, state.components);
-              const value = bridgeExitNodeId ? baseValue * BRIDGE_VALUE_MULT : baseValue;
+              const queueMult = getQueueValueMultiplier(truncatedNodeIds, state.components);
+              const value = (bridgeExitNodeId ? baseValue * BRIDGE_VALUE_MULT : baseValue) * queueMult;
               const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state), truncatedWaypoints);
               set(draft => {
                 draft.publisherCooldowns[publisherId] = Date.now();
@@ -699,8 +710,11 @@ export const useGameStore = create<GameState>()(
 
         const baseValue = state.getEventValue(publisherId);
         const baseSpeed = 0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state);
-        const valueForPath = (nodeIds: string[]) =>
-          pathCrossesBridge(nodeIds, state.components) ? baseValue * BRIDGE_VALUE_MULT : baseValue;
+        const valueForPath = (nodeIds: string[]) => {
+          const bridgeMult = pathCrossesBridge(nodeIds, state.components) ? BRIDGE_VALUE_MULT : 1;
+          const queueMult = getQueueValueMultiplier(nodeIds, state.components);
+          return baseValue * bridgeMult * queueMult;
+        };
         const colorForPath = (nodeIds: string[]) =>
           pathCrossesBridge(nodeIds, state.components) ? BRIDGE_GOLD_COLOR : '#22d3ee';
 
