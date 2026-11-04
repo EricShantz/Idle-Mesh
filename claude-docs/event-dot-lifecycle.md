@@ -20,17 +20,24 @@ type EventDot = {
   originalNodeIds?: string[];         // node IDs of the original path, used to rebuild fresh path on DMQ release
   nodeWpIndices?: number[];           // waypoint index of each node in originalNodeIds on the current path (set during drag rebuild, cleared after post-drag cleanup)
   originalValue?: number;             // publisher event value at creation, used for DMQ value recovery calc
-  forkPaths?: { waypoints: { x: number; y: number }[]; nodeIds: string[] }[];  // additional paths to spawn when dot reaches fork broker
+  forkPaths?: { waypoints: { x: number; y: number }[]; nodeIds: string[]; value?: number; color?: string }[];  // additional paths to spawn when dot reaches fork broker, each with its own precomputed value/color (bridge-aware)
   forkNodeId?: string;               // broker ID where fork dots should spawn
   nextNodeId?: string;               // ID of the next queue/subscriber this dot should interact with — gates collision to prevent capture by unrelated nodes on the geometric path
+  bridgeGoldAfterNodeId?: string;    // broker node this dot must pass before switching to the bridge-crossing gold color; cleared once triggered
 };
 ```
 
 ## Event value pipeline
-- Publisher sets initial value: `$0.50 + level * 0.45 + level² * 0.05` (accelerating increments)
-- Subscriber adds consumption value: `$0.50 + level * 0.45 + level² * 0.05` (same formula)
-- Global multiplier applied in `consumeEvent()`: `finalValue * globalValueMultiplier`
+- Publisher sets initial value via `getEventValue(publisherId)`: `(1.0 + level * 0.45 + level² * 0.05 + permanentValueBoost) * getPublisherTierMultiplier(networkTier)`, where `networkTier` is the publisher's permanent purchase-order tier (`1 + tier * 0.1` multiplier; undefined/0 for the starter publisher)
+- If the dot's route crosses a broker-to-broker bridge, its value is multiplied by `BRIDGE_VALUE_MULT` (1.5) once at creation, flat regardless of hop count — computed per dot (and per fork, since a fan-out can send some paths across a bridge and others not) via `pathCrossesBridge()` / `firstBridgeExitNodeId()`
+- Subscriber applies a consumption multiplier at consume time: `1.0 + level * 0.08 + level² * 0.02`, multiplied directly against `dot.value` (not additive)
+- Global multiplier and permanent payout multipliers applied in `consumeEvent()` on top of that
 - Value is passed directly to `consumeEvent(id, value)` — no dot lookup needed
+
+## Bridge color switch
+- A dot that will cross a bridge is created cyan with `bridgeGoldAfterNodeId` set to the broker node it exits through before crossing (from `firstBridgeExitNodeId()`). It stays cyan for the publisher→broker leg.
+- Each frame in `useGameLoop.ts`, if `bridgeGoldAfterNodeId` is set and the dot's position touches that broker (`dotTouchesNode`, same check used for fork spawning), the dot's color flips to `BRIDGE_GOLD_COLOR` (`#fde047`) and the field is cleared.
+- Fork dots (see below) spawn already positioned at the fork broker, so if their path crosses a bridge they're colored gold immediately at creation instead of waiting for this check.
 
 ## Collision detection
 - `dotTouchesNode(px, py, nodeX, nodeY)` tests a 6px-radius dot against node bounding boxes (NODE_HALF_W=60, NODE_TOP_OFFSET=28, NODE_BOTTOM_OFFSET=28)
@@ -39,7 +46,7 @@ type EventDot = {
 - **`nextNodeId` gating**: when set, the dot can ONLY interact with the component matching that specific ID. Collision uses progress-based detection (reaching the correct waypoint) instead of `dotTouchesNode` hitbox detection. This prevents capture when a queue/subscriber is physically placed on an unrelated path segment (e.g. a queue sitting on the DMQ→broker or publisher→broker connection line). Set at dot creation from `originalNodeIds` via `findNextInteractableId()`, and updated on queue release to point to the next subscriber.
 
 ## Broker-level forking
-When multiple downstream paths exist (fan-out or bridge), `fireEvent` creates one dot per unique first-broker. Extra paths are stored as `forkPaths` on the dot. When the dot reaches the fork broker (detected via `dotTouchesNode` in `useGameLoop`), fork dots are spawned from the broker position for each additional path. Fork dot IDs are generated via `nextDotId()` exported from `gameStore.ts`. During node drag, `forkPaths` waypoints are rebuilt each frame (alongside the main `path`) so fork dots don't spawn on stale coordinates if the broker has moved.
+When multiple downstream paths exist (fan-out or bridge), `fireEvent` creates one dot per unique first-broker. Extra paths are stored as `forkPaths` on the dot, each with its own precomputed `value`/`color` (bridge-aware, since one fork might cross a bridge while another doesn't). When the dot reaches the fork broker (detected via `dotTouchesNode` in `useGameLoop`), fork dots are spawned from the broker position for each additional path, using `fork.value ?? dot.value` and `fork.color ?? dot.color`. Fork dot IDs are generated via `nextDotId()` exported from `gameStore.ts`. During node drag, `forkPaths` waypoints are rebuilt each frame (alongside the main `path`) so fork dots don't spawn on stale coordinates if the broker has moved.
 
 ## Key behaviors
 - `traveling` → speed is scaled per-segment via `getSegmentSpeedScale(path, progress)` so dots move at constant pixel speed regardless of segment length. Slows through webhook when dot visually overlaps the webhook node, drops near webhook/broker if component is occupied

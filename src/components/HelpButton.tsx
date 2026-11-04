@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 import { tutorials } from '../store/tutorialConfig';
 import { getActiveDrops, type DropReason } from '../hooks/useGameLoop';
+import { TOPIC_POOL } from '../store/topicPool';
 import type { ComponentType, ReactNode } from 'react';
 import {
   PublisherGraphic,
@@ -37,6 +38,8 @@ const componentDetails: ComponentDetail[] = [
       'Click to fire an event along connected paths',
       'Each publisher has a unique topic (e.g. "orders/created")',
       'Events carry a base value determined by the Event Value upgrade',
+      'Each publisher you buy produces events worth 10% more base value than the previous one you bought',
+      `Limited to ${TOPIC_POOL.length} publishers total — one for each unique topic in the pool`,
       'Cooldown timer prevents spam — upgrade Publish Speed to reduce it',
       'Connect output port to a webhook or broker to route events',
     ],
@@ -48,6 +51,7 @@ const componentDetails: ComponentDetail[] = [
     tips: [
       'Auto-click is a huge throughput boost — prioritize it for your first publisher',
       'Higher event value multiplies through the entire chain, so it scales well late-game',
+      'Buying more publishers is worth it even beyond raw throughput — each new one raises the value floor, but only once it\'s actually wired into the mesh and firing events',
     ],
   },
   {
@@ -83,6 +87,7 @@ const componentDetails: ComponentDetail[] = [
       'Fans out to ALL matching queues — every connected queue with a matching topic gets a copy',
       'Has a throughput limit (events/sec) — excess events are dropped',
       'Can bridge to other brokers to create a wider event mesh',
+      'Any event that crosses a broker-to-broker bridge earns +50% value and turns gold',
     ],
     upgrades: [
       { name: 'Add Queue Slot', effect: 'Allows connecting one more queue to this broker' },
@@ -93,6 +98,7 @@ const componentDetails: ComponentDetail[] = [
       'Throughput upgrades are critical once you have multiple auto-publishers feeding in',
       'Bridge two brokers together to share load and reach more queues',
       'Connect multiple queues with matching topics to multiply your event throughput',
+      'Bridging isn\'t just about routing — every event that crosses the bridge pays out 50% more, so a multi-broker mesh earns more per event, not just more events',
     ],
   },
   {

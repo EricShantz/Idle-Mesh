@@ -14,11 +14,13 @@
   - Lines originate from the output port circle's right edge on the source node (except DMQ: top-center port)
   - Node-aware routing avoids clipping through components: when nodes are vertically aligned or target is left of source, lines detour around node bounding boxes (30px clearance), always exiting right and entering left
   - DMQ→broker connections use vertical-first routing (`buildVerticalFirstSvgPath()` → `computeVerticalFirstWaypoints()`) and terminate at the broker's bottom edge. Node-aware: when the simple V→H→V path would clip through either node, a 6-point detour routes above both nodes, descends on the broker-facing side of the DMQ, and enters the broker from below. Horizontal section sits just above the DMQ (30px clearance) rather than midway.
+  - Broker-to-broker bridge connections render thicker (2px) and orange-dashed (`#fb923c55`, `8 4` dash) instead of the default muted line, signaling that events crossing them earn a value bonus.
   - Click to detach: clicking a connection line detaches the arrow end and starts a drag. Drop on a valid target to reassign, or release on nothing to delete. Original line hidden during drag.
   - Drag preview line shown in cyan during connection creation/reassignment (also orthogonal)
 - **Event dots**: 2.5px filled circles traveling along connection lines (collision detection remains at 6px radius)
   - Traveling: cyan (`#22d3ee`) with radial glow (4.5px); retry events are orange (`#fb923c`)
-  - Pausing at subscriber: cyan (or orange for retries), shrinks/fades over ~1s
+  - Bridge-crossing: a dot travels cyan from the publisher to the broker it exits through, then switches to gold (`#fde047`) for the rest of its trip once it leaves that broker and crosses the bridge — reflecting the +50% value bonus. Fan-out fork dots spawned directly past a bridge-crossing broker render gold immediately since they're already past the exit point.
+  - Pausing at subscriber: cyan (or orange for retries, gold for bridge-crossing), shrinks/fades over ~1s
   - Dropped: red (`#ff4444`), falls with gravity, fades over ~2.5s. Once dropped, dots never revert to their original color. Retry events that drop a second time turn dark grey (`#4a5568`) instead of red.
 - **Coin pops**: 🪙 emoji + green `+$X.XX` text floats up 50px from subscriber on money earned, fades over 1s. Color: green (`#22c55e`) with glow. Z-index 40. Adaptively throttled based on frame rate — at high throughput, pops are batched with aggregated amounts to maintain performance.
 - **Z-index layering**: connections (5) → back event canvas (19) → subscriber (20) → front event canvas (25) → webhook/broker/queue (26) → publisher (30) → coin pops (40) → dragging node (50)

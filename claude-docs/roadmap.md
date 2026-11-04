@@ -16,6 +16,8 @@
 - [x] Schema Registry: Prestige System (16-node radial skill tree, permanent upgrades)
 - [x] Tutorial System (intro slides + contextual popups)
 - [x] Collapsible Sidebar Sections
+- [x] Publisher Network Tier (each publisher purchased raises its own base event value by 10% over the previous one, by purchase order; capped at 24 publishers total)
+- [x] Broker Bridge Value Bonus (events crossing a broker-to-broker bridge earn +50% value and render as gold dots once they exit the broker they bridge from)
 
 ---
 
@@ -23,13 +25,11 @@
 
 ### Tier 3: Advanced / Idle Scaling
 - [ ] **Event Mesh Visualization** — color-code connection lines by topic
-- [ ] **Advanced Topic Patterns** — dynamic topic routing (pool cycles after 24th publisher)
 - [ ] ~~**Topic-Based Earnings**~~ — removed: value tiers and specificity bonus were too complex for users
 
 ---
 
 ## Known Bugs / Technical Debt
-- [ ] Topic pool cycles back after 24th publisher (4 clusters of 6)
 - [ ] **Performance degradation in mid/late game** — frame rate suffers when many nodes, connections, and event dots are active simultaneously
 - [ ] **Queue overflow with fanout + broadened subscriptions** — queues drop excessive events when subscriptions accept from multiple publishers, even at max subscriber consumption speed
 

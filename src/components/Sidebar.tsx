@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useGameStore, getPermanentShopDiscount } from '../store/gameStore';
 import { globalUpgrades, getUpgradeCost } from '../store/upgradeConfig';
+import { TOPIC_POOL } from '../store/topicPool';
 import { formatMoney } from '../utils/formatMoney';
 import { PrestigePanel } from './PrestigePanel';
 
@@ -85,7 +86,7 @@ export function Sidebar() {
     statsClickTimes.current = recent;
     if (recent.length >= STATS_CLICK_THRESHOLD) {
       statsClickTimes.current = [];
-      earn(1_000_000);
+      earn(1_000_000_000);
       setCheatMessage('Schema Registry backdoor found: +$1,000,000');
       setTimeout(() => setCheatMessage(null), 3000);
     }
@@ -152,7 +153,8 @@ export function Sidebar() {
   const publisherCost = Math.floor(PUBLISHER_BASE_COST * Math.pow(1.8, pubCount - 1) * shopDiscount);
   const subscriberCost = Math.floor(SUBSCRIBER_BASE_COST * Math.pow(1.8, subCount - 1) * shopDiscount);
   const brokerCost = Math.floor(BROKER_BASE_COST * Math.pow(2, brokerCount - 1) * shopDiscount);
-  const canAffordPublisher = balance >= publisherCost;
+  const atPublisherCap = pubCount >= TOPIC_POOL.length;
+  const canAffordPublisher = balance >= publisherCost && !atPublisherCap;
   const canAffordSubscriber = balance >= subscriberCost;
   const canAffordBroker = balance >= brokerCost;
 
@@ -166,6 +168,7 @@ export function Sidebar() {
   };
 
   const handleBuyPublisher = () => {
+    if (atPublisherCap) return;
     if (!spend(publisherCost)) return;
     const lastPub = [...components].reverse().find(c => c.type === 'publisher');
     const px = lastPub ? lastPub.x : 150;
@@ -322,14 +325,16 @@ export function Sidebar() {
                 disabled={!canAffordPublisher}
                 className="text-left px-2 py-1.5 rounded text-xs border transition-colors cursor-pointer disabled:cursor-not-allowed"
                 style={{
-                  borderColor: canAffordPublisher ? '#22d3ee' : '#374151',
-                  background: canAffordPublisher ? '#0e303822' : '#1f293744',
-                  color: canAffordPublisher ? '#cffafe' : '#6b7280',
+                  borderColor: atPublisherCap ? '#374151' : canAffordPublisher ? '#22d3ee' : '#374151',
+                  background: atPublisherCap ? '#1f2937' : canAffordPublisher ? '#0e303822' : '#1f293744',
+                  color: atPublisherCap ? '#6b7280' : canAffordPublisher ? '#cffafe' : '#6b7280',
                 }}
               >
                 <div className="font-bold">Buy Publisher</div>
                 <div className="opacity-60">Emits events on a unique topic. Must connect to a broker.</div>
-                <div className="mt-0.5 font-mono">{formatMoney(publisherCost)}</div>
+                <div className="mt-0.5 font-mono">
+                  {atPublisherCap ? `MAX (${TOPIC_POOL.length}/${TOPIC_POOL.length} topics)` : formatMoney(publisherCost)}
+                </div>
               </button>
               {hasQueue && (
                 <button
