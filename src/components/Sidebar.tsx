@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useGameStore, getPermanentShopDiscount } from '../store/gameStore';
-import { globalUpgrades, getUpgradeCost } from '../store/upgradeConfig';
+import { globalUpgrades, getUpgradeCost, WIN_THRESHOLD } from '../store/upgradeConfig';
 import { getSmoothedFps } from '../hooks/useGameLoop';
 import { TOPIC_POOL } from '../store/topicPool';
 import { formatMoney } from '../utils/formatMoney';
@@ -62,6 +62,7 @@ export function Sidebar() {
   const components = useGameStore(s => s.components);
   const upgrades = useGameStore(s => s.upgrades);
   const prestige = useGameStore(s => s.prestige);
+  const winSeen = useGameStore(s => s.winSeen);
   const effectiveCostReduction = upgrades.costReduction + ((prestige.permanentUpgradeLevels['globalCostRed'] ?? 0) > 0 ? 0.10 : 0);
   const globalUpgradeLevels = useGameStore(s => s.globalUpgradeLevels);
   const spend = useGameStore(s => s.spend);
@@ -213,6 +214,50 @@ export function Sidebar() {
         </div>
       </div>
 
+      {/* Road to $1B — per-run progress toward the end game (resets on prestige).
+          One meter: the amount sits inside the bar, the percentage on its right edge. */}
+      {(() => {
+        const progress = Math.min(totalEarned / WIN_THRESHOLD, 1);
+        const gold = winSeen || progress >= 1;
+        const fill = gold ? '#f59e0b' : '#22d3ee';
+        const pct = progress * 100;
+        return (
+          <div>
+            <div className={`text-xs uppercase tracking-wider mb-1 ${gold ? 'text-amber-400' : 'text-gray-500'}`}>
+              Road to $1 Billion{winSeen && ' ✓'}
+            </div>
+            <div
+              className="relative w-full rounded overflow-hidden"
+              style={{ height: 22, background: '#111827', border: '1px solid #1f2937' }}
+              title={`${formatMoney(totalEarned)} of ${formatMoney(WIN_THRESHOLD)}`}
+            >
+              <div
+                className="absolute inset-y-0 left-0"
+                style={{
+                  width: `${pct}%`,
+                  background: fill,
+                  opacity: 0.35,
+                  boxShadow: gold ? `0 0 8px ${fill}` : undefined,
+                  transition: 'width 0.3s ease-out',
+                }}
+              />
+              <div
+                className="absolute inset-y-0 left-0"
+                style={{ width: `${pct}%`, borderRight: `2px solid ${fill}`, transition: 'width 0.3s ease-out' }}
+              />
+              <div className="absolute inset-0 flex items-center justify-between px-2 text-[11px] font-mono">
+                <span className={`font-bold ${gold ? 'text-amber-200' : 'text-gray-100'}`} style={{ textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}>
+                  {formatMoney(totalEarned)}
+                </span>
+                <span className={gold ? 'text-amber-300' : 'text-gray-400'} style={{ textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}>
+                  {pct.toFixed(pct < 10 ? 2 : 1)}%
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Stats */}
       <div className="border-t border-gray-800 pt-3">
         <button
@@ -226,8 +271,6 @@ export function Sidebar() {
           <div className="text-cyan-400 text-xs font-semibold mb-1.5 animate-pulse">{cheatMessage}</div>
         )}
         <div className="grid grid-cols-2 gap-y-1.5 text-xs">
-          <span className="text-gray-500">Lifetime Earnings</span>
-          <span className="text-gray-300 text-right">{formatMoney(totalEarned)}</span>
           <span className="text-gray-500">Consumed</span>
           <span className="text-green-400 text-right">{eventsConsumed.toLocaleString()}</span>
           <span className="text-gray-500">Dropped</span>

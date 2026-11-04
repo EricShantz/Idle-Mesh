@@ -57,6 +57,12 @@ let _smoothedFps = 60;
 const FPS_SMOOTH = 0.05; // low-pass filter weight (lower = smoother)
 export function getSmoothedFps() { return _smoothedFps; }
 
+/** Lowest smoothed FPS seen this session (shown on the end-game stats). Session-level, not saved. */
+let _minFps = Infinity;
+let _fpsFrameCount = 0;
+const MIN_FPS_WARMUP_FRAMES = 120; // skip startup frames so page load doesn't count as a dip
+export function getMinFps() { return _minFps === Infinity ? _smoothedFps : _minFps; }
+
 /** Try to relay an event through a broker. Returns true if under cap, false if over. */
 function tryBrokerRelay(brokerId: string, cap: number, now: number): boolean {
   let ts = brokerRelayTimestamps.get(brokerId) ?? [];
@@ -295,16 +301,31 @@ export function useGameLoop() {
       // every dot slams to its destination at once and the queue releases the entire pile
       // spread across that one enormous "frame". Capping it means a return from a tab switch
       // just resumes at normal pace (and ordinary hitches can't teleport dots either).
-      const dt = Math.min(time - lastTimeRef.current, MAX_FRAME_DT_MS);
+      const rawDt = time - lastTimeRef.current;
+      const dt = Math.min(rawDt, MAX_FRAME_DT_MS);
       lastTimeRef.current = time;
 
       // Update smoothed FPS for adaptive coin pop throttling
       if (dt > 0) {
         const instantFps = 1000 / dt;
         _smoothedFps += FPS_SMOOTH * (instantFps - _smoothedFps);
+        // Track the session low, ignoring warm-up and clamped frames (a tab switch or a
+        // hitch is a pause, not rendering performance).
+        _fpsFrameCount++;
+        if (_fpsFrameCount > MIN_FPS_WARMUP_FRAMES && rawDt <= MAX_FRAME_DT_MS) {
+          _minFps = Math.min(_minFps, _smoothedFps);
+        }
       }
 
       const state = useGameStore.getState();
+
+      // End-game win screen: freeze the simulation in place behind the overlay. dt is already
+      // clamped, so resuming after dismissal just picks up at normal pace.
+      if (state.showWinScreen) {
+        rafRef.current = requestAnimationFrame(loop);
+        return;
+      }
+
       const toConsume: { id: string; value: number; subscriberId: string }[] = [];
       let droppedCount = 0;
 
@@ -1380,6 +1401,8 @@ export function useAutoPublisher() {
       // then flood the mesh the moment the tab comes back.
       if (document.hidden) return;
       const state = useGameStore.getState();
+      // Same reasoning while the win screen has the simulation frozen.
+      if (state.showWinScreen) return;
       const publishers = state.components.filter(c => c.type === 'publisher');
       for (const pub of publishers) {
         if ((pub.upgrades['autoPub'] ?? 0) >= 1) {

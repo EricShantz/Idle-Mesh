@@ -13,20 +13,21 @@
 - [x] Multiple Brokers (shop purchase, $200 base x2 per extra)
 - [x] Broker Bridging (broker-to-broker bridge connections, topic-aware forwarding, bidirectional DFS)
 - [x] Dynamic Connection Rewiring (click-to-detach, drag-to-connect, output port creation)
-- [x] Schema Registry: Prestige System (15-node radial skill tree, permanent upgrades)
+- [x] Schema Registry: Prestige System (23-node radial skill tree, permanent upgrades)
 - [x] Tutorial System (intro slides + contextual popups)
 - [x] Collapsible Sidebar Sections
 - [x] Publisher Network Tier (each publisher purchased raises its own base event value by 10% over the previous one, by purchase order; capped at 24 publishers total)
 - [x] Broker Bridge Value Bonus (events crossing a broker-to-broker bridge earn +50% value and render as gold dots once they exit the broker they bridge from)
 - [x] Queue Value Bonus (events routed through a queue earn +5% value, stacking with the bridge bonus)
 - [x] DMR Cluster (broker upgrade, hidden until throughput is maxed — relabels broker to "DMR Cluster", uncaps Increase Throughput, and adds purchasable cluster slots up to 4x combined capacity; fixes the "only option is a separate mesh" dead-end at max broker throughput; has its own 2-slide Dave tutorial with an animated overload→cluster graphic, and a DMR Cluster page in the Guide)
+- [x] End Game (reaching $1B earned in a single run — prestige resets the counter — triggers a one-time win screen: confetti, "YOU DID IT!" banner with run stats, Dave in a tux/top hat/monocle saying EDA turned his business around, then Keep Playing or Start Over from scratch; the intro now ends with Dave vowing to make a billion dollars, and the sidebar's Lifetime Earnings row became a "Road to $1 Billion" progress bar)
 
 ---
 
 ## Not Yet Implemented
 
 ### Tier 3: Advanced / Idle Scaling
-- [ ] **Event Mesh Visualization** — color-code connection lines by topic
+- [ ] **Event Mesh Visualization** — color-code connection lines by topic, how would we even start to do this? events change colour, queues can fanout and have broad topic subscriptions. This should be wrapped into my plans to revamp the topic mechanic
 
 ---
 
@@ -51,6 +52,8 @@
 - [x] add intro sequence the first time the game loads that shows a super messy spaghetti code graphic full of point to point connections that are failing all over, the screen should pulse red, then a message should show up saying something like "Ugh! this legacy code is a nightmare to deal with... That's it! I'm going to rebuild it using Event-Driven Architecture'
 - [x] DMQ releases to any connected broker via bridge routing to the original destination
 - [x] user should be able to change queue subscription even when queue is fully broadened
+- [x] prestige page: "Restart Game" text button replaced with an icon-only trash button (with tooltip) spaced away from "Return to Mesh", so the two can't be mistaken for each other
+- [x] intro: bigger spaghetti (32 services, seeded local-biased wiring, more dropping events), zoomed in, and the red vignette dithered so its gradient no longer shows concentric bands
 ---
 
 ## Clarification Needed

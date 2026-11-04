@@ -6,7 +6,7 @@ import { topicMatches, computeBroadenedTopic } from '../utils/topicMatching';
 import { normalizedSpeed } from '../utils/pathUtils';
 import { computeOrthogonalWaypoints } from '../utils/orthogonalPath';
 import { getSmoothedFps } from '../hooks/useGameLoop';
-import { getNodeHalfExtents } from './upgradeConfig';
+import { getNodeHalfExtents, WIN_THRESHOLD } from './upgradeConfig';
 import { prestigeNodes, isNodeAvailable, isNodePurchased, type PrestigeNode } from './prestigeUpgradeConfig';
 
 export type ComponentType = 'publisher' | 'webhook' | 'broker' | 'queue' | 'subscriber' | 'dmq';
@@ -141,6 +141,10 @@ export type GameState = {
   draggingNodeId: string | null;
   showPrestigeTree: boolean;
 
+  // End-game. `winSeen` persists (only a full wipe clears it); `showWinScreen` is transient.
+  winSeen: boolean;
+  showWinScreen: boolean;
+
   // Actions
   fireEvent: (publisherId: string) => void;
   consumeEvent: (dotId: string, value: number, subscriberId: string) => void;
@@ -177,8 +181,21 @@ export type GameState = {
   performPrestige: () => boolean;
   purchasePrestigeUpgrade: (upgradeKey: string) => boolean;
   setShowPrestigeTree: (show: boolean) => void;
+  dismissWinScreen: () => void;
   wipeSaveAndRestart: () => void;
 };
+
+// Run after every change to totalEarned (both earning paths): fires the prestige-available
+// tutorial at $1M and the end-game win screen at WIN_THRESHOLD. The win fires once per save;
+// `winSeen` survives prestige and only a full wipe clears it.
+function checkEarningMilestones(draft: GameState) {
+  if (draft.totalEarned >= 1_000_000 && !draft.tutorialsSeen['prestigeAvailable'] && !draft.activeTutorial) {
+    draft.activeTutorial = 'prestigeAvailable';
+  }
+  if (draft.totalEarned >= WIN_THRESHOLD && !draft.winSeen && !draft.showWinScreen) {
+    draft.showWinScreen = true;
+  }
+}
 
 // Permanent prestige speed multiplier (count of purchased speed nodes)
 function getPermanentSpeedMult(state: Pick<GameState, 'prestige'>): number {
@@ -294,16 +311,56 @@ function applyPermanentStartBonuses(draft: GameState) {
     draft.globalUpgradeLevels['batchFire'] = Math.max(draft.globalUpgradeLevels['batchFire'] ?? 0, 1);
   }
 
-  if (owns('queueFreeQueue') && !draft.components.some(c => c.type === 'queue')) {
-    const brokerOrWebhook = draft.components.find(c => c.type === 'broker' || c.type === 'webhook');
-    if (brokerOrWebhook) {
-      const qId = `comp-${++componentIdCounter}`;
-      const qx = Math.round(brokerOrWebhook.x + 150);
-      const qy = brokerOrWebhook.y + 140;
-      draft.components.push({ id: qId, type: 'queue', x: qx, y: qy, label: 'Queue', tags: {}, upgrades: getPermanentStartUpgrades('queue', p) });
-      draft.connections.push({ id: `conn-${++connectionIdCounter}`, fromId: brokerOrWebhook.id, toId: qId });
-    }
+  grantHeadStartQueue(draft);
+}
+
+// "Queue Head Start" prestige node: the free queue is only placed once a broker exists,
+// because queues can't hang off a webhook in normal play either (the shop item requires
+// a broker). Called from applyPermanentStartBonuses (reset / node purchase) and again
+// from the webhook → broker upgrade so a run without Broker Affinity still gets its
+// queue the moment it becomes eligible. The queue is spliced *into* the starter chain
+// (publisher → broker → queue → subscriber) rather than dangling off the broker next to
+// the existing broker → subscriber link, and it inherits the publisher's topic the same
+// way a hand-wired queue would.
+function grantHeadStartQueue(draft: GameState) {
+  const p = draft.prestige.permanentUpgradeLevels;
+  if ((p['queueFreeQueue'] ?? 0) <= 0) return;
+  if (draft.components.some(c => c.type === 'queue')) return;
+  const broker = draft.components.find(c => c.type === 'broker');
+  if (!broker) return;
+
+  const qId = `comp-${++componentIdCounter}`;
+  const queue: GameComponent = { id: qId, type: 'queue', x: broker.x + 150, y: broker.y + 140, label: 'Queue', tags: {}, upgrades: getPermanentStartUpgrades('queue', p) };
+
+  // Subscribe to whichever publisher feeds this broker (mirrors completeDragConnection's auto-assign)
+  const pubConn = draft.connections.find(c => c.toId === broker.id && draft.components.find(k => k.id === c.fromId)?.type === 'publisher');
+  const pub = pubConn ? draft.components.find(c => c.id === pubConn.fromId) : undefined;
+  if (pub?.topic) {
+    queue.subscriptionTopic = pub.topic;
+    queue.subscriptionSegments = [...(pub.topicSegments ?? pub.topic.split('/'))];
+    const broaden = queue.upgrades['subscriptionBroaden'] ?? 0;
+    if (broaden > 0) queue.subscriptionTopic = computeBroadenedTopic(queue.subscriptionSegments, broaden);
   }
+
+  // Splice between the broker and a subscriber it feeds directly (the starter layout).
+  const directSubConn = draft.connections.find(c => c.fromId === broker.id && draft.components.find(k => k.id === c.toId)?.type === 'subscriber');
+  const sub = directSubConn ? draft.components.find(c => c.id === directSubConn.toId) : undefined;
+  if (directSubConn && sub) {
+    // Sit the queue on the broker's row halfway to the subscriber; nudge the subscriber
+    // right if the gap is too tight for a queue card plus ports.
+    const MIN_GAP = 400;
+    if (sub.x - broker.x < MIN_GAP) sub.x = broker.x + MIN_GAP;
+    queue.x = Math.round((broker.x + sub.x) / 2);
+    queue.y = broker.y;
+    draft.connections = draft.connections.filter(c => c.id !== directSubConn.id);
+    draft.components.push(queue);
+    draft.connections.push({ id: `conn-${++connectionIdCounter}`, fromId: broker.id, toId: qId });
+    draft.connections.push({ id: `conn-${++connectionIdCounter}`, fromId: qId, toId: sub.id });
+    return;
+  }
+
+  draft.components.push(queue);
+  draft.connections.push({ id: `conn-${++connectionIdCounter}`, fromId: broker.id, toId: qId });
 }
 
 let dotIdCounter = 0;
@@ -548,6 +605,8 @@ export const useGameStore = create<GameState>()(
       draggingConnection: null,
       draggingNodeId: null,
       showPrestigeTree: false,
+      winSeen: saved?.winSeen ?? false,
+      showWinScreen: false,
 
       prestige: refundRemovedPrestigeNodes(migratePrestigeKeys(saved?.prestige ?? { points: 0, totalPoints: 0, count: 0, permanentUpgradeLevels: {} })),
 
@@ -831,9 +890,7 @@ export const useGameStore = create<GameState>()(
             }
           }
 
-          if (draft.totalEarned >= 1_000_000 && !draft.tutorialsSeen['prestigeAvailable'] && !draft.activeTutorial) {
-            draft.activeTutorial = 'prestigeAvailable';
-          }
+          checkEarningMilestones(draft);
 
           // Keep the 5s earnings window bounded here, in the same commit, rather than with a
           // separate store write per frame — and record one aggregated entry per batch.
@@ -886,9 +943,7 @@ export const useGameStore = create<GameState>()(
         set(draft => {
           draft.balance += amount;
           draft.totalEarned += amount;
-          if (draft.totalEarned >= 1_000_000 && !draft.tutorialsSeen['prestigeAvailable'] && !draft.activeTutorial) {
-            draft.activeTutorial = 'prestigeAvailable';
-          }
+          checkEarningMilestones(draft);
           draft.recentEarnings.push({ time: Date.now(), amount, count: 1 });
         });
       },
@@ -920,6 +975,8 @@ export const useGameStore = create<GameState>()(
               if (!draft.tutorialsSeen['brokerUpgrade']) {
                 draft.activeTutorial = 'brokerUpgrade';
               }
+              // A Queue Head Start that was waiting on a broker lands now
+              grantHeadStartQueue(draft);
             }
             // Clustering a broker keeps its type (all broker connection/routing rules still
             // apply) — it just relabels and unlocks uncapped throughput via slot upgrades.
@@ -1497,6 +1554,13 @@ export const useGameStore = create<GameState>()(
         set(draft => { draft.showPrestigeTree = show; });
       },
 
+      dismissWinScreen: () => {
+        set(draft => {
+          draft.showWinScreen = false;
+          draft.winSeen = true;
+        });
+      },
+
       wipeSaveAndRestart: () => {
         // Suspend autosave first so a pending debounce timer or an unload-triggered
         // flush (reload() fires `pagehide`) can't rewrite the save after we clear it.
@@ -1541,7 +1605,7 @@ function flushSave() {
 }
 
 function buildSaveSnapshot(state: GameState): string {
-  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, activeTutorial: ________, showPrestigeTree: _________, ...toSave } = state;
+  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, activeTutorial: ________, showPrestigeTree: _________, showWinScreen: __________, ...toSave } = state;
   const data: Record<string, any> = {};
   for (const [key, val] of Object.entries(toSave)) {
     if (typeof val !== 'function') {

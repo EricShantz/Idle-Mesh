@@ -31,13 +31,13 @@
 
 ## Draggable Connections
 - `draggingConnection` transient state tracks active drag (type, fromId, connectionId, mouseX, mouseY).
-- `MeshCanvas.tsx` handles pointer move/up for drop detection (bounding-box: 70px × 38px).
+- `MeshCanvas.tsx` handles pointer move/up for drop detection. The hit box is the target's `getNodeHalfExtents` footprint plus 10px on every side (so 70×38 half-extents for a normal card, 146×82 for a DMR cluster).
 - `ConnectionLine.tsx` hides itself during reassign drag and initiates detach on click.
 - `cancelDragConnection` deletes the connection when a reassign drag is dropped on nothing. Validation via `connectionRules.ts`.
 
 ## Connection Line Geometry
 - Orthogonal (Boomi-style) lines routed horizontal → vertical → horizontal with rounded 12px corners.
-- Port position = `from.x + halfW + 16` where halfW is 60 (120px nodes) or 70 (140px queue nodes).
+- Port position = `from.x + halfW + 16` where halfW comes from `getNodeHalfExtents()` in `upgradeConfig.ts`: 60 for every normal card (queues included — they render 120px wide like everything else), `CLUSTER_HALF_W` (136) for a DMR cluster. The DMQ's dynamic width is handled separately in `NodeCard`/`useGameLoop`. A stale queue-specific 70 lived here until 2026-11-04 and made broker→queue arrows stop 10px short of the card; don't reintroduce per-type widths outside that helper.
 - DMQ uses top-center port (`from.x, from.y - 28 - 16`) with vertical-first routing via `computeVerticalFirstWaypoints()`, terminating at broker's bottom edge (`to.x, to.y + 30`). Node-aware: detours around node bodies when the simple path would clip, descending on the broker-facing side of the DMQ and entering the broker from below.
 - All nodes use `minHeight: 56` and fixed `width` for consistent port alignment (DMQ width is dynamic: 120 + 40 * dmqWidthLevel).
 - **Node-aware routing**: `computeOrthogonalWaypoints()` in `orthogonalPath.ts` is the single source of truth for routing. It accepts optional `NodeBounds` for source and target nodes. When the midpoint vertical segment would clip through either node (e.g. nodes vertically aligned or target to the left), it routes a 6-point detour: right to clear source → vertically past source → left to clear target → vertically to target Y → right into target. Lines always exit right from the source port and enter left into the target.
@@ -113,8 +113,8 @@
 - `tutorialsSeen: Record<string, boolean>` persists which tutorials dismissed. `activeTutorial: string | null` (transient).
 - Triggers: `intro` on first mount via `App.tsx` (after intro cinematic completes), `brokerUpgrade` inside `upgradeComponent` (2 slides: broker info + new components available), `firstFanOut` inside `upgradeComponent` on first Persistent Delivery purchase, `dmrCluster` inside `upgradeComponent` on the first "Upgrade to DMR Cluster" purchase (2 slides: what a cluster is + how to scale it), component-type tutorials inside `addComponent`, `firstDrop` from `useGameLoop.ts` 1 second after the first event drop. Publisher/subscriber tutorials trigger on 2nd instance.
 - Post-broker-upgrade flow: after the `brokerUpgrade` tutorial is dismissed, `Sidebar.tsx` scrolls to the "Mesh Components" section and applies a cyan glow highlight. The glow persists until the user clicks anywhere (global click listener).
-- **Dave** — pixel-art developer character (`PixelCharacter` exported from `IntroSequence.tsx`). Appears in the intro cinematic (frustrated → determined) and in all tutorial modals (bottom-right, delivering slides as speech bubbles). The tutorial card is positioned to Dave's left with a speech tail pointing at his mouth (bottom-right of card).
-- **Intro cinematic** — `IntroSequence.tsx`, gated by `tutorialsSeen['introSequence']`. Shows 15-service spaghetti diagram with failing dots, red pulsing vignette, then Dave delivers 4 lines of dialogue via "Next" buttons. Skippable. Rendered in `App.tsx` before game UI; `showTutorial('intro')` fires after intro completes.
+- **Dave** — pixel-art developer character (`PixelCharacter` exported from `IntroSequence.tsx`, `outfit` prop: `'hoodie'` default or `'tux'` with top hat, bow tie and dark-brass monocle). Appears in the intro cinematic (frustrated → determined), in all tutorial modals (bottom-right, delivering slides as speech bubbles; tux once `winSeen`), and on the win screen. The tutorial card is positioned to Dave's left with a speech tail pointing at his mouth (bottom-right of card).
+- **Intro cinematic** — `IntroSequence.tsx`, gated by `tutorialsSeen['introSequence']`. Shows a 32-service spaghetti diagram (hand-scattered positions on a 1100×560 viewBox; wires are generated deterministically by a seeded LCG — knobs at the top of the file: `WIRES_PER_SERVICE`, `SECOND_WIRE_CHANCE`, `FAILING_WIRE_RATIO`, `MAX_WIRE_DIST`/`LONG_WIRE_CHANCE` to keep most lines local; the bottom-right of the canvas is kept free of boxes so Dave's bubble stays readable), failing dots that drop at varying points along their wire, a red pulsing vignette (eased multi-stop gradient plus a ~4% fractal-noise overlay to dither out banding), then Dave delivers 5 lines of dialogue via "Next" buttons (first 3 use the frustrated face, see `FRUSTRATED_LINE_COUNT`; the last vows to make a billion dollars). Skippable. Rendered in `App.tsx` before game UI; `showTutorial('intro')` fires after intro completes.
 - Content in `tutorialConfig.tsx` (note: `.tsx` — file uses JSX for rich body content); UI in `TutorialModal.tsx` (z-index 60).
 - `TutorialSlide.body` is typed as `ReactNode`, so slide bodies can be plain strings or JSX (e.g. `<span style={{color: ...}}>` for inline color). `TutorialModal` renders it directly inside a `<p>`.
 - `TutorialSlide` has an optional `graphic?: ComponentType` field. When present, `TutorialModal` renders the graphic between the slide title and body text.
@@ -128,12 +128,22 @@
 
 ## Prestige System ("Schema Registry")
 - `prestige` state holds `points`, `totalPoints`, `count`, `permanentUpgradeLevels: Record<string, number>`.
-- Prestige awards points on a scaling triangular curve: Nth point costs $N million (1st=$1M, 2nd=$2M, 3rd=$3M...). Lifetime Earnings for N points = N*(N+1)/2 million. Formula: `N = floor((-1 + sqrt(1 + 8 * totalEarned/1M)) / 2)`.
+- Prestige awards points on a scaling triangular curve: Nth point costs $N million (1st=$1M, 2nd=$2M, 3rd=$3M...). Total earned this run (`totalEarned`, surfaced in the sidebar as the "Road to $1 Billion" meter) for N points = N*(N+1)/2 million. Formula: `N = floor((-1 + sqrt(1 + 8 * totalEarned/1M)) / 2)`.
 - `performPrestige()` resets all run state while preserving `prestige` and `tutorialsSeen`. Post-reset applies permanent node effects.
+- **Queue Head Start** (`queueFreeQueue`) is granted by `grantHeadStartQueue(draft)`, which requires an actual `broker` (not a webhook — queues need a broker in normal play too). It runs from `applyPermanentStartBonuses` (reset / node purchase) and again from the `upgradeToBroker` branch of `upgradeComponent`, so a run without Broker Affinity gets its queue the moment the webhook is upgraded. If the broker feeds a subscriber directly (the starter chain), that link is replaced with broker → queue → subscriber, the queue is placed on the broker's row halfway to the subscriber (subscriber nudged right to keep a 400px gap), and the queue inherits the feeding publisher's topic (respecting a `queueBroaden` start level). No-ops if any queue already exists.
 - `showPrestigeTree` (transient, excluded from save) controls full-page tree view.
 
+## End Game (Win Screen)
+- Trigger: `checkEarningMilestones(draft)` in `gameStore.ts` runs after both earning paths (`consumeEvents`, `earn`). When `totalEarned >= WIN_THRESHOLD` (`upgradeConfig.ts`, $1B) and `!winSeen`, it sets `showWinScreen = true`. Because `performPrestige` zeroes `totalEarned`, progress toward the win resets every prestige — the design intent is that prestige upgrades make the next run's climb faster.
+- `winSeen` persists and survives prestige; only `wipeSaveAndRestart` clears it. So the screen fires once per save; later runs that re-cross $1B just turn the sidebar bar gold. `showWinScreen` is transient and excluded from the save snapshot so a reload mid-screen does not reopen it.
+- While `showWinScreen` is set, `useGameLoop` reschedules its RAF and returns before touching dots, and `useAutoPublisher` skips firing — the mesh freezes in place behind the overlay. dt is already clamped by `MAX_FRAME_DT_MS`, so dismissal resumes at normal pace.
+- `WinScreen.tsx`: z-index 80 (above tutorials at 60 and the intro at 70). Confetti is a hand-rolled canvas RAF: two corner cannons at mount + ~9s of rain, self-terminating when empty. Dave uses `PixelCharacter outfit="tux"` (top hat rows extend the SVG viewBox upward so bottom-anchored scaling still lines up) and `useTypewriter` from `hooks/useTypewriter.ts` (shared with the intro). "Start Over" reuses `wipeSaveAndRestart` after a confirm dialog cloned from the prestige tree's restart dialog.
+- `TutorialModal` renders Dave in the tux once `winSeen` is true.
+- The banner's "Lowest frame rate" stat comes from `getMinFps()` in `useGameLoop.ts`: the session-low of the smoothed FPS, ignoring the first 120 frames and any clamped frame (tab switch / hitch). Module-level, not saved, so it resets on reload.
+- Testing: the Stats-click easter egg in `Sidebar.tsx` earns $1B in one call, which trips the threshold immediately. Alternatively lower `WIN_THRESHOLD` temporarily.
+
 ## Prestige Tree
-- `prestigeUpgradeConfig.ts` defines 16 `PrestigeNode` entries with `key`, `cost`, `requires`, and grid `position`.
+- `prestigeUpgradeConfig.ts` defines 23 `PrestigeNode` entries with `key`, `cost`, `requires`, and grid `position` (5 global, 5 publisher, 4 broker, 4 queue, 5 subscriber). Removed nodes (e.g. the old Prefetch `queueBatchConsume`) are listed in `REMOVED_PRESTIGE_NODES` in `gameStore.ts` so existing saves get their points refunded on load.
 - Radial layout: center Income Boost with 4 arms. `isNodePurchased()` and `isNodeAvailable()` helpers check `permanentUpgradeLevels`.
 - `PrestigeTreePage.tsx` uses same `useViewportApi()` + `ViewportContext.Provider` pattern as `MeshCanvas`.
 

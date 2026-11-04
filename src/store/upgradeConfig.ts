@@ -8,6 +8,9 @@ export type UpgradeDef = {
   hidden?: boolean;
 };
 
+// End-game: reaching this much earned in a single run (resets on prestige) wins the game.
+export const WIN_THRESHOLD = 1_000_000_000;
+
 export const publisherUpgrades: UpgradeDef[] = [
   {
     key: 'eventValue',
@@ -120,7 +123,7 @@ export const CLUSTER_HALF_H = (CLUSTER_SUBCARD_H * 2 + CLUSTER_GRID_GAP) / 2 + C
 /** Half-width/height of a node's rendered footprint, for connection port placement and line routing. */
 export function getNodeHalfExtents(comp: { type: string; upgrades: Record<string, number> }): { halfW: number; halfH: number } {
   if (comp.type === 'broker' && getClusterSlotCount(comp.upgrades) > 1) return { halfW: CLUSTER_HALF_W, halfH: CLUSTER_HALF_H };
-  if (comp.type === 'queue') return { halfW: 70, halfH: 28 };
+  // Every non-cluster, non-DMQ card (queue included) renders 120px wide in NodeCard.
   return { halfW: 60, halfH: 28 };
 }
 

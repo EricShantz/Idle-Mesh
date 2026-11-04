@@ -179,12 +179,21 @@ function PrestigeTreeInner({ viewport }: { viewport: ReturnType<typeof useViewpo
             )}
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-4">
+          {/* Icon-only so it can't be mistaken for "Return to Mesh" at a glance */}
           <button
             onClick={() => setShowRestartConfirm(true)}
-            className="px-4 py-2 rounded text-sm font-bold border border-red-800 text-red-400 hover:border-red-500 hover:text-red-300 transition-colors cursor-pointer"
+            title="Restart game (wipe everything)"
+            aria-label="Restart game (wipe everything)"
+            className="p-2 rounded border border-red-900/60 text-red-500/70 hover:border-red-500 hover:text-red-300 hover:bg-red-950/40 transition-colors cursor-pointer"
           >
-            Restart Game
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 6h18" />
+              <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+              <path d="M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6" />
+              <path d="M10 11v6" />
+              <path d="M14 11v6" />
+            </svg>
           </button>
           <button
             onClick={() => setShowPrestigeTree(false)}
