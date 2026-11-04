@@ -67,9 +67,6 @@ src/
 - `getUpgradesForType` is duplicated in `NodeModal.tsx` and `NodeCard.tsx` — keep both in sync
 - Adding new shop items: add action logic to `gameStore.ts`, add UI to `Sidebar.tsx`
 
-## Not Yet Implemented
-- **Topic Filter Boost**: broker upgrade hidden in UI — effect not yet defined
-
 ## Detailed Documentation
 
 See `claude-docs/` for in-depth reference (read as needed, not loaded by default):

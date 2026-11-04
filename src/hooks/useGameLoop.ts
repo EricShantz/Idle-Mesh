@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useGameStore, nextDotId, getPermanentQueueBufferBonus, hasPermanentBatchConsume, findNextInteractableId, getPermanentBrokerThroughputMult, BRIDGE_GOLD_COLOR } from '../store/gameStore';
 import { interpolatePath, normalizedSpeed, getSegmentSpeedScale, scaledTravelTime } from '../utils/pathUtils';
 import { computeOrthogonalWaypoints, computeVerticalFirstWaypoints } from '../utils/orthogonalPath';
+import { getClusterSlotCount, getNodeHalfExtents } from '../store/upgradeConfig';
 
 // Node card dimensions: positioned at left: x-60, top: y-28
 // Card width: 120px (half = 60), card height varies but ~56px
@@ -68,7 +69,8 @@ function tryBrokerRelay(brokerId: string, cap: number, now: number): boolean {
 function getBrokerCap(brokerComp: { upgrades: Record<string, number> }, permanentMult: number): number {
   const level = brokerComp.upgrades['increaseThroughput'] ?? 0;
   const bonus = level * (level + 9) / 2;
-  return (BROKER_BASE_THROUGHPUT + bonus) * permanentMult;
+  const slots = getClusterSlotCount(brokerComp.upgrades);
+  return (BROKER_BASE_THROUGHPUT + bonus) * permanentMult * slots;
 }
 
 /** Get current utilization ratio (0-1+) for a broker */
@@ -83,10 +85,10 @@ export function getBrokerUtilization(brokerId: string, cap: number): number {
  *  Returns the path AND the waypoint index of each node center in the path. */
 function rebuildPathFromNodeIds(
   nodeIds: string[],
-  components: { id: string; type: string; x: number; y: number }[],
+  components: { id: string; type: string; x: number; y: number; upgrades: Record<string, number> }[],
   connections?: { fromId: string; toId: string }[]
 ): { path: { x: number; y: number }[]; nodeWpIndices: number[] } {
-  const nodes: { id: string; type: string; x: number; y: number }[] = [];
+  const nodes: { id: string; type: string; x: number; y: number; upgrades: Record<string, number> }[] = [];
   for (const id of nodeIds) {
     const comp = components.find(c => c.id === id);
     if (comp) nodes.push(comp);
@@ -99,15 +101,14 @@ function rebuildPathFromNodeIds(
     if (Math.abs(a.y - b.y) >= 5) {
       // DMQ→broker uses vertical-first routing
       if (a.type === 'dmq' && b.type === 'broker') {
-        const halfH = 28;
-        const aHalfW = 60;
-        const bHalfW = 60;
-        const fromBounds = { left: a.x - aHalfW, right: a.x + aHalfW, top: a.y - halfH, bottom: a.y + halfH };
-        const toBounds = { left: b.x - bHalfW, right: b.x + bHalfW, top: b.y - halfH, bottom: b.y + halfH };
+        const aExtents = getNodeHalfExtents(a);
+        const bExtents = getNodeHalfExtents(b);
+        const fromBounds = { left: a.x - aExtents.halfW, right: a.x + aExtents.halfW, top: a.y - aExtents.halfH, bottom: a.y + aExtents.halfH };
+        const toBounds = { left: b.x - bExtents.halfW, right: b.x + bExtents.halfW, top: b.y - bExtents.halfH, bottom: b.y + bExtents.halfH };
         const startX = a.x;
-        const startY = a.y - halfH - 16; // top-center port
+        const startY = a.y - aExtents.halfH - 16; // top-center port
         const endX = b.x;
-        const endY = b.y + halfH + 2; // bottom edge of broker
+        const endY = b.y + bExtents.halfH + 2; // bottom edge of broker
         const segWaypoints = computeVerticalFirstWaypoints(startX, startY, endX, endY, fromBounds, toBounds);
         for (let w = 1; w < segWaypoints.length - 1; w++) {
           path.push(segWaypoints[w]);
@@ -121,22 +122,21 @@ function rebuildPathFromNodeIds(
         // Use connection direction for waypoint computation so dots follow the displayed SVG path
         const src = isReverseBridge ? b : a;
         const dst = isReverseBridge ? a : b;
-        const srcHalfW = src.type === 'queue' ? 70 : 60;
-        const dstHalfW = dst.type === 'queue' ? 70 : 60;
+        const { halfW: srcHalfW, halfH: srcHalfH } = getNodeHalfExtents(src);
+        const { halfW: dstHalfW, halfH: dstHalfH } = getNodeHalfExtents(dst);
         const portStartX = src.x + srcHalfW + 24;
         const portEndX = dst.x - dstHalfW - 2;
-        const halfH = 28;
         const fromBounds = {
           left: src.x - srcHalfW,
           right: src.x + srcHalfW + 24,
-          top: src.y - halfH,
-          bottom: src.y + halfH,
+          top: src.y - srcHalfH,
+          bottom: src.y + srcHalfH,
         };
         const toBounds = {
           left: dst.x - dstHalfW,
           right: dst.x + dstHalfW,
-          top: dst.y - halfH,
-          bottom: dst.y + halfH,
+          top: dst.y - dstHalfH,
+          bottom: dst.y + dstHalfH,
         };
         const segWaypoints = computeOrthogonalWaypoints(portStartX, src.y, portEndX, dst.y, fromBounds, toBounds);
         // For reverse bridges, reverse the intermediate waypoints so dot travels the displayed path backward
@@ -501,6 +501,17 @@ export function useGameLoop() {
               actualSpeed *= 0.4;
             }
 
+            // DMR Cluster nodes render much larger than a regular broker and hide dots
+            // behind an opaque background — speed through so it still feels instantaneous.
+            for (const comp of state.components) {
+              if (comp.type !== 'broker' || getClusterSlotCount(comp.upgrades) <= 1) continue;
+              const { halfW, halfH } = getNodeHalfExtents(comp);
+              if (Math.abs(eventPos.x - comp.x) <= halfW && Math.abs(eventPos.y - comp.y) <= halfH) {
+                actualSpeed *= 2.5;
+                break;
+              }
+            }
+
             let blocked = false;
             for (const comp of state.components) {
               if (comp.type === 'publisher' || comp.type === 'broker') continue;
@@ -523,20 +534,23 @@ export function useGameLoop() {
             const newProgress = Math.min(dot.progress + actualSpeed * dt, 1);
             const newPos = interpolatePath(dot.path, newProgress);
 
-            // Broker throughput cap (ingestion only): only the FIRST broker on the path
-            // counts against throughput. Bridged events flow freely through subsequent brokers.
+            // Broker throughput cap: every broker the dot passes through gates against its OWN
+            // cap (not just the first) — a bridge hop is a real relay, not a free pass, so
+            // chaining brokers no longer lets a route dodge capacity limits. The DMR Cluster
+            // upgrade is the intended way to raise a given broker's own ceiling instead.
             let brokerCapped = false;
             const now = performance.now();
-            const firstBroker = pathComps.find(pc => pc.comp.type === 'broker');
-            if (firstBroker) {
-              const brokerProgress = firstBroker.idx / (dot.path.length - 1);
+            for (const pc of pathComps) {
+              if (pc.comp.type !== 'broker') continue;
+              const brokerProgress = pc.idx / (dot.path.length - 1);
               if (dot.progress < brokerProgress && newProgress >= brokerProgress) {
-                const cap = getBrokerCap(firstBroker.comp, getPermanentBrokerThroughputMult(state));
-                if (!tryBrokerRelay(firstBroker.comp.id, cap, now)) {
+                const cap = getBrokerCap(pc.comp, getPermanentBrokerThroughputMult(state));
+                if (!tryBrokerRelay(pc.comp.id, cap, now)) {
                   droppedCount++;
-                  recordDrop(firstBroker.comp.id, 'broker-capped', firstBroker.comp.label);
-                  updated.push({ ...dot, status: 'dropped', dropX: firstBroker.comp.x, dropY: firstBroker.comp.y, dropVY: 0, color: dropColor } as Dot);
+                  recordDrop(pc.comp.id, 'broker-capped', pc.comp.label);
+                  updated.push({ ...dot, status: 'dropped', dropX: pc.comp.x, dropY: pc.comp.y, dropVY: 0, color: dropColor } as Dot);
                   brokerCapped = true;
+                  break;
                 }
               }
             }
@@ -1088,10 +1102,10 @@ export function useGameLoop() {
                 }
 
                 // Build fresh waypoints from current positions: broker → ... → subscriber
-                const routeNodes: { x: number; y: number; type: string; id: string }[] = [];
+                const routeNodes: { x: number; y: number; type: string; id: string; upgrades: Record<string, number> }[] = [];
                 for (const nid of nodeIdsFromBroker) {
                   const comp = state.components.find(c => c.id === nid);
-                  if (comp) routeNodes.push({ x: comp.x, y: comp.y, type: comp.type, id: comp.id });
+                  if (comp) routeNodes.push({ x: comp.x, y: comp.y, type: comp.type, id: comp.id, upgrades: comp.upgrades });
                 }
 
                 // Expand to orthogonal waypoints
@@ -1105,22 +1119,21 @@ export function useGameLoop() {
                       state.connections.some(c => c.fromId === b.id && c.toId === a.id);
                     const src = isReverseBridge ? b : a;
                     const dst = isReverseBridge ? a : b;
-                    const srcHalfW = src.type === 'queue' ? 70 : 60;
-                    const dstHalfW = dst.type === 'queue' ? 70 : 60;
+                    const { halfW: srcHalfW, halfH: srcHalfH } = getNodeHalfExtents(src);
+                    const { halfW: dstHalfW, halfH: dstHalfH } = getNodeHalfExtents(dst);
                     const portStartX = src.x + srcHalfW + 24;
                     const portEndX = dst.x - dstHalfW - 2;
-                    const halfH = 28;
                     const fromBounds = {
                       left: src.x - srcHalfW,
                       right: src.x + srcHalfW + 24,
-                      top: src.y - halfH,
-                      bottom: src.y + halfH,
+                      top: src.y - srcHalfH,
+                      bottom: src.y + srcHalfH,
                     };
                     const toBounds = {
                       left: dst.x - dstHalfW,
                       right: dst.x + dstHalfW,
-                      top: dst.y - halfH,
-                      bottom: dst.y + halfH,
+                      top: dst.y - dstHalfH,
+                      bottom: dst.y + dstHalfH,
                     };
                     const segWaypoints = computeOrthogonalWaypoints(portStartX, src.y, portEndX, dst.y, fromBounds, toBounds);
                     const intermediates = segWaypoints.slice(1, -1);
@@ -1133,15 +1146,14 @@ export function useGameLoop() {
                 }
 
                 // Build DMQ → broker path (vertical first, node-aware)
-                const halfH = 28;
-                const dmqHalfW = 60;
-                const brokerHalfW = 60;
+                const dmqExtents = getNodeHalfExtents(dmqComp);
+                const brokerExtents = getNodeHalfExtents(brokerTarget);
                 const dmqStartX = dmqComp.x;
-                const dmqStartY = dmqComp.y - halfH - 16; // top-center port
+                const dmqStartY = dmqComp.y - dmqExtents.halfH - 16; // top-center port
                 const brokerEndX = brokerTarget.x;
-                const brokerEndY = brokerTarget.y + halfH + 2; // bottom edge
-                const dmqFromBounds = { left: dmqComp.x - dmqHalfW, right: dmqComp.x + dmqHalfW, top: dmqComp.y - halfH, bottom: dmqComp.y + halfH };
-                const dmqToBounds = { left: brokerTarget.x - brokerHalfW, right: brokerTarget.x + brokerHalfW, top: brokerTarget.y - halfH, bottom: brokerTarget.y + halfH };
+                const brokerEndY = brokerTarget.y + brokerExtents.halfH + 2; // bottom edge
+                const dmqFromBounds = { left: dmqComp.x - dmqExtents.halfW, right: dmqComp.x + dmqExtents.halfW, top: dmqComp.y - dmqExtents.halfH, bottom: dmqComp.y + dmqExtents.halfH };
+                const dmqToBounds = { left: brokerTarget.x - brokerExtents.halfW, right: brokerTarget.x + brokerExtents.halfW, top: brokerTarget.y - brokerExtents.halfH, bottom: brokerTarget.y + brokerExtents.halfH };
                 const dmqToBroker = computeVerticalFirstWaypoints(dmqStartX, dmqStartY, brokerEndX, brokerEndY, dmqFromBounds, dmqToBounds);
                 // Combine: DMQ → broker → original route from broker
                 const fullPath = [...dmqToBroker, ...pathFromBroker];

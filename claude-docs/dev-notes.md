@@ -79,7 +79,7 @@
 ## Upgrade Implementation
 - Most per-component upgrade effects are read in `useGameLoop.ts` by looking up the component by position from the dot's path array. Global upgrade effects applied in `purchaseGlobalUpgrade` in `gameStore.ts`.
 - `getUpgradesForType` is duplicated in `NodeModal.tsx` and `NodeCard.tsx` — keep both in sync when adding new component types.
-- `UpgradeDef` has optional `hidden?: boolean`. Used for `topicFilterBoost`. `subscriptionBroaden` is conditionally hidden when queue has no `subscriptionTopic`.
+- `UpgradeDef` has optional `hidden?: boolean`. `subscriptionBroaden` is conditionally hidden when queue has no `subscriptionTopic`.
 
 ## DMQ Mechanics
 - DMQ catch detection runs inside the `dropped` dot branch of Pass 1 — checks `!dot.isRetry` to prevent infinite loops.

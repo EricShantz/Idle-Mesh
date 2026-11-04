@@ -10,9 +10,15 @@ import {
   queueUpgrades,
   subscriberUpgrades,
   dmqUpgrades,
-  getUpgradeCost,
-  getDmqBufferMaxLevel,
+  getEffectiveUpgradeCost,
+  getEffectiveMaxLevel,
+  isUpgradeVisible,
   getDmqSlotsPerRow,
+  getClusterSlotCount,
+  CLUSTER_HALF_W,
+  CLUSTER_HALF_H,
+  CLUSTER_SUBCARD_W,
+  CLUSTER_SUBCARD_H,
 } from '../store/upgradeConfig';
 import { canConnect } from '../utils/connectionRules';
 import { useViewport } from '../hooks/useViewport';
@@ -161,14 +167,12 @@ export function NodeCard({ component }: Props) {
   }, [isSubscriber, component.x, component.y, component.upgrades]);
 
   // Count affordable upgrades
-  const upgrades = getUpgradesForType(component.type).filter(d => !d.hidden && !(d.key === 'subscriptionBroaden' && !component.subscriptionTopic));
+  const upgrades = getUpgradesForType(component.type).filter(d => isUpgradeVisible(d, component));
   const affordableUpgradeCount = upgrades.filter(def => {
     const level = component.upgrades[def.key] ?? 0;
-    const effectiveMax = def.key === 'dmqBufferSize'
-      ? getDmqBufferMaxLevel(component.upgrades['dmqWidth'] ?? 0)
-      : def.maxLevel;
+    const effectiveMax = getEffectiveMaxLevel(def, component.upgrades);
     if (effectiveMax && level >= effectiveMax) return false; // maxed out
-    const cost = getUpgradeCost(def, level, costReduction);
+    const cost = getEffectiveUpgradeCost(def, level, costReduction, component.upgrades);
     return balance >= cost;
   }).length;
 
@@ -189,8 +193,10 @@ export function NodeCard({ component }: Props) {
 
   // Broker throughput utilization (0-1)
   const brokerThroughputMult = useGameStore(s => getPermanentBrokerThroughputMult(s));
+  const clusterSlots = getClusterSlotCount(component.upgrades);
+  const isCluster = component.type === 'broker' && clusterSlots > 1;
   const brokerUtilization = component.type === 'broker'
-    ? getBrokerUtilization(component.id, (8 + (component.upgrades['increaseThroughput'] ?? 0) * ((component.upgrades['increaseThroughput'] ?? 0) + 9) / 2) * brokerThroughputMult)
+    ? getBrokerUtilization(component.id, (8 + (component.upgrades['increaseThroughput'] ?? 0) * ((component.upgrades['increaseThroughput'] ?? 0) + 9) / 2) * brokerThroughputMult * clusterSlots)
     : 0;
 
   // Compute dot's normalized x-position through this webhook/broker (0→1), or -1 if none
@@ -380,7 +386,8 @@ export function NodeCard({ component }: Props) {
   };
 
   const screen = viewport.worldToScreen(component.x, component.y);
-  const halfW = isDmq ? dmqNodeWidth / 2 : 60;
+  const halfW = isCluster ? CLUSTER_HALF_W : (isDmq ? dmqNodeWidth / 2 : 60);
+  const halfH = isCluster ? CLUSTER_HALF_H : 28;
 
   return (
     <div
@@ -390,13 +397,118 @@ export function NodeCard({ component }: Props) {
       className="absolute flex flex-col items-center gap-1"
       style={{
         left: screen.x - halfW * zoom,
-        top: screen.y - 28 * zoom,
+        top: screen.y - halfH * zoom,
         zIndex: cursorGrabbing ? 50 : (isPublisher ? 30 : (component.type === 'subscriber' ? 20 : 26)),
         cursor: cursorGrabbing ? 'grabbing' : 'grab',
         transform: `scale(${zoom})`,
         transformOrigin: 'top left',
       }}
     >
+      {isCluster ? (
+        <div className="relative" style={{ width: CLUSTER_HALF_W * 2 }}>
+          <div
+            className="absolute rounded-xl pointer-events-none"
+            style={{
+              left: 0, top: 0, right: 0, bottom: 0,
+              border: `1.5px dashed ${isValidTarget ? '#22d3ee' : colors.border}99`,
+              background: '#0a0e1a',
+              boxShadow: isValidTarget ? '0 0 16px rgba(34,211,238,0.6), 0 0 30px rgba(34,211,238,0.3)' : 'none',
+            }}
+          />
+          <div
+            className="absolute text-[9px] font-mono tracking-wide pointer-events-none whitespace-nowrap"
+            style={{ top: -15, left: 4, color: colors.border + 'cc' }}
+          >
+            DMR Cluster
+          </div>
+          <button
+            onClick={handleUpgradeClick}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="absolute px-1.5 py-0.5 rounded-t cursor-pointer"
+            style={{
+              top: -16,
+              right: 8,
+              zIndex: affordableUpgradeCount > 0 ? 2 : 1,
+              borderTop: `1px solid ${affordableUpgradeCount > 0 ? colors.border : '#374151'}`,
+              borderLeft: `1px solid ${affordableUpgradeCount > 0 ? colors.border : '#374151'}`,
+              borderRight: `1px solid ${affordableUpgradeCount > 0 ? colors.border : '#374151'}`,
+              borderBottom: 'none',
+              background: affordableUpgradeCount > 0 ? `${colors.border}15` : '#1f2937',
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke={affordableUpgradeCount > 0 ? colors.border : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2 8L6 4L10 8" />
+            </svg>
+          </button>
+          <div className="relative grid grid-cols-2 gap-2" style={{ padding: 12 }}>
+            {Array.from({ length: 4 }).map((_, i) => {
+              const filled = i < clusterSlots;
+              // Slots fill in order — this slot only starts filling once every earlier slot is full,
+              // so the grid visually reads as "spilling over" left-to-right, top-to-bottom.
+              const subUtilization = Math.max(0, Math.min(1, brokerUtilization * clusterSlots - i));
+              return (
+                <div
+                  key={i}
+                  className="px-4 py-2 rounded-lg font-mono text-sm select-none flex flex-col items-center justify-center"
+                  style={{
+                    width: CLUSTER_SUBCARD_W,
+                    height: CLUSTER_SUBCARD_H,
+                    border: `1.5px ${filled ? 'solid' : 'dashed'} ${filled ? colors.border : colors.border + '55'}`,
+                    background: filled ? colors.bg : 'transparent',
+                    boxShadow: filled ? colors.glow : 'none',
+                    color: filled ? colors.border : colors.border + '55',
+                    opacity: filled ? 1 : 0.6,
+                  }}
+                  title={filled ? `Broker ${i + 1} of ${clusterSlots}` : 'Purchase "Add Cluster Slot" to unlock'}
+                >
+                  <div>Broker</div>
+                  {filled && (
+                    <div className="w-full mt-1 h-1 rounded-full overflow-hidden" style={{ background: '#1e293b' }}>
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{
+                          width: `${Math.min(subUtilization * 100, 100)}%`,
+                          background: subUtilization > 0.9 ? '#ef4444' : subUtilization > 0.7 ? '#f59e0b' : '#22c55e',
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div
+            onPointerDown={handleOutputPortDown}
+            className="absolute w-4 h-4 rounded-full border flex items-center justify-center group/port top-1/2 -right-6"
+            style={{
+              transform: 'translateY(-50%)',
+              cursor: 'crosshair',
+              background: '#1e293b',
+              borderColor: colors.border + '88',
+              transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
+            }}
+            title="Drag to connect"
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = colors.border;
+              e.currentTarget.style.background = colors.border + '22';
+              e.currentTarget.style.boxShadow = `0 0 8px ${colors.border}66`;
+              const path = e.currentTarget.querySelector('path');
+              if (path) path.setAttribute('stroke', colors.border);
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = colors.border + '88';
+              e.currentTarget.style.background = '#1e293b';
+              e.currentTarget.style.boxShadow = 'none';
+              const path = e.currentTarget.querySelector('path');
+              if (path) path.setAttribute('stroke', '#94a3b8');
+            }}
+          >
+            <svg width="8" height="8" viewBox="0 0 12 12" style={{ pointerEvents: 'none' }}>
+              <path d="M3 2 L9 6 L3 10" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+        </div>
+      ) : (
       <div className="relative" style={{ width: isDmq ? dmqNodeWidth : 120 }}>
         <button
           onClick={handleUpgradeClick}
@@ -603,6 +715,7 @@ export function NodeCard({ component }: Props) {
           )}
         </motion.div>
       </div>
+      )}
       {component.type === 'publisher' && component.topicSegments && (
         <div className="text-[8px] text-gray-500 font-mono text-center" style={{ maxWidth: 140, wordBreak: 'break-all' }}>
           {component.topicSegments.join('/')}

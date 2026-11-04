@@ -9,8 +9,10 @@ import {
   queueUpgrades,
   subscriberUpgrades,
   dmqUpgrades,
-  getUpgradeCost,
-  getDmqBufferMaxLevel,
+  getEffectiveUpgradeCost,
+  getEffectiveMaxLevel,
+  isUpgradeVisible,
+  getClusterSlotCount,
   type UpgradeDef,
 } from '../store/upgradeConfig';
 import { formatMoney } from '../utils/formatMoney';
@@ -28,7 +30,7 @@ function getUpgradesForType(type: string): UpgradeDef[] {
   }
 }
 
-function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number, _topic?: string, tierMultiplier: number = 1): string {
+function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number, _topic?: string, tierMultiplier: number = 1, clusterSlots: number = 1): string {
   const nextLevel = currentLevel + 1;
 
   switch (upgradeKey) {
@@ -88,11 +90,16 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number, _topic
     case 'increaseThroughput': {
       const curBonus = currentLevel * (currentLevel + 9) / 2;
       const nxtBonus = nextLevel * (nextLevel + 9) / 2;
-      return `${8 + curBonus} → ${8 + nxtBonus} events/sec`;
+      return `${(8 + curBonus) * clusterSlots} → ${(8 + nxtBonus) * clusterSlots} events/sec`;
     }
+
+    // Cluster slot count (starts at 2, each level adds one more broker)
+    case 'addClusterSlot':
+      return `${2 + currentLevel} → ${2 + nextLevel} brokers`;
 
     // One-time upgrades (no progression display)
     case 'upgradeToBroker':
+    case 'upgradeToCluster':
     case 'fanOut':
       return 'One-time';
 
@@ -128,8 +135,9 @@ export function NodeModal() {
   const node = components.find(c => c.id === selectedNodeId);
   if (!node) return null;
 
-  const upgrades = getUpgradesForType(node.type).filter(d => !d.hidden && !(d.key === 'subscriptionBroaden' && !node.subscriptionTopic));
+  const upgrades = getUpgradesForType(node.type).filter(d => isUpgradeVisible(d, node));
   if (upgrades.length === 0) return null;
+  const clusterSlots = getClusterSlotCount(node.upgrades);
 
   const zoom = viewport.ref.current.zoom;
   const screen = viewport.worldToScreen(node.x, node.y);
@@ -138,11 +146,9 @@ export function NodeModal() {
 
   const handleUpgrade = (def: UpgradeDef) => {
     const level = node.upgrades[def.key] ?? 0;
-    const effectiveMax = def.key === 'dmqBufferSize'
-      ? getDmqBufferMaxLevel(node.upgrades['dmqWidth'] ?? 0)
-      : def.maxLevel;
+    const effectiveMax = getEffectiveMaxLevel(def, node.upgrades);
     if (effectiveMax && level >= effectiveMax) return;
-    const cost = getUpgradeCost(def, level, costReduction);
+    const cost = getEffectiveUpgradeCost(def, level, costReduction, node.upgrades);
     if (spend(cost)) {
       upgradeComponent(node.id, def.key);
     }
@@ -150,13 +156,11 @@ export function NodeModal() {
 
   const handleBuyMax = (def: UpgradeDef) => {
     let level = node.upgrades[def.key] ?? 0;
-    const effectiveMax = def.key === 'dmqBufferSize'
-      ? getDmqBufferMaxLevel(node.upgrades['dmqWidth'] ?? 0)
-      : def.maxLevel;
+    const effectiveMax = getEffectiveMaxLevel(def, node.upgrades);
     let bought = 0;
     while (true) {
       if (effectiveMax && level >= effectiveMax) break;
-      const cost = getUpgradeCost(def, level, costReduction);
+      const cost = getEffectiveUpgradeCost(def, level, costReduction, node.upgrades);
       if (useGameStore.getState().balance < cost) break;
       if (!spend(cost)) break;
       upgradeComponent(node.id, def.key);
@@ -279,12 +283,10 @@ export function NodeModal() {
         <div className="flex flex-col gap-1.5">
           {upgrades.map(def => {
             const level = node.upgrades[def.key] ?? 0;
-            const effectiveMax = def.key === 'dmqBufferSize'
-              ? getDmqBufferMaxLevel(node.upgrades['dmqWidth'] ?? 0)
-              : def.maxLevel;
+            const effectiveMax = getEffectiveMaxLevel(def, node.upgrades);
             const maxed = effectiveMax ? level >= effectiveMax : false;
             const widthCapped = def.key === 'dmqBufferSize' && maxed;
-            const cost = getUpgradeCost(def, level, costReduction);
+            const cost = getEffectiveUpgradeCost(def, level, costReduction, node.upgrades);
             const canAfford = balance >= cost;
 
             const showMaxBtn = !maxed && canAfford && effectiveMax !== 1;
@@ -293,7 +295,7 @@ export function NodeModal() {
               let lvl = level;
               let bal = balance;
               while ((!effectiveMax || lvl < effectiveMax) && maxBuyCount < 100) {
-                const c = getUpgradeCost(def, lvl, costReduction);
+                const c = getEffectiveUpgradeCost(def, lvl, costReduction, node.upgrades);
                 if (bal < c) break;
                 bal -= c;
                 lvl++;
@@ -319,7 +321,8 @@ export function NodeModal() {
                     {['fasterConsumption', 'publishSpeed'].includes(def.key) && level > 0 && ` (${Math.min(level * (level + 9) / 2, 100)}%)`}
                     {def.key === 'eventValue' && level > 0 && ` ($${((1.0 + level * 0.45 + level * level * 0.05) * getPublisherTierMultiplier(node.upgrades['networkTier'])).toFixed(2)})`}
                     {def.key === 'consumptionValue' && level > 0 && ` (${(1.0 + level * 0.08 + level * level * 0.02).toFixed(2)}x)`}
-                    {def.key === 'increaseThroughput' && ` (${8 + level * (level + 9) / 2}/sec)`}
+                    {def.key === 'increaseThroughput' && ` (${(8 + level * (level + 9) / 2) * clusterSlots}/sec)`}
+                    {def.key === 'addClusterSlot' && ` (${2 + level} brokers)`}
                   </span>
                   {!maxed && <span className="text-[10px] opacity-50">Lv {level}</span>}
                 </div>
@@ -329,7 +332,7 @@ export function NodeModal() {
                     {computeBroadenedTopic(node.subscriptionSegments, level)} → {computeBroadenedTopic(node.subscriptionSegments, level + 1)}
                   </div>
                 ) : !maxed && (
-                  <div className="text-xs text-blue-300 mt-0.5">{getUpgradeValueDisplay(def.key, level, node.topic, getPublisherTierMultiplier(node.upgrades['networkTier']))}</div>
+                  <div className="text-xs text-blue-300 mt-0.5">{getUpgradeValueDisplay(def.key, level, node.topic, getPublisherTierMultiplier(node.upgrades['networkTier']), clusterSlots)}</div>
                 )}
                 <div className="mt-0.5 flex items-center justify-between">
                   <span>{maxed ? 'MAX' : formatMoney(cost)}</span>
