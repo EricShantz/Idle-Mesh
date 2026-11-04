@@ -199,28 +199,40 @@ export function hasPermanentBatchConsume(state: Pick<GameState, 'prestige'>): bo
   return (state.prestige.permanentUpgradeLevels['queueBatchConsume'] ?? 0) > 0;
 }
 
+// Single source of truth for the upgrade levels a component of a given type should
+// start with, based on currently-owned "start each run with X" prestige nodes. Used
+// both for components that already exist (reset / mid-run purchase of a node) and for
+// brand-new components bought via the shop, so a node never only affects "the first one".
+function getPermanentStartUpgrades(type: ComponentType, permanentUpgradeLevels: Record<string, number>): Record<string, number> {
+  const p = permanentUpgradeLevels;
+  const owns = (key: string) => (p[key] ?? 0) > 0;
+  const upgrades: Record<string, number> = {};
+  if (type === 'publisher') {
+    const autoPubLevel = owns('pubAutoPub2') ? 2 : owns('pubAutoPub1') ? 1 : 0;
+    if (autoPubLevel > 0) upgrades['autoPub'] = autoPubLevel;
+    if (owns('pubSpeed')) upgrades['publishSpeed'] = 1;
+  } else if (type === 'subscriber') {
+    if (owns('subConsumeSpeed')) upgrades['fasterConsumption'] = 1;
+    if (owns('subConsumeValue')) upgrades['consumptionValue'] = 1;
+  } else if (type === 'broker') {
+    if (owns('brokerThroughput')) upgrades['increaseThroughput'] = 1;
+    if (owns('brokerBridge')) upgrades['addBridgeSlot'] = 1;
+  } else if (type === 'queue') {
+    if (owns('queueBroaden')) upgrades['subscriptionBroaden'] = 1;
+  }
+  return upgrades;
+}
+
 // Apply "start each run with X" permanent prestige bonuses to existing components.
 // Uses Math.max so an already-upgraded component is never downgraded, and applies to
 // every matching component (not just "the first one") so this works both right after
 // a prestige reset (one component of each type) and immediately when a node is bought
-// mid-run (any number of components).
+// mid-run (any number of components, including ones bought after the node).
 function applyPermanentStartBonuses(draft: GameState) {
   const p = draft.prestige.permanentUpgradeLevels;
   const owns = (key: string) => (p[key] ?? 0) > 0;
 
-  // --- Publisher branch ---
-  const pubAutoPubLevel = owns('pubAutoPub2') ? 2 : owns('pubAutoPub1') ? 1 : 0;
-  for (const pub of draft.components) {
-    if (pub.type !== 'publisher') continue;
-    if (pubAutoPubLevel > 0) pub.upgrades['autoPub'] = Math.max(pub.upgrades['autoPub'] ?? 0, pubAutoPubLevel);
-    if (owns('pubSpeed')) pub.upgrades['publishSpeed'] = Math.max(pub.upgrades['publishSpeed'] ?? 0, 1);
-  }
-  if (owns('pubBatchStart')) {
-    draft.upgrades.batchFire = Math.max(draft.upgrades.batchFire, 2);
-    draft.globalUpgradeLevels['batchFire'] = Math.max(draft.globalUpgradeLevels['batchFire'] ?? 0, 1);
-  }
-
-  // --- Broker branch ---
+  // Convert webhook -> broker first so the broker-upgrade grants below also apply to it
   if (owns('brokerRoot')) {
     for (const webhook of draft.components) {
       if (webhook.type !== 'webhook') continue;
@@ -229,35 +241,27 @@ function applyPermanentStartBonuses(draft: GameState) {
       webhook.upgrades['upgradeToBroker'] = 1;
     }
   }
-  for (const broker of draft.components) {
-    if (broker.type !== 'broker') continue;
-    if (owns('brokerThroughput')) broker.upgrades['increaseThroughput'] = Math.max(broker.upgrades['increaseThroughput'] ?? 0, 1);
-    if (owns('brokerBridge')) broker.upgrades['addBridgeSlot'] = Math.max(broker.upgrades['addBridgeSlot'] ?? 0, 1);
-  }
 
-  // --- Subscriber branch ---
-  for (const sub of draft.components) {
-    if (sub.type !== 'subscriber') continue;
-    if (owns('subConsumeSpeed')) sub.upgrades['fasterConsumption'] = Math.max(sub.upgrades['fasterConsumption'] ?? 0, 1);
-    if (owns('subConsumeValue')) sub.upgrades['consumptionValue'] = Math.max(sub.upgrades['consumptionValue'] ?? 0, 1);
-  }
-
-  // --- Queue branch ---
-  if (owns('queueBroaden')) {
-    for (const queue of draft.components) {
-      if (queue.type !== 'queue') continue;
-      queue.upgrades['subscriptionBroaden'] = Math.max(queue.upgrades['subscriptionBroaden'] ?? 0, 1);
+  for (const comp of draft.components) {
+    if (comp.type !== 'publisher' && comp.type !== 'subscriber' && comp.type !== 'broker' && comp.type !== 'queue') continue;
+    const grants = getPermanentStartUpgrades(comp.type, p);
+    for (const [key, level] of Object.entries(grants)) {
+      comp.upgrades[key] = Math.max(comp.upgrades[key] ?? 0, level);
     }
   }
+
+  if (owns('pubBatchStart')) {
+    draft.upgrades.batchFire = Math.max(draft.upgrades.batchFire, 2);
+    draft.globalUpgradeLevels['batchFire'] = Math.max(draft.globalUpgradeLevels['batchFire'] ?? 0, 1);
+  }
+
   if (owns('queueFreeQueue') && !draft.components.some(c => c.type === 'queue')) {
     const brokerOrWebhook = draft.components.find(c => c.type === 'broker' || c.type === 'webhook');
     if (brokerOrWebhook) {
       const qId = `comp-${++componentIdCounter}`;
       const qx = Math.round(brokerOrWebhook.x + 150);
       const qy = brokerOrWebhook.y + 140;
-      const queueUpgrades: Record<string, number> = {};
-      if (owns('queueBroaden')) queueUpgrades['subscriptionBroaden'] = 1;
-      draft.components.push({ id: qId, type: 'queue', x: qx, y: qy, label: 'Queue', tags: {}, upgrades: queueUpgrades });
+      draft.components.push({ id: qId, type: 'queue', x: qx, y: qy, label: 'Queue', tags: {}, upgrades: getPermanentStartUpgrades('queue', p) });
       draft.connections.push({ id: `conn-${++connectionIdCounter}`, fromId: brokerOrWebhook.id, toId: qId });
     }
   }
@@ -830,15 +834,12 @@ export const useGameStore = create<GameState>()(
       addComponent: (type: ComponentType, x: number, y: number, label: string) => {
         const id = `comp-${++componentIdCounter}`;
         set(draft => {
-          const comp: GameComponent = { id, type, x, y, label, tags: {}, upgrades: {} };
+          const comp: GameComponent = { id, type, x, y, label, tags: {}, upgrades: getPermanentStartUpgrades(type, draft.prestige.permanentUpgradeLevels) };
           if (type === 'publisher') {
             const pubCount = draft.components.filter(c => c.type === 'publisher').length;
             const topic = getNextTopic(pubCount);
             comp.topic = topic;
             comp.topicSegments = topic.split('/');
-          }
-          if (type === 'queue' && (draft.prestige.permanentUpgradeLevels['queueBroaden'] ?? 0) > 0) {
-            comp.upgrades['subscriptionBroaden'] = 1;
           }
           draft.components.push(comp);
 
@@ -1383,6 +1384,14 @@ export const useGameStore = create<GameState>()(
       },
 
       wipeSaveAndRestart: () => {
+        // Suspend autosave first so a pending debounce timer or an unload-triggered
+        // flush (reload() fires `pagehide`) can't rewrite the save after we clear it.
+        saveSuspended = true;
+        if (saveTimeout) {
+          clearTimeout(saveTimeout);
+          saveTimeout = null;
+        }
+        pendingSnapshot = null;
         localStorage.removeItem(SAVE_KEY);
         window.location.reload();
       },
@@ -1401,12 +1410,16 @@ let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 let lastSaveSnapshot = '';
 let pendingSnapshot: string | null = null;
 let lastFlushTime = 0;
+// Set when the save is being deliberately wiped (e.g. restart-game), so a straggling
+// debounce timer or an unload-triggered flush can't resurrect the old save afterward.
+let saveSuspended = false;
 
 function flushSave() {
   if (saveTimeout) {
     clearTimeout(saveTimeout);
     saveTimeout = null;
   }
+  if (saveSuspended) return;
   if (pendingSnapshot === null) return;
   localStorage.setItem(SAVE_KEY, pendingSnapshot);
   lastFlushTime = Date.now();
@@ -1425,6 +1438,7 @@ function buildSaveSnapshot(state: GameState): string {
 }
 
 useGameStore.subscribe((state) => {
+  if (saveSuspended) return;
   const snapshot = buildSaveSnapshot(state);
   // Skip if only transient state (eventDots/recentEarnings) changed
   if (snapshot === lastSaveSnapshot) return;
