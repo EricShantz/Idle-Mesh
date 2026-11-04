@@ -6,6 +6,7 @@ import { topicMatches, computeBroadenedTopic } from '../utils/topicMatching';
 import { normalizedSpeed } from '../utils/pathUtils';
 import { computeOrthogonalWaypoints } from '../utils/orthogonalPath';
 import { getSmoothedFps } from '../hooks/useGameLoop';
+import { getNodeHalfExtents } from './upgradeConfig';
 import { prestigeNodes, isNodeAvailable, isNodePurchased, type PrestigeNode } from './prestigeUpgradeConfig';
 
 export type ComponentType = 'publisher' | 'webhook' | 'broker' | 'queue' | 'subscriber' | 'dmq';
@@ -561,22 +562,21 @@ export const useGameStore = create<GameState>()(
           const nodePath = [{ x: pub.x, y: pub.y }, { x: target.x, y: target.y }];
           const truncatedWaypoints: { x: number; y: number }[] = [nodePath[0]];
           if (Math.abs(nodePath[0].y - nodePath[1].y) >= 10) {
-            const pubHalfW = pub.type === 'queue' ? 70 : 60;
-            const tgtHalfW = target.type === 'queue' ? 70 : 60;
+            const { halfW: pubHalfW, halfH: pubHalfH } = getNodeHalfExtents(pub);
+            const { halfW: tgtHalfW, halfH: tgtHalfH } = getNodeHalfExtents(target);
             const portStartX = pub.x + pubHalfW + 24;
             const portEndX = target.x - tgtHalfW - 2;
-            const halfH = 28;
             const fromBounds = {
               left: pub.x - pubHalfW,
               right: pub.x + pubHalfW + 24,
-              top: pub.y - halfH,
-              bottom: pub.y + halfH,
+              top: pub.y - pubHalfH,
+              bottom: pub.y + pubHalfH,
             };
             const toBounds = {
               left: target.x - tgtHalfW,
               right: target.x + tgtHalfW,
-              top: target.y - halfH,
-              bottom: target.y + halfH,
+              top: target.y - tgtHalfH,
+              bottom: target.y + tgtHalfH,
             };
             const segWaypoints = computeOrthogonalWaypoints(portStartX, pub.y, portEndX, target.y, fromBounds, toBounds);
             for (let w = 1; w < segWaypoints.length - 1; w++) {
@@ -877,6 +877,11 @@ export const useGameStore = create<GameState>()(
               if (!draft.tutorialsSeen['brokerUpgrade']) {
                 draft.activeTutorial = 'brokerUpgrade';
               }
+            }
+            // Clustering a broker keeps its type (all broker connection/routing rules still
+            // apply) — it just relabels and unlocks uncapped throughput via slot upgrades.
+            if (upgradeKey === 'upgradeToCluster' && comp.type === 'broker') {
+              comp.label = 'DMR Cluster';
             }
             // Tutorial for first fan-out purchase
             if (upgradeKey === 'fanOut' && !draft.tutorialsSeen['firstFanOut']) {
@@ -1330,22 +1335,21 @@ export const useGameStore = create<GameState>()(
               const dst = isReverseBridge ? a : b;
               const srcNode = isReverseBridge ? bNode : aNode;
               const dstNode = isReverseBridge ? aNode : bNode;
-              const srcHalfW = srcNode?.type === 'queue' ? 70 : 60;
-              const dstHalfW = dstNode?.type === 'queue' ? 70 : 60;
+              const { halfW: srcHalfW, halfH: srcHalfH } = srcNode ? getNodeHalfExtents(srcNode) : { halfW: 60, halfH: 28 };
+              const { halfW: dstHalfW, halfH: dstHalfH } = dstNode ? getNodeHalfExtents(dstNode) : { halfW: 60, halfH: 28 };
               const portStartX = src.x + srcHalfW + 24; // port right edge
               const portEndX = dst.x - dstHalfW - 2;    // target left edge
-              const halfH = 28;
               const fromBounds = {
                 left: src.x - srcHalfW,
                 right: src.x + srcHalfW + 24,
-                top: src.y - halfH,
-                bottom: src.y + halfH,
+                top: src.y - srcHalfH,
+                bottom: src.y + srcHalfH,
               };
               const toBounds = {
                 left: dst.x - dstHalfW,
                 right: dst.x + dstHalfW,
-                top: dst.y - halfH,
-                bottom: dst.y + halfH,
+                top: dst.y - dstHalfH,
+                bottom: dst.y + dstHalfH,
               };
               const segWaypoints = computeOrthogonalWaypoints(portStartX, src.y, portEndX, dst.y, fromBounds, toBounds);
               const intermediates = segWaypoints.slice(1, -1);

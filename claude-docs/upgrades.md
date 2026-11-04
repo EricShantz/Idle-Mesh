@@ -22,8 +22,11 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 |---|---|---|---|---|
 | Add Queue Slot | **Functional**: max queue connections = 1 + level | $40 | ×2 | unlimited |
 | Add Bridge Slot | **Functional**: max broker-to-broker connections = 0 + level. **Both brokers consume a slot** — a single drag connects them bidirectionally, but each broker's slot count is decremented. | $80 | ×2.5 | unlimited |
-| Increase Throughput | **Functional**: raises ingestion cap = `8 + level*(level+9)/2` events/sec. Ingestion-only — bridged events don't count. | $100 | ×2.2 | 10 (103/sec) |
-| Topic Filter Boost | Hidden in UI (effect not yet defined) | $60 | ×2 | — |
+| Increase Throughput | **Functional**: raises ingestion cap = `8 + level*(level+9)/2` events/sec (×cluster slot count, see below). Ingestion-only — bridged events don't count. | $100 | ×2.2 | 10 (103/sec) until clustered, then unlimited |
+| Upgrade to DMR Cluster | **Functional, one-time**: hidden until Increase Throughput is maxed. Relabels to "DMR Cluster", keeps `type: 'broker'` (all existing broker connection/routing rules still apply unchanged), starts with 2 broker slots, and removes Increase Throughput's level cap permanently. | $250,000 | — | 1 |
+| Add Cluster Slot | **Functional**: hidden until DMR Cluster is purchased. Each level adds one more broker to the cluster (2 → 3 → 4), multiplying the combined throughput cap by the slot count. | $150,000 | ×4 | 2 (4 total slots) |
+
+**DMR Cluster throughput cost curve**: once clustered, Increase Throughput keeps leveling past 10 with no cap, but the cost multiplier eases from ×2.2 to ×2.0 for levels 10+ (base $150,000 for level 10→11) — see `getEffectiveUpgradeCost` / `getThroughputCostAtLevel` in `upgradeConfig.ts`. This is the intended permanent fix for broker overload at max throughput — previously the only option was building a disconnected second mesh.
 
 ### Queue
 | Upgrade | Effect | Base Cost | Multiplier |

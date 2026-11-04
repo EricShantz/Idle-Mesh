@@ -9,6 +9,7 @@ import { formatMoney } from '../utils/formatMoney';
 import { canConnect } from '../utils/connectionRules';
 import { buildOrthogonalSvgPath, buildVerticalFirstSvgPath } from '../utils/orthogonalPath';
 import { ViewportContext, useViewportApi } from '../hooks/useViewport';
+import { getNodeHalfExtents } from '../store/upgradeConfig';
 
 const MIN_ZOOM = 0.15;
 const MAX_ZOOM = 4;
@@ -152,8 +153,9 @@ function MeshCanvasInner({ viewport }: { viewport: ReturnType<typeof useViewport
     for (const comp of components) {
       if (comp.id === draggingConnection.fromId) continue;
       if (from && !canConnect(from.type, comp.type)) continue;
-      const padX = 70;
-      const padY = 38;
+      const { halfW, halfH } = getNodeHalfExtents(comp);
+      const padX = halfW + 10;
+      const padY = halfH + 10;
       if (Math.abs(mx - comp.x) <= padX && Math.abs(my - comp.y) <= padY) {
         const dist = Math.hypot(mx - comp.x, my - comp.y);
         if (dist < bestDist) {

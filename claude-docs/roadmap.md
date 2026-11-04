@@ -19,6 +19,7 @@
 - [x] Publisher Network Tier (each publisher purchased raises its own base event value by 10% over the previous one, by purchase order; capped at 24 publishers total)
 - [x] Broker Bridge Value Bonus (events crossing a broker-to-broker bridge earn +50% value and render as gold dots once they exit the broker they bridge from)
 - [x] Queue Value Bonus (events routed through a queue earn +5% value, stacking with the bridge bonus)
+- [x] DMR Cluster (broker upgrade, hidden until throughput is maxed — relabels broker to "DMR Cluster", uncaps Increase Throughput, and adds purchasable cluster slots up to 4x combined capacity; fixes the "only option is a separate mesh" dead-end at max broker throughput)
 
 ---
 
@@ -26,7 +27,6 @@
 
 ### Tier 3: Advanced / Idle Scaling
 - [ ] **Event Mesh Visualization** — color-code connection lines by topic
-- [ ] ~~**Topic-Based Earnings**~~ — removed: value tiers and specificity bonus were too complex for users
 
 ---
 

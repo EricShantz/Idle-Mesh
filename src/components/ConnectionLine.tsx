@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useGameStore, type Connection } from '../store/gameStore';
 import { buildOrthogonalSvgPath, buildVerticalFirstSvgPath, type NodeBounds } from '../utils/orthogonalPath';
 import { useViewport } from '../hooks/useViewport';
+import { getNodeHalfExtents } from '../store/upgradeConfig';
 
 type Props = {
   conn: Connection;
@@ -23,6 +24,9 @@ export function ConnectionLine({ conn }: Props) {
     return null;
   }
 
+  const { halfW: fromHalfWFull, halfH: fromHalfH } = getNodeHalfExtents(from);
+  const { halfW: toHalfWFull, halfH: toHalfH } = getNodeHalfExtents(to);
+
   // Output port center: depends on node type
   let startX: number;
   let startY: number;
@@ -32,8 +36,7 @@ export function ConnectionLine({ conn }: Props) {
     startX = from.x;
     startY = from.y - 28 - 16; // top edge - port offset
   } else {
-    const fromHalfW = from.type === 'queue' ? 70 : 60;
-    const portCX = from.x + fromHalfW + 16;
+    const portCX = from.x + fromHalfWFull + 16;
     const portCY = from.y;
     const portR = 8;
     startX = portCX + portR;
@@ -45,18 +48,13 @@ export function ConnectionLine({ conn }: Props) {
   let endY: number;
   if (from.type === 'dmq') {
     endX = to.x;
-    endY = to.y + 28 + 2; // bottom edge of broker
+    endY = to.y + toHalfH + 2; // bottom edge of broker
   } else {
-    const toHalfW = to.type === 'queue' ? 70 : 60;
-    endX = to.x - toHalfW - 2;
+    endX = to.x - toHalfWFull - 2;
     endY = to.y;
   }
 
   // Compute node bounding boxes for routing
-  const fromHalfH = 28;
-  const toHalfH = 28;
-  const fromHalfWFull = from.type === 'queue' ? 70 : 60;
-  const toHalfWFull = to.type === 'queue' ? 70 : 60;
   const fromBounds: NodeBounds = {
     left: from.x - fromHalfWFull,
     right: from.x + fromHalfWFull + 24, // include output port
