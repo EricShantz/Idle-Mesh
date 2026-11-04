@@ -130,6 +130,7 @@
 - `prestige` state holds `points`, `totalPoints`, `count`, `permanentUpgradeLevels: Record<string, number>`.
 - Prestige awards points on a scaling triangular curve: Nth point costs $N million (1st=$1M, 2nd=$2M, 3rd=$3M...). Lifetime Earnings for N points = N*(N+1)/2 million. Formula: `N = floor((-1 + sqrt(1 + 8 * totalEarned/1M)) / 2)`.
 - `performPrestige()` resets all run state while preserving `prestige` and `tutorialsSeen`. Post-reset applies permanent node effects.
+- **Queue Head Start** (`queueFreeQueue`) is granted by `grantHeadStartQueue(draft)`, which requires an actual `broker` (not a webhook — queues need a broker in normal play too). It runs from `applyPermanentStartBonuses` (reset / node purchase) and again from the `upgradeToBroker` branch of `upgradeComponent`, so a run without Broker Affinity gets its queue the moment the webhook is upgraded. If the broker feeds a subscriber directly (the starter chain), that link is replaced with broker → queue → subscriber, the queue is placed on the broker's row halfway to the subscriber (subscriber nudged right to keep a 400px gap), and the queue inherits the feeding publisher's topic (respecting a `queueBroaden` start level). No-ops if any queue already exists.
 - `showPrestigeTree` (transient, excluded from save) controls full-page tree view.
 
 ## Prestige Tree

@@ -294,16 +294,56 @@ function applyPermanentStartBonuses(draft: GameState) {
     draft.globalUpgradeLevels['batchFire'] = Math.max(draft.globalUpgradeLevels['batchFire'] ?? 0, 1);
   }
 
-  if (owns('queueFreeQueue') && !draft.components.some(c => c.type === 'queue')) {
-    const brokerOrWebhook = draft.components.find(c => c.type === 'broker' || c.type === 'webhook');
-    if (brokerOrWebhook) {
-      const qId = `comp-${++componentIdCounter}`;
-      const qx = Math.round(brokerOrWebhook.x + 150);
-      const qy = brokerOrWebhook.y + 140;
-      draft.components.push({ id: qId, type: 'queue', x: qx, y: qy, label: 'Queue', tags: {}, upgrades: getPermanentStartUpgrades('queue', p) });
-      draft.connections.push({ id: `conn-${++connectionIdCounter}`, fromId: brokerOrWebhook.id, toId: qId });
-    }
+  grantHeadStartQueue(draft);
+}
+
+// "Queue Head Start" prestige node: the free queue is only placed once a broker exists,
+// because queues can't hang off a webhook in normal play either (the shop item requires
+// a broker). Called from applyPermanentStartBonuses (reset / node purchase) and again
+// from the webhook → broker upgrade so a run without Broker Affinity still gets its
+// queue the moment it becomes eligible. The queue is spliced *into* the starter chain
+// (publisher → broker → queue → subscriber) rather than dangling off the broker next to
+// the existing broker → subscriber link, and it inherits the publisher's topic the same
+// way a hand-wired queue would.
+function grantHeadStartQueue(draft: GameState) {
+  const p = draft.prestige.permanentUpgradeLevels;
+  if ((p['queueFreeQueue'] ?? 0) <= 0) return;
+  if (draft.components.some(c => c.type === 'queue')) return;
+  const broker = draft.components.find(c => c.type === 'broker');
+  if (!broker) return;
+
+  const qId = `comp-${++componentIdCounter}`;
+  const queue: GameComponent = { id: qId, type: 'queue', x: broker.x + 150, y: broker.y + 140, label: 'Queue', tags: {}, upgrades: getPermanentStartUpgrades('queue', p) };
+
+  // Subscribe to whichever publisher feeds this broker (mirrors completeDragConnection's auto-assign)
+  const pubConn = draft.connections.find(c => c.toId === broker.id && draft.components.find(k => k.id === c.fromId)?.type === 'publisher');
+  const pub = pubConn ? draft.components.find(c => c.id === pubConn.fromId) : undefined;
+  if (pub?.topic) {
+    queue.subscriptionTopic = pub.topic;
+    queue.subscriptionSegments = [...(pub.topicSegments ?? pub.topic.split('/'))];
+    const broaden = queue.upgrades['subscriptionBroaden'] ?? 0;
+    if (broaden > 0) queue.subscriptionTopic = computeBroadenedTopic(queue.subscriptionSegments, broaden);
   }
+
+  // Splice between the broker and a subscriber it feeds directly (the starter layout).
+  const directSubConn = draft.connections.find(c => c.fromId === broker.id && draft.components.find(k => k.id === c.toId)?.type === 'subscriber');
+  const sub = directSubConn ? draft.components.find(c => c.id === directSubConn.toId) : undefined;
+  if (directSubConn && sub) {
+    // Sit the queue on the broker's row halfway to the subscriber; nudge the subscriber
+    // right if the gap is too tight for a queue card plus ports.
+    const MIN_GAP = 400;
+    if (sub.x - broker.x < MIN_GAP) sub.x = broker.x + MIN_GAP;
+    queue.x = Math.round((broker.x + sub.x) / 2);
+    queue.y = broker.y;
+    draft.connections = draft.connections.filter(c => c.id !== directSubConn.id);
+    draft.components.push(queue);
+    draft.connections.push({ id: `conn-${++connectionIdCounter}`, fromId: broker.id, toId: qId });
+    draft.connections.push({ id: `conn-${++connectionIdCounter}`, fromId: qId, toId: sub.id });
+    return;
+  }
+
+  draft.components.push(queue);
+  draft.connections.push({ id: `conn-${++connectionIdCounter}`, fromId: broker.id, toId: qId });
 }
 
 let dotIdCounter = 0;
@@ -920,6 +960,8 @@ export const useGameStore = create<GameState>()(
               if (!draft.tutorialsSeen['brokerUpgrade']) {
                 draft.activeTutorial = 'brokerUpgrade';
               }
+              // A Queue Head Start that was waiting on a broker lands now
+              grantHeadStartQueue(draft);
             }
             // Clustering a broker keeps its type (all broker connection/routing rules still
             // apply) — it just relabels and unlocks uncapped throughput via slot upgrades.
