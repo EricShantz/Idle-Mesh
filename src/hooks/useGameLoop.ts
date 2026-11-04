@@ -12,6 +12,9 @@ const NODE_BOTTOM_OFFSET = 28; // from center to bottom edge (generous to cover 
 
 const DOT_RADIUS = 6;
 
+/** Longest frame delta the simulation will step by (~10fps); larger gaps are treated as a pause. */
+const MAX_FRAME_DT_MS = 100;
+
 const BROKER_BASE_THROUGHPUT = 8; // events/sec
 
 /** Rolling window of relay timestamps per broker for throughput cap */
@@ -287,7 +290,12 @@ export function useGameLoop() {
   useEffect(() => {
     const loop = (time: number) => {
       if (lastTimeRef.current === 0) lastTimeRef.current = time;
-      const dt = time - lastTimeRef.current;
+      // Clamp the frame delta. requestAnimationFrame stops while the tab is hidden but the
+      // clock doesn't, so the first frame back would otherwise get a dt of the whole absence —
+      // every dot slams to its destination at once and the queue releases the entire pile
+      // spread across that one enormous "frame". Capping it means a return from a tab switch
+      // just resumes at normal pace (and ordinary hitches can't teleport dots either).
+      const dt = Math.min(time - lastTimeRef.current, MAX_FRAME_DT_MS);
       lastTimeRef.current = time;
 
       // Update smoothed FPS for adaptive coin pop throttling
@@ -326,6 +334,27 @@ export function useGameLoop() {
             queueBacklogCounts.set(d.queuedAtNodeId, (queueBacklogCounts.get(d.queuedAtNodeId) ?? 0) + 1);
           }
         }
+        // Per-frame component lookups. Pass 1 used to re-scan the component list for every
+        // dot (webhook lookup, DMR cluster bounds, and matching each path waypoint to a node),
+        // which at ~1,500 live dots was ~100k comparisons per frame.
+        const webhookComponent = state.components.find(c => c.type === 'webhook');
+        const clusterBounds = state.components
+          .filter(c => c.type === 'broker' && getClusterSlotCount(c.upgrades) > 1)
+          .map(c => ({ x: c.x, y: c.y, ...getNodeHalfExtents(c) }));
+        // Node waypoints in every path builder are exact copies of a component's x/y, so an
+        // exact rounded key is a faithful replacement for the old `< 1px` linear scan; the hit
+        // is still verified against that tolerance below. First-wins on a key collision mirrors
+        // the old `find` returning the first match.
+        const posKey = (x: number, y: number) => `${Math.round(x)},${Math.round(y)}`;
+        const componentByPos = new Map<string, typeof state.components[0]>();
+        const componentById = new Map<string, typeof state.components[0]>();
+        for (const c of state.components) {
+          const k = posKey(c.x, c.y);
+          if (!componentByPos.has(k)) componentByPos.set(k, c);
+          componentById.set(c.id, c);
+        }
+        const connectionKeys = new Set<string>();
+        for (const c of state.connections) connectionKeys.add(`${c.fromId}->${c.toId}`);
 
         for (let i = 0; i < dots.length; i++) {
           let dot = dots[i];
@@ -447,7 +476,8 @@ export function useGameLoop() {
             const pathComps: { comp: typeof state.components[0]; idx: number }[] = [];
             for (let wp = 0; wp < dot.path.length; wp++) {
               const pt = dot.path[wp];
-              const comp = state.components.find(c => Math.abs(c.x - pt.x) < 1 && Math.abs(c.y - pt.y) < 1);
+              const hit = componentByPos.get(posKey(pt.x, pt.y));
+              const comp = hit && Math.abs(hit.x - pt.x) < 1 && Math.abs(hit.y - pt.y) < 1 ? hit : undefined;
               if (comp && (pathComps.length === 0 || pathComps[pathComps.length - 1].comp.id !== comp.id)) {
                 pathComps.push({ comp, idx: wp });
               }
@@ -461,7 +491,7 @@ export function useGameLoop() {
             // sit on the path geometry.
             let pathInvalid = false;
             const validationNodes = dot.originalNodeIds
-              ? dot.originalNodeIds.map(id => state.components.find(c => c.id === id)).filter(Boolean) as typeof state.components
+              ? dot.originalNodeIds.map(id => componentById.get(id)).filter(Boolean) as typeof state.components
               : pathComps.map(pc => pc.comp);
             if (dot.originalNodeIds) {
               // Validate using authoritative node IDs — no geometric ambiguity
@@ -469,10 +499,8 @@ export function useGameLoop() {
                 const a = validationNodes[ni];
                 const b = validationNodes[ni + 1];
                 const bothBrokers = a.type === 'broker' && b.type === 'broker';
-                const connExists = state.connections.some(c =>
-                  (c.fromId === a.id && c.toId === b.id) ||
-                  (bothBrokers && c.fromId === b.id && c.toId === a.id)
-                );
+                const connExists = connectionKeys.has(`${a.id}->${b.id}`) ||
+                  (bothBrokers && connectionKeys.has(`${b.id}->${a.id}`));
                 if (!connExists) {
                   pathInvalid = true;
                   break;
@@ -485,10 +513,8 @@ export function useGameLoop() {
                 const a = pathComps[pc].comp;
                 const b = pathComps[pc + 1].comp;
                 const bothBrokers = a.type === 'broker' && b.type === 'broker';
-                const connExists = state.connections.some(c =>
-                  (c.fromId === a.id && c.toId === b.id) ||
-                  (bothBrokers && c.fromId === b.id && c.toId === a.id)
-                );
+                const connExists = connectionKeys.has(`${a.id}->${b.id}`) ||
+                  (bothBrokers && connectionKeys.has(`${b.id}->${a.id}`));
                 if (!connExists) {
                   pathInvalid = true;
                   break;
@@ -508,17 +534,14 @@ export function useGameLoop() {
             // Scale speed by segment length ratio so dots move at constant pixel speed
             actualSpeed *= getSegmentSpeedScale(dot.path, dot.progress);
 
-            const webhookComponent = state.components.find(c => c.type === 'webhook');
             if (webhookComponent && dotTouchesNode(eventPos.x, eventPos.y, webhookComponent.x, webhookComponent.y)) {
               actualSpeed *= 0.4;
             }
 
             // DMR Cluster nodes render much larger than a regular broker and hide dots
             // behind an opaque background — speed through so it still feels instantaneous.
-            for (const comp of state.components) {
-              if (comp.type !== 'broker' || getClusterSlotCount(comp.upgrades) <= 1) continue;
-              const { halfW, halfH } = getNodeHalfExtents(comp);
-              if (Math.abs(eventPos.x - comp.x) <= halfW && Math.abs(eventPos.y - comp.y) <= halfH) {
+            for (const cb of clusterBounds) {
+              if (Math.abs(eventPos.x - cb.x) <= cb.halfW && Math.abs(eventPos.y - cb.y) <= cb.halfH) {
                 actualSpeed *= 2.5;
                 break;
               }
@@ -1352,6 +1375,10 @@ export function useAutoPublisher() {
     // Poll every 100ms and attempt to fire for each auto-click publisher
     // The cooldown check inside fireEvent naturally gates the rate
     const timer = setInterval(() => {
+      // The frame loop is suspended while the tab is hidden, but this interval isn't (just
+      // throttled) — firing would pile up dots with nothing moving them, all of which would
+      // then flood the mesh the moment the tab comes back.
+      if (document.hidden) return;
       const state = useGameStore.getState();
       const publishers = state.components.filter(c => c.type === 'publisher');
       for (const pub of publishers) {
