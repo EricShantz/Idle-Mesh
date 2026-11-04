@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useGameStore, nextDotId, getPermanentQueueBufferBonus, hasPermanentBatchConsume, findNextInteractableId, getPermanentBrokerThroughputMult, BRIDGE_GOLD_COLOR } from '../store/gameStore';
+import { useGameStore, nextDotId, getPermanentQueueBufferBonus, findNextInteractableId, getPermanentBrokerThroughputMult, BRIDGE_GOLD_COLOR } from '../store/gameStore';
 import { interpolatePath, normalizedSpeed, getSegmentSpeedScale, scaledTravelTime } from '../utils/pathUtils';
 import { computeOrthogonalWaypoints, computeVerticalFirstWaypoints } from '../utils/orthogonalPath';
 import { getClusterSlotCount, getNodeHalfExtents } from '../store/upgradeConfig';
@@ -29,7 +29,6 @@ let lastDmqReleaseTime = 0;
 
 /** Last release timestamp per queue — safety net during drag to prevent rapid draining */
 const queueLastReleaseTime = new Map<string, number>();
-
 /** Drop reason tracking for the warning "!" button */
 export type DropReason = 'path-invalid' | 'webhook-occupied' | 'broker-capped' | 'queue-full' | 'subscriber-occupied' | 'path-incomplete';
 
@@ -314,6 +313,19 @@ export function useGameLoop() {
         let dmqQueuedCount = dmqCompForCount
           ? dots.filter(d => d.status === 'queued' && d.queuedAtNodeId === dmqCompForCount.id).length
           : 0;
+        // Per-queue BACKLOG from the previous frame: dots still waiting because the subscriber
+        // couldn't take them. This — not the running count including this frame's arrivals —
+        // is what the buffer limit gates on. Arrivals happen (Pass 1) before releases (Pass 2)
+        // within a frame, so counting same-frame arrivals meant a burst larger than the buffer
+        // dropped its tail as "queue-full" even though Pass 2 drained the whole buffer a moment
+        // later. A dot that arrives and leaves within one tick never really held a slot; buffer
+        // depth only matters once the consumer actually falls behind.
+        const queueBacklogCounts = new Map<string, number>();
+        for (const d of dots) {
+          if (d.status === 'queued' && d.queuedAtNodeId) {
+            queueBacklogCounts.set(d.queuedAtNodeId, (queueBacklogCounts.get(d.queuedAtNodeId) ?? 0) + 1);
+          }
+        }
 
         for (let i = 0; i < dots.length; i++) {
           let dot = dots[i];
@@ -618,11 +630,16 @@ export function useGameLoop() {
               }
             }
 
-            // Bridge color switch: once the dot passes the broker it exits before crossing
-            // a bridge, flip it gold in place (it stays cyan for the publisher→broker leg).
+            // Bridge color switch: once the dot's progress passes the broker it exits before
+            // crossing a bridge, flip it gold in place (it stays cyan for the publisher→broker
+            // leg). Progress-based, not pixel-touch — normalizedSpeed scales per-frame pixel
+            // displacement up for longer paths (so total travel time stays consistent), and a
+            // long path between far-apart DMR clusters can jump clean over a pixel-proximity
+            // check in a single frame. A progress-fraction crossing can't be skipped that way.
             if (dot.bridgeGoldAfterNodeId) {
-              const bridgeExitComp = state.components.find(c => c.id === dot.bridgeGoldAfterNodeId);
-              if (bridgeExitComp && dotTouchesNode(newPos.x, newPos.y, bridgeExitComp.x, bridgeExitComp.y)) {
+              const exitPc = pathComps.find(pc => pc.comp.id === dot.bridgeGoldAfterNodeId);
+              const exitProgress = exitPc ? exitPc.idx / (dot.path.length - 1) : null;
+              if (exitProgress === null || newProgress >= exitProgress) {
                 dot = { ...dot, color: BRIDGE_GOLD_COLOR, bridgeGoldAfterNodeId: undefined };
               }
             }
@@ -654,13 +671,23 @@ export function useGameLoop() {
                 : dotTouchesNode(newPos.x, newPos.y, queue.x, queue.y);
               if (reachedByProgress || touchesQueue) {
                 const bufferSize = 3 + (queue.upgrades['bufferSize'] ?? 0) + getPermanentQueueBufferBonus(state);
-                // Count from the already-processed updated array for accurate counts
-                const queuedCount = updated.filter(d =>
-                  d.status === 'queued' && d.queuedAtNodeId === queue.id
-                ).length;
+                // Gate on last frame's backlog, not on dots that arrived earlier this same frame
+                // (see queueBacklogCounts above for why).
+                const queuedCount = queueBacklogCounts.get(queue.id) ?? 0;
 
                 if (queuedCount < bufferSize) {
-                  updated.push({ ...dot, status: 'queued', pauseStartTime: Date.now(), queuedAtNodeId: queue.id, progress: newProgress } as Dot);
+                  // A queue always sits downstream of any bridge hop (bridges are broker-to-
+                  // broker only), so reaching one means the bridge-exit broker was already
+                  // passed. If bridgeGoldAfterNodeId is still set, the per-frame touch-box
+                  // check for that broker was skipped — at high speed a dot's progress can
+                  // jump past a narrow touch window in a single frame. Resolve it here instead
+                  // of carrying it forward: the dot's eventual release path is a short direct
+                  // queue→subscriber hop that never revisits the bridge-exit broker's position,
+                  // so a missed trigger could otherwise never fire and the dot stays cyan forever.
+                  const resolvedDot = dot.bridgeGoldAfterNodeId
+                    ? { ...dot, color: BRIDGE_GOLD_COLOR, bridgeGoldAfterNodeId: undefined }
+                    : dot;
+                  updated.push({ ...resolvedDot, status: 'queued', pauseStartTime: Date.now(), queuedAtNodeId: queue.id, progress: newProgress } as Dot);
                 } else {
                   droppedCount++;
                   recordDrop(queue.id, 'queue-full', queue.label);
@@ -802,19 +829,32 @@ export function useGameLoop() {
           return Math.max(0, 1 - catchDist / (lastSegLen * totalSegments));
         };
 
-        // --- Pass 2: auto-release queued dots (1 per queue, or up to 3 with Prefetch prestige) ---
-        const batchConsume = hasPermanentBatchConsume(state);
-        const maxReleasesPerQueue = batchConsume ? 3 : 1;
-        const queueReleaseCounts = new Map<string, number>();
+        // --- Pass 2: auto-release queued dots. Each queue is processed as its own strict
+        // FIFO chain, sorted oldest-first, releasing down the list until the chained timing
+        // in shouldReleaseTo says the subscriber can't take another (or the queue is empty).
+        // There is deliberately no fixed per-frame release count: a maxed pipeline delivers
+        // several hundred events/sec, so any constant cap (even 8/frame) falls below the
+        // arrival rate at sub-60fps and the buffer overflows. The loop is already bounded by
+        // the buffer size, and the FIFO `break` on the first non-releasable dot is the real
+        // throttle — one that scales with the subscriber's actual consumption speed.
+        // Precomputed once per frame for the in-flight check inside shouldReleaseTo, which
+        // otherwise rescanned every component per path waypoint per live dot per candidate.
+        const subscriberIds = new Set(state.components.filter(c => c.type === 'subscriber').map(c => c.id));
+        const queuePositions = state.components.filter(c => c.type === 'queue').map(c => ({ x: c.x, y: c.y }));
 
-        for (let i = 0; i < updated.length; i++) {
-          let dot = updated[i];
-          if (dot.status !== 'queued' || !dot.queuedAtNodeId) continue;
-          const releasedSoFar = queueReleaseCounts.get(dot.queuedAtNodeId) ?? 0;
-          if (releasedSoFar >= maxReleasesPerQueue) continue;
+        const queuedIndicesByQueue = new Map<string, number[]>();
+        for (let qi = 0; qi < updated.length; qi++) {
+          const d = updated[qi];
+          if (d.status === 'queued' && d.queuedAtNodeId) {
+            if (!queuedIndicesByQueue.has(d.queuedAtNodeId)) queuedIndicesByQueue.set(d.queuedAtNodeId, []);
+            queuedIndicesByQueue.get(d.queuedAtNodeId)!.push(qi);
+          }
+        }
+        for (const indices of queuedIndicesByQueue.values()) {
+          indices.sort((a, b) => (updated[a].pauseStartTime ?? 0) - (updated[b].pauseStartTime ?? 0));
+        }
 
-          const queueId = dot.queuedAtNodeId;
-
+        for (const [queueId, indices] of queuedIndicesByQueue) {
           // Skip DMQ-queued dots — they're handled in Pass 3
           const queueComp = state.components.find(c => c.id === queueId);
           if (queueComp?.type === 'dmq') continue;
@@ -822,54 +862,40 @@ export function useGameLoop() {
           // Skip releases on the post-drag cleanup frame (paths just rebuilt after Y-snap)
           if (postDragCleanupQueues.has(queueId)) continue;
 
-          // Only release the oldest queued dot in this queue (FIFO by pauseStartTime)
-          let isOldest = true;
-          for (let j = 0; j < updated.length; j++) {
-            if (j === i) continue;
-            const d = updated[j];
-            if (d.status === 'queued' && d.queuedAtNodeId === queueId &&
-                (d.pauseStartTime ?? 0) < (dot.pauseStartTime ?? 0)) {
-              isOldest = false;
-              break;
-            }
-          }
-          if (!isOldest) continue;
-
-          // Find the subscriber this queue feeds into (check current connections, not baked path)
-          const queueOutConn = state.connections.find(c => c.fromId === queueId);
-          const subscriberComp = queueOutConn
-            ? state.components.find(c => c.id === queueOutConn.toId && c.type === 'subscriber')
-            : null;
-          // Also check baked path for dots that already have a valid path
-          const endPoint = dot.path[dot.path.length - 1];
-          const bakedSubscriber = state.components.find(c =>
-            c.type === 'subscriber' && Math.hypot(c.x - endPoint.x, c.y - endPoint.y) < 50
-          );
-          const targetSub = subscriberComp ?? bakedSubscriber;
-
+          const queue = state.components.find(c => c.id === queueId);
           const hasFanOut = queueComp && (queueComp.upgrades['fanOut'] ?? 0) > 0;
 
-          // Collect all connected subscribers (needed for busy check and release)
+          // Collect all connected subscribers (needed for busy check and release) — queue-level,
+          // same for every dot in this queue, so computed once per queue rather than per dot.
           const allConnectedSubs: { x: number; y: number }[] = [];
-          {
-            const queue = state.components.find(c => c.id === queueId);
-            if (queue) {
-              const outConns = state.connections.filter(c => c.fromId === queueId);
-              for (const conn of outConns) {
-                const target = state.components.find(c => c.id === conn.toId && c.type === 'subscriber');
-                if (target) allConnectedSubs.push({ x: target.x, y: target.y });
-              }
+          if (queue) {
+            const outConns = state.connections.filter(c => c.fromId === queueId);
+            for (const conn of outConns) {
+              const target = state.components.find(c => c.id === conn.toId && c.type === 'subscriber');
+              if (target) allConnectedSubs.push({ x: target.x, y: target.y });
             }
           }
-          // Fallback to baked path subscriber
-          if (allConnectedSubs.length === 0 && targetSub) {
-            allConnectedSubs.push({ x: targetSub.x, y: targetSub.y });
+
+          // Releases made from this queue so far this frame — used to stagger their start
+          // progress so same-frame releases don't render stacked on top of each other.
+          let releaseSeq = 0;
+
+          for (const i of indices) {
+          const dot = updated[i];
+          if (dot.status !== 'queued') continue;
+
+          // Fallback to baked path subscriber (per-dot, only when no live connection exists)
+          let subsForThisDot = allConnectedSubs;
+          if (subsForThisDot.length === 0) {
+            const endPoint = dot.path[dot.path.length - 1];
+            const bakedSubscriber = state.components.find(c =>
+              c.type === 'subscriber' && Math.hypot(c.x - endPoint.x, c.y - endPoint.y) < 50
+            );
+            subsForThisDot = bakedSubscriber ? [{ x: bakedSubscriber.x, y: bakedSubscriber.y }] : [];
           }
 
-          const hasSubscriber = allConnectedSubs.length > 0;
-          if (!hasSubscriber) continue;
-
-          const queue = state.components.find(c => c.id === queueId);
+          const hasSubscriber = subsForThisDot.length > 0;
+          if (!hasSubscriber) break; // FIFO — oldest remaining can't go, don't skip ahead
 
           // Pre-build release paths for all connected subscribers
           const buildReleasePath = (subTarget: { x: number; y: number }) => {
@@ -935,7 +961,11 @@ export function useGameLoop() {
             const boostPct = Math.min(fcLevel * (fcLevel + 9) / 2, 100);
             const consumeDuration = 1000 * (1 - boostPct / 100);
 
-            let latestSlotOpen = 0; // 0 = subscriber is free now
+            // Collect every other dot already pausing at or traveling toward this subscriber.
+            // A pausing dot is a special case — it's already mid-consumption, so it finishes
+            // at `remaining`, not at `arrival + consumeDuration` like an incoming dot would.
+            let pausingRemaining: number | null = null;
+            const arrivals: number[] = [];
 
             for (const d of updated) {
               if (d.id === dot.id || d.path.length === 0) continue;
@@ -945,39 +975,63 @@ export function useGameLoop() {
               if (d.status === 'pausing' && !d.moneyAdded) {
                 const elapsed = Date.now() - (d.pauseStartTime ?? Date.now());
                 const remaining = Math.max(consumeDuration - elapsed, 0);
-                latestSlotOpen = Math.max(latestSlotOpen, remaining);
+                pausingRemaining = Math.max(pausingRemaining ?? 0, remaining);
               }
 
               if (d.status === 'traveling') {
-                // Only count dots past all queues (on final segment to subscriber)
-                const isPastAllQueues = !d.path.some((wp, idx) => {
-                  if (idx >= d.path.length - 1) return false;
-                  const q = state.components.find(c =>
-                    c.type === 'queue' && Math.abs(c.x - wp.x) < 1 && Math.abs(c.y - wp.y) < 1
-                  );
-                  if (!q) return false;
-                  const queueProgress = idx / (d.path.length - 1);
-                  return d.progress <= queueProgress + 0.01;
-                });
+                // Only count dots actually heading to the subscriber next (past every queue).
+                // nextNodeId is authoritative when set — and unlike the progress-based scan it
+                // is unaffected by the negative start progress of a staggered release — with
+                // the path scan kept only as a fallback for dots that carry no nextNodeId.
+                const isPastAllQueues = d.nextNodeId
+                  ? subscriberIds.has(d.nextNodeId)
+                  : !d.path.some((wp, idx) => {
+                      if (idx >= d.path.length - 1) return false;
+                      if (!queuePositions.some(q => Math.abs(q.x - wp.x) < 1 && Math.abs(q.y - wp.y) < 1)) return false;
+                      return d.progress <= idx / (d.path.length - 1) + 0.01;
+                    });
                 if (!isPastAllQueues) continue;
                 const inFlightActualSpeed = d.speed * state.upgrades.propagationSpeed;
                 const dArrivalProg = getArrivalProgress(d.path);
                 const arrivalTime = scaledTravelTime(d.path, d.progress, Math.max(dArrivalProg, d.progress), inFlightActualSpeed);
-                latestSlotOpen = Math.max(latestSlotOpen, arrivalTime + consumeDuration);
+                arrivals.push(arrivalTime);
               }
             }
 
-            return latestSlotOpen <= travelTime;
+            // Simulate the subscriber's consumption queue in arrival order with the candidate
+            // inserted at its own predicted arrival. Each dot can only start consuming once it
+            // has physically arrived AND the subscriber has finished with whoever was ahead of
+            // it; a dot that arrives while the subscriber is still busy is a collision (it
+            // drops on arrival). Reject if the candidate would collide, or if inserting it
+            // would make any dot arriving AFTER it collide. Order-aware on purpose: staggered
+            // same-frame releases mean a fresh release can legitimately arrive before dots
+            // released a frame earlier that are still waiting behind the queue — those are
+            // behind it, not ahead of it, and must not be read as "subscriber busy until then".
+            const chain = arrivals.map(t => ({ t, candidate: false }));
+            chain.push({ t: travelTime, candidate: true });
+            chain.sort((a, b) => a.t - b.t);
+            let busyUntil = pausingRemaining ?? 0;
+            let candidateSeen = false;
+            for (const { t, candidate } of chain) {
+              if (candidate) {
+                if (t < busyUntil) return false;
+                candidateSeen = true;
+              } else if (candidateSeen && t < busyUntil) {
+                return false;
+              }
+              busyUntil = Math.max(t, busyUntil) + consumeDuration;
+            }
+            return true;
           };
 
           // Without fan-out, determine round-robin target
           let targets: { x: number; y: number }[];
           if (hasFanOut) {
-            targets = allConnectedSubs;
+            targets = subsForThisDot;
           } else {
-            const rrIdx = (queueRoundRobinIdx.get(queueId) ?? 0) % allConnectedSubs.length;
+            const rrIdx = (queueRoundRobinIdx.get(queueId) ?? 0) % subsForThisDot.length;
             queueRoundRobinIdx.set(queueId, rrIdx + 1);
-            targets = [allConnectedSubs[rrIdx]];
+            targets = [subsForThisDot[rrIdx]];
           }
 
           // Build release paths and check timing for each target
@@ -986,16 +1040,22 @@ export function useGameLoop() {
             ...buildReleasePath(sub),
           }));
 
+          // Each successive same-frame release starts a little further back (negative progress
+          // clamps to the queue's center, hidden under its card) so they emerge as a visible
+          // stream instead of all rendering on the same pixel for the whole trip. The timing
+          // check must evaluate the same staggered start the dot will actually get.
+          const releaseStagger = releaseSeq * 0.08;
+
           // With fanout: all subscribers must be ready; without: just the target
-          let canRelease = releaseData.every(rd => shouldReleaseTo(rd.sub, rd.path, rd.progress));
+          let canRelease = releaseData.every(rd => shouldReleaseTo(rd.sub, rd.path, rd.progress - releaseStagger));
 
           // During drag, shouldReleaseTo timing is unreliable (in-flight dots' paths/speeds
           // are rebuilt each frame). Enforce a minimum interval based on consume duration
           // to prevent rapid queue draining.
           if (canRelease && state.draggingNodeId) {
             const lastRelease = queueLastReleaseTime.get(queueId) ?? 0;
-            const subComp = allConnectedSubs.length > 0
-              ? state.components.find(c => c.type === 'subscriber' && Math.hypot(c.x - allConnectedSubs[0].x, c.y - allConnectedSubs[0].y) < 50)
+            const subComp = subsForThisDot.length > 0
+              ? state.components.find(c => c.type === 'subscriber' && Math.hypot(c.x - subsForThisDot[0].x, c.y - subsForThisDot[0].y) < 50)
               : null;
             const fcLevel = subComp?.upgrades['fasterConsumption'] ?? 0;
             const boostPct = Math.min(fcLevel * (fcLevel + 9) / 2, 100);
@@ -1005,36 +1065,37 @@ export function useGameLoop() {
             }
           }
 
-          if (canRelease) {
-            queueLastReleaseTime.set(queueId, Date.now());
-            queueReleaseCounts.set(queueId, (queueReleaseCounts.get(queueId) ?? 0) + 1);
+          if (!canRelease) break; // FIFO — oldest remaining can't go yet, don't skip ahead
 
-            for (let ti = 0; ti < releaseData.length; ti++) {
-              const { path: releasePath, progress: releaseProgress, sub: releaseSub } = releaseData[ti];
-              const releaseDot = { ...dot, path: releasePath };
-              const releaseSpeed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, releasePath);
-              // Find subscriber ID for this target so originalNodeIds stays in sync with the release path
-              const releaseSubComp = state.components.find(c =>
-                c.type === 'subscriber' && Math.hypot(c.x - releaseSub.x, c.y - releaseSub.y) < 1
-              );
-              const releaseNodeIds = [queueId, ...(releaseSubComp ? [releaseSubComp.id] : [])];
-              if (ti === 0) {
-                updated[i] = { ...releaseDot, status: 'traveling', progress: releaseProgress, speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined, originalNodeIds: releaseNodeIds, nextNodeId: releaseSubComp?.id, nodeWpIndices: undefined } as Dot;
-              } else {
-                updated.push({
-                  ...releaseDot,
-                  id: nextDotId(),
-                  status: 'traveling',
-                  progress: releaseProgress,
-                  speed: releaseSpeed,
-                  pauseStartTime: undefined,
-                  queuedAtNodeId: undefined,
-                  originalNodeIds: releaseNodeIds,
-                  nextNodeId: releaseSubComp?.id,
-                  nodeWpIndices: undefined,
-                } as Dot);
-              }
+          queueLastReleaseTime.set(queueId, Date.now());
+          releaseSeq++;
+
+          for (let ti = 0; ti < releaseData.length; ti++) {
+            const { path: releasePath, progress: releaseProgress, sub: releaseSub } = releaseData[ti];
+            const releaseDot = { ...dot, path: releasePath };
+            const releaseSpeed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, releasePath);
+            // Find subscriber ID for this target so originalNodeIds stays in sync with the release path
+            const releaseSubComp = state.components.find(c =>
+              c.type === 'subscriber' && Math.hypot(c.x - releaseSub.x, c.y - releaseSub.y) < 1
+            );
+            const releaseNodeIds = [queueId, ...(releaseSubComp ? [releaseSubComp.id] : [])];
+            if (ti === 0) {
+              updated[i] = { ...releaseDot, status: 'traveling', progress: releaseProgress - releaseStagger, speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined, originalNodeIds: releaseNodeIds, nextNodeId: releaseSubComp?.id, nodeWpIndices: undefined } as Dot;
+            } else {
+              updated.push({
+                ...releaseDot,
+                id: nextDotId(),
+                status: 'traveling',
+                progress: releaseProgress - releaseStagger,
+                speed: releaseSpeed,
+                pauseStartTime: undefined,
+                queuedAtNodeId: undefined,
+                originalNodeIds: releaseNodeIds,
+                nextNodeId: releaseSubComp?.id,
+                nodeWpIndices: undefined,
+              } as Dot);
             }
+          }
           }
         }
 

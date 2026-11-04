@@ -29,7 +29,7 @@ src/
   store/
     gameStore.ts        # All Zustand state + actions, auto-save subscription
     upgradeConfig.ts    # All upgrade defs (cost, multiplier, maxLevel, label, description)
-    prestigeUpgradeConfig.ts # Prestige tree node definitions (16 nodes)
+    prestigeUpgradeConfig.ts # Prestige tree node definitions (15 nodes)
     topicPool.ts        # Predefined topic pool for publisher/queue assignment
     tutorialConfig.tsx  # Tutorial slide definitions (title: string, body: ReactNode, optional graphic component)
   hooks/

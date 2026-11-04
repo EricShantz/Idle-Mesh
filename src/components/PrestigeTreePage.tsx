@@ -33,7 +33,6 @@ function getNodeIcon(key: string): string {
   if (key === 'queueFreeQueue') return '\u{1F381}';
   if (key === 'queueBuffer') return '\u{1F4DA}';
   if (key === 'queueBroaden') return '\u{1F4E1}';
-  if (key === 'queueBatchConsume') return '\u{1F500}';
   // Subscriber
   if (key === 'subRoot') return '\u{1F4E5}';
   if (key === 'subConsumeSpeed') return '\u{23E9}';

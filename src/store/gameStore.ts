@@ -224,11 +224,6 @@ export function getPermanentQueueBufferBonus(state: Pick<GameState, 'prestige'>)
   return ((p['queueRoot'] ?? 0) > 0 ? 2 : 0) + ((p['queueBuffer'] ?? 0) > 0 ? 4 : 0);
 }
 
-// Whether batch consume (prefetch) is active
-export function hasPermanentBatchConsume(state: Pick<GameState, 'prestige'>): boolean {
-  return (state.prestige.permanentUpgradeLevels['queueBatchConsume'] ?? 0) > 0;
-}
-
 // Publisher network effect: each purchased publisher is permanently assigned a tier at
 // purchase time (1st purchased = tier 1, 2nd = tier 2, ...), set once in addComponent via
 // upgrades.networkTier. Each tier adds another 10 percentage points to that publisher's
@@ -458,6 +453,26 @@ function migratePrestigeKeys(prestige: GameState['prestige']): GameState['presti
   return migrated;
 }
 
+// Nodes removed from the tree outright: refund their cost on load so an existing save that
+// bought one doesn't silently lose the points.
+const REMOVED_PRESTIGE_NODES: Record<string, number> = {
+  // Prefetch — its only effect was raising a fixed per-frame queue release cap that no longer
+  // exists; queue throughput is now governed by the subscriber's actual consumption speed.
+  queueBatchConsume: 14,
+};
+function refundRemovedPrestigeNodes(prestige: GameState['prestige']): GameState['prestige'] {
+  const levels = { ...prestige.permanentUpgradeLevels };
+  let refund = 0;
+  for (const [key, cost] of Object.entries(REMOVED_PRESTIGE_NODES)) {
+    if ((levels[key] ?? 0) > 0) {
+      refund += cost;
+      delete levels[key];
+    }
+  }
+  if (refund === 0) return prestige;
+  return { ...prestige, points: prestige.points + refund, permanentUpgradeLevels: levels };
+}
+
 function migrateGlobalUpgradeLevels(upgrades: GameState['upgrades'] | undefined): Record<string, number> {
   if (!upgrades) return {};
   const levels: Record<string, number> = {};
@@ -532,7 +547,7 @@ export const useGameStore = create<GameState>()(
       draggingNodeId: null,
       showPrestigeTree: false,
 
-      prestige: migratePrestigeKeys(saved?.prestige ?? { points: 0, totalPoints: 0, count: 0, permanentUpgradeLevels: {} }),
+      prestige: refundRemovedPrestigeNodes(migratePrestigeKeys(saved?.prestige ?? { points: 0, totalPoints: 0, count: 0, permanentUpgradeLevels: {} })),
 
       tutorialsSeen: saved?.tutorialsSeen ?? {},
       activeTutorial: null,

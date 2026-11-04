@@ -13,7 +13,7 @@
 - [x] Multiple Brokers (shop purchase, $200 base x2 per extra)
 - [x] Broker Bridging (broker-to-broker bridge connections, topic-aware forwarding, bidirectional DFS)
 - [x] Dynamic Connection Rewiring (click-to-detach, drag-to-connect, output port creation)
-- [x] Schema Registry: Prestige System (16-node radial skill tree, permanent upgrades)
+- [x] Schema Registry: Prestige System (15-node radial skill tree, permanent upgrades)
 - [x] Tutorial System (intro slides + contextual popups)
 - [x] Collapsible Sidebar Sections
 - [x] Publisher Network Tier (each publisher purchased raises its own base event value by 10% over the previous one, by purchase order; capped at 24 publishers total)
