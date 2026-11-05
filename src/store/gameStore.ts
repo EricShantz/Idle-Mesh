@@ -112,6 +112,9 @@ export type GameState = {
   components: GameComponent[];
   connections: Connection[];
   eventDots: EventDot[];
+  /** Per queue/DMQ id: one char per queued dot, oldest first ('r' retry, 'n' normal). Written by
+   *  the game loop each frame so queue cards don't re-scan every live dot on every commit. */
+  queueSlotSignatures: Record<string, string>;
 
   upgrades: {
     propagationSpeed: number;
@@ -164,6 +167,7 @@ export type GameState = {
   removeCoinPop: (id: string) => void;
   dropEvent: (dotId: string) => void;
   updateDots: (updateFn: (dots: EventDot[]) => EventDot[]) => void;
+  commitFrame: (frame: FrameCommit) => void;
   removeDot: (dotId: string) => void;
   earn: (amount: number) => void;
   spend: (amount: number) => boolean;
@@ -407,15 +411,182 @@ export function getPublisherCooldownMs(pub: { upgrades: Record<string, number> }
   return baseCooldown * (1 - publishBoostPct / 100) / getPermanentPubRateMult(state);
 }
 
+/** Everything one game-loop frame changes, applied in a single store commit (see commitFrame). */
+export type FrameCommit = {
+  /** The frame's moved/arrived/dropped dots (new publishes are appended by the store). */
+  dots: EventDot[];
+  consumed: { value: number; subscriberId: string }[];
+  droppedCount: number;
+  /** Auto-publishers due this frame. */
+  publisherIds: string[];
+  queueSlotSignatures: Record<string, string>;
+};
+
+// The per-frame consume bookkeeping as a pure function over plain objects: returns only the
+// fields a batch of consumes changes. Used by consumeEvents and commitFrame instead of an immer
+// recipe — at thousands of consumes per second the draft proxy (every draft.components.find was
+// a trapped read per element) was a quarter of the frame on its own.
+function applyConsumes(
+  state: GameState,
+  batch: { value: number; subscriberId: string }[],
+  compById: Map<string, GameComponent>,
+): Partial<GameState> {
+  const hasIncome = (state.prestige.permanentUpgradeLevels['globalIncome'] ?? 0) > 0;
+  const permMult = (hasIncome ? 1.1 : 1.0) * getPermanentSubPayoutMult(state);
+  const now = Date.now();
+
+  // Adaptive coin pop throttling based on frame rate
+  const fps = getSmoothedFps();
+  let maxPopsPerSec: number;
+  let maxActivePops: number;
+  if (fps >= 50) {
+    // Smooth — show generously
+    maxPopsPerSec = 5;
+    maxActivePops = 12;
+  } else if (fps >= 35) {
+    // Starting to dip — moderate throttle
+    maxPopsPerSec = 2;
+    maxActivePops = 6;
+  } else {
+    // Struggling — aggressive throttle
+    maxPopsPerSec = 1;
+    maxActivePops = 3;
+  }
+
+  let balance = state.balance;
+  let totalEarned = state.totalEarned;
+  let earnedTotal = 0;
+  let coinPops = state.coinPops;
+  let popsCopied = false;
+  for (const { value, subscriberId } of batch) {
+    const earned = value * state.upgrades.globalValueMultiplier * permMult;
+    earnedTotal += earned;
+    balance += earned;
+    totalEarned += earned;
+
+    const sub = compById.get(subscriberId);
+    if (sub) {
+      let track = coinPopTracking[subscriberId];
+      if (!track || now - track.windowStart > 1000) {
+        track = { count: 0, windowStart: now, pendingAmount: 0 };
+        coinPopTracking[subscriberId] = track;
+      }
+      track.count++;
+      track.pendingAmount += earned;
+      const showEveryN = track.count <= maxPopsPerSec ? 1 : Math.ceil(track.count / maxPopsPerSec);
+      if (track.count % showEveryN === 0 && coinPops.length < maxActivePops) {
+        if (!popsCopied) { coinPops = coinPops.slice(); popsCopied = true; }
+        coinPops.push({ id: 'coin-' + (++dotIdCounter), x: sub.x, y: sub.y, amount: track.pendingAmount });
+        track.pendingAmount = 0;
+      }
+    }
+  }
+
+  const patch: Partial<GameState> = { balance, totalEarned, eventsConsumed: state.eventsConsumed + batch.length };
+  if (popsCopied) patch.coinPops = coinPops;
+
+  // Earning milestones (same rules as checkEarningMilestones, against the new total)
+  if (totalEarned >= PRESTIGE_MIN_EARNED && !state.tutorialsSeen['prestigeAvailable'] && !state.activeTutorial) {
+    patch.activeTutorial = 'prestigeAvailable';
+  }
+  if (totalEarned >= WIN_THRESHOLD && !state.winSeen && !state.showWinScreen) {
+    patch.showWinScreen = true;
+  }
+
+  // Keep the 5s earnings window bounded in the same commit, one aggregated entry per batch.
+  const cutoff = now - 5000;
+  const kept = state.recentEarnings.length > 0 && state.recentEarnings[0].time < cutoff
+    ? state.recentEarnings.filter(e => e.time > cutoff)
+    : state.recentEarnings;
+  patch.recentEarnings = kept.concat([{ time: now, amount: earnedTotal, count: batch.length }]);
+  return patch;
+}
+
+// Fires a set of publishers against a state snapshot without committing: the dots to append,
+// the updated cooldown map, and the publish-rate entries. Publishers that can't fire (no
+// outgoing connection, no broker on any path) are skipped and keep their old cooldown.
+function buildPublishBatch(state: GameState, publisherIds: string[], now: number) {
+  const newDots: EventDot[] = [];
+  const cooldowns = { ...state.publisherCooldowns };
+  const publishes: { time: number; count: number }[] = [];
+  for (const id of publisherIds) {
+    const built = buildPublishDots(state, id);
+    if (!built) continue;
+    cooldowns[id] = now;
+    publishes.push({ time: now, count: built.fireCount });
+    for (const d of built.dots) newDots.push(d);
+  }
+  const cutoff = now - 5000;
+  const recent = state.recentPublishes.length > 0 && state.recentPublishes[0].time < cutoff
+    ? state.recentPublishes.filter(e => e.time > cutoff)
+    : state.recentPublishes;
+  return { newDots, cooldowns, recentPublishes: recent.concat(publishes) };
+}
+
+// What one publisher emits per fire, minus the per-dot identity: shared by every dot of a batch
+// and by every fire until the mesh changes. Computing this used to walk the whole connection
+// graph and do several components.find scans per path on every single fire (10/s per publisher).
+type PlannedDot = Pick<EventDot, 'path' | 'speed' | 'color' | 'value' | 'originalNodeIds' | 'nextNodeId' | 'bridgeGoldAfterNodeId' | 'forkPaths' | 'forkNodeId'>;
+type PublishPlan = { fireCount: number; entries: PlannedDot[] };
+type PublishPlanEntry = {
+  componentsRef: GameComponent[];
+  connectionsRef: Connection[];
+  upgradesRef: GameState['upgrades'];
+  prestigeRef: GameState['prestige'];
+  plan: PublishPlan | null;
+};
+const publishPlanCache = new Map<string, PublishPlanEntry>();
+
+function getPublishPlan(state: GameState, publisherId: string): PublishPlan | null {
+  const cached = publishPlanCache.get(publisherId);
+  if (cached && cached.componentsRef === state.components && cached.connectionsRef === state.connections &&
+      cached.upgradesRef === state.upgrades && cached.prestigeRef === state.prestige) {
+    return cached.plan;
+  }
+  const plan = computePublishPlan(state, publisherId);
+  publishPlanCache.set(publisherId, {
+    componentsRef: state.components, connectionsRef: state.connections,
+    upgradesRef: state.upgrades, prestigeRef: state.prestige, plan,
+  });
+  return plan;
+}
+
 // Builds the dots one publisher fire emits, without committing anything. Returns null when the
 // publisher can't fire at all (no outgoing connection, or no broker reachable to drop at), in
 // which case nothing happens and the cooldown is not consumed — same as before the auto-publisher
 // was batched. Shared by fireEvent (manual click) and fireEvents (per-poll batch).
 function buildPublishDots(state: GameState, publisherId: string): { dots: EventDot[]; fireCount: number } | null {
+  const plan = getPublishPlan(state, publisherId);
+  if (!plan) return null;
+  const dots: EventDot[] = [];
+  for (let batch = 0; batch < plan.fireCount; batch++) {
+    for (const e of plan.entries) {
+      dots.push({
+        id: nextDotId(),
+        path: e.path,
+        progress: batch * -0.04,
+        speed: e.speed,
+        status: 'traveling',
+        color: e.color,
+        opacity: 1,
+        value: e.value,
+        originalValue: e.value,
+        originalNodeIds: e.originalNodeIds,
+        nextNodeId: e.nextNodeId,
+        forkPaths: e.forkPaths,
+        forkNodeId: e.forkNodeId,
+        bridgeGoldAfterNodeId: e.bridgeGoldAfterNodeId,
+      });
+    }
+  }
+  return { dots, fireCount: plan.fireCount };
+}
+
+function computePublishPlan(state: GameState, publisherId: string): PublishPlan | null {
   const pub = state.components.find(c => c.id === publisherId);
   if (!pub) return null;
   const fireCount = state.upgrades.batchFire > 0 ? state.upgrades.batchFire : 1;
-  const dots: EventDot[] = [];
+  const entries: PlannedDot[] = [];
 
   const allPaths = state._getAllPathsWithNodes(publisherId);
   const allValidPaths = allPaths.filter(p => p.waypoints.length >= 2);
@@ -456,23 +627,16 @@ function buildPublishDots(state: GameState, publisherId: string): { dots: EventD
     const queueMult = getQueueValueMultiplier([publisherId, target.id], state.components);
     const value = (bridgeExitNodeId ? baseValue * BRIDGE_VALUE_MULT : baseValue) * queueMult;
     const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state), truncatedWaypoints);
-    for (let batch = 0; batch < fireCount; batch++) {
-      dots.push({
-        id: nextDotId(),
-        path: truncatedWaypoints,
-        progress: batch * -0.04,
-        speed,
-        status: 'traveling',
-        color: '#22d3ee',
-        opacity: 1,
-        value,
-        originalValue: value,
-        originalNodeIds: [publisherId, target.id],
-        nextNodeId: findNextInteractableId([publisherId, target.id], state.components),
-        bridgeGoldAfterNodeId: bridgeExitNodeId,
-      });
-    }
-    return { dots, fireCount };
+    entries.push({
+      path: truncatedWaypoints,
+      speed,
+      color: '#22d3ee',
+      value,
+      originalNodeIds: [publisherId, target.id],
+      nextNodeId: findNextInteractableId([publisherId, target.id], state.components),
+      bridgeGoldAfterNodeId: bridgeExitNodeId,
+    });
+    return { fireCount, entries };
   }
 
   // Topic filtering: only keep paths where the queue's subscription matches the publisher's topic
@@ -511,23 +675,16 @@ function buildPublishDots(state: GameState, publisherId: string): { dots: EventD
     const queueMult = getQueueValueMultiplier(truncatedNodeIds, state.components);
     const value = (bridgeExitNodeId ? baseValue * BRIDGE_VALUE_MULT : baseValue) * queueMult;
     const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state), truncatedWaypoints);
-    for (let batch = 0; batch < fireCount; batch++) {
-      dots.push({
-        id: nextDotId(),
-        path: truncatedWaypoints,
-        progress: batch * -0.04,
-        speed,
-        status: 'traveling',
-        color: '#22d3ee',
-        opacity: 1,
-        value,
-        originalValue: value,
-        originalNodeIds: truncatedNodeIds,
-        nextNodeId: findNextInteractableId(truncatedNodeIds, state.components),
-        bridgeGoldAfterNodeId: bridgeExitNodeId,
-      });
-    }
-    return { dots, fireCount };
+    entries.push({
+      path: truncatedWaypoints,
+      speed,
+      color: '#22d3ee',
+      value,
+      originalNodeIds: truncatedNodeIds,
+      nextNodeId: findNextInteractableId(truncatedNodeIds, state.components),
+      bridgeGoldAfterNodeId: bridgeExitNodeId,
+    });
+    return { fireCount, entries };
   }
 
   // Broker fan-out: send to ALL matching queues (one path per unique queue per broker)
@@ -583,32 +740,25 @@ function buildPublishDots(state: GameState, publisherId: string): { dots: EventD
     forkGroups.get(firstBrokerId)!.push(p);
   }
 
-  for (let batch = 0; batch < fireCount; batch++) {
-    for (const [brokerId, group] of forkGroups) {
-      const primary = group[0];
-      const forks = group.length > 1
-        ? group.slice(1).map(f => ({ ...f, value: valueForPath(f.nodeIds), color: colorForPath(f.nodeIds) }))
-        : undefined;
-      const primaryValue = valueForPath(primary.nodeIds);
-      dots.push({
-        id: nextDotId(),
-        path: primary.waypoints,
-        progress: batch * -0.04,
-        speed: normalizedSpeed(baseSpeed, primary.waypoints),
-        status: 'traveling',
-        color: '#22d3ee',
-        opacity: 1,
-        value: primaryValue,
-        originalValue: primaryValue,
-        originalNodeIds: primary.nodeIds,
-        nextNodeId: findNextInteractableId(primary.nodeIds, state.components),
-        forkPaths: forks,
-        forkNodeId: brokerId !== 'none' ? brokerId : undefined,
-        bridgeGoldAfterNodeId: firstBridgeExitNodeId(primary.nodeIds, state.components),
-      });
-    }
+  for (const [brokerId, group] of forkGroups) {
+    const primary = group[0];
+    const forks = group.length > 1
+      ? group.slice(1).map(f => ({ ...f, value: valueForPath(f.nodeIds), color: colorForPath(f.nodeIds) }))
+      : undefined;
+    const primaryValue = valueForPath(primary.nodeIds);
+    entries.push({
+      path: primary.waypoints,
+      speed: normalizedSpeed(baseSpeed, primary.waypoints),
+      color: '#22d3ee',
+      value: primaryValue,
+      originalNodeIds: primary.nodeIds,
+      nextNodeId: findNextInteractableId(primary.nodeIds, state.components),
+      forkPaths: forks,
+      forkNodeId: brokerId !== 'none' ? brokerId : undefined,
+      bridgeGoldAfterNodeId: firstBridgeExitNodeId(primary.nodeIds, state.components),
+    });
   }
-  return dots.length > 0 ? { dots, fireCount } : null;
+  return entries.length > 0 ? { fireCount, entries } : null;
 }
 
 function createInitialComponents(): GameComponent[] {
@@ -812,6 +962,7 @@ export const useGameStore = create<GameState>()(
       })(),
       connections: saved?.connections ?? createInitialConnections(),
       eventDots: [], // never persist in-flight dots
+      queueSlotSignatures: {},
 
       upgrades: saved?.upgrades ?? {
         propagationSpeed: 1.0,
@@ -857,27 +1008,9 @@ export const useGameStore = create<GameState>()(
       // old cooldown timestamp, exactly as a failed fireEvent used to.
       fireEvents: (publisherIds: string[]) => {
         const state = get();
-        const now = Date.now();
-        const newDots: EventDot[] = [];
-        const cooldowns = { ...state.publisherCooldowns };
-        const publishes: { time: number; count: number }[] = [];
-        for (const id of publisherIds) {
-          const built = buildPublishDots(state, id);
-          if (!built) continue;
-          cooldowns[id] = now;
-          publishes.push({ time: now, count: built.fireCount });
-          for (const d of built.dots) newDots.push(d);
-        }
+        const { newDots, cooldowns, recentPublishes } = buildPublishBatch(state, publisherIds, Date.now());
         if (newDots.length === 0) return;
-        const cutoff = now - 5000;
-        const recent = state.recentPublishes.length > 0 && state.recentPublishes[0].time < cutoff
-          ? state.recentPublishes.filter(e => e.time > cutoff)
-          : state.recentPublishes;
-        set({
-          eventDots: state.eventDots.concat(newDots),
-          publisherCooldowns: cooldowns,
-          recentPublishes: recent.concat(publishes),
-        });
+        set({ eventDots: state.eventDots.concat(newDots), publisherCooldowns: cooldowns, recentPublishes });
       },
 
       // All of a frame's consumes in ONE store commit. Every commit runs an immer produce over
@@ -886,64 +1019,31 @@ export const useGameStore = create<GameState>()(
       // the dominant per-frame cost. Results are identical to applying them one at a time.
       consumeEvents: (batch: { value: number; subscriberId: string }[]) => {
         if (batch.length === 0) return;
-        set(draft => {
-          const hasIncome = (draft.prestige.permanentUpgradeLevels['globalIncome'] ?? 0) > 0;
-          const permMult = (hasIncome ? 1.1 : 1.0) * getPermanentSubPayoutMult(draft);
-          const now = Date.now();
+        const state = get();
+        set(applyConsumes(state, batch, new Map(state.components.map(c => [c.id, c]))));
+      },
 
-          // Adaptive coin pop throttling based on frame rate
-          const fps = getSmoothedFps();
-          let maxPopsPerSec: number;
-          let maxActivePops: number;
-          if (fps >= 50) {
-            // Smooth — show generously
-            maxPopsPerSec = 5;
-            maxActivePops = 12;
-          } else if (fps >= 35) {
-            // Starting to dip — moderate throttle
-            maxPopsPerSec = 2;
-            maxActivePops = 6;
-          } else {
-            // Struggling — aggressive throttle
-            maxPopsPerSec = 1;
-            maxActivePops = 3;
+      // The whole frame — moved dots, consumes, drops, due auto-publishers, queue slot display —
+      // as ONE plain (non-immer) commit. Each commit runs every hook selector in the app and wakes
+      // the auto-save subscriber, so three commits per frame cost three times what one does.
+      commitFrame: ({ dots, consumed, droppedCount, publisherIds, queueSlotSignatures }: FrameCommit) => {
+        const state = get();
+        const patch: Partial<GameState> = consumed.length > 0
+          ? applyConsumes(state, consumed, new Map(state.components.map(c => [c.id, c])))
+          : {};
+        let eventDots = dots;
+        if (publisherIds.length > 0) {
+          const { newDots, cooldowns, recentPublishes } = buildPublishBatch(state, publisherIds, Date.now());
+          if (newDots.length > 0) {
+            eventDots = dots.concat(newDots);
+            patch.publisherCooldowns = cooldowns;
+            patch.recentPublishes = recentPublishes;
           }
-
-          let earnedTotal = 0;
-          for (const { value, subscriberId } of batch) {
-            const earned = value * draft.upgrades.globalValueMultiplier * permMult;
-            earnedTotal += earned;
-            draft.balance += earned;
-            draft.totalEarned += earned;
-            draft.eventsConsumed += 1;
-
-            const sub = draft.components.find(c => c.id === subscriberId);
-            if (sub) {
-              let track = coinPopTracking[subscriberId];
-              if (!track || now - track.windowStart > 1000) {
-                track = { count: 0, windowStart: now, pendingAmount: 0 };
-                coinPopTracking[subscriberId] = track;
-              }
-              track.count++;
-              track.pendingAmount += earned;
-              const showEveryN = track.count <= maxPopsPerSec ? 1 : Math.ceil(track.count / maxPopsPerSec);
-              if (track.count % showEveryN === 0 && draft.coinPops.length < maxActivePops) {
-                draft.coinPops.push({ id: `coin-${++dotIdCounter}`, x: sub.x, y: sub.y, amount: track.pendingAmount });
-                track.pendingAmount = 0;
-              }
-            }
-          }
-
-          checkEarningMilestones(draft);
-
-          // Keep the 5s earnings window bounded here, in the same commit, rather than with a
-          // separate store write per frame — and record one aggregated entry per batch.
-          const cutoff = now - 5000;
-          if (draft.recentEarnings.length > 0 && draft.recentEarnings[0].time < cutoff) {
-            draft.recentEarnings = draft.recentEarnings.filter(e => e.time > cutoff);
-          }
-          draft.recentEarnings.push({ time: now, amount: earnedTotal, count: batch.length });
-        });
+        }
+        if (droppedCount > 0) patch.eventsDropped = state.eventsDropped + droppedCount;
+        patch.eventDots = eventDots;
+        patch.queueSlotSignatures = queueSlotSignatures;
+        set(patch);
       },
 
       consumeEvent: (_dotId: string, value: number, subscriberId: string) => {
@@ -1647,7 +1747,7 @@ function flushSave() {
 }
 
 function buildSaveSnapshot(state: GameState): string {
-  const { eventDots: _, recentEarnings: __, recentPublishes: ___________, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, activeTutorial: ________, showPrestigeTree: _________, showWinScreen: __________, ...toSave } = state;
+  const { eventDots: _, queueSlotSignatures: _qs, recentEarnings: __, recentPublishes: ___________, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, activeTutorial: ________, showPrestigeTree: _________, showWinScreen: __________, ...toSave } = state;
   const data: Record<string, any> = {};
   for (const [key, val] of Object.entries(toSave)) {
     if (typeof val !== 'function') {

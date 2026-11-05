@@ -15,9 +15,12 @@ npm run perf:trace -- L     # main-thread ms/s by Chrome event (script vs style/
 node scripts/perf/lines.mjs scripts/perf/.out/profile-L.cpuprofile .perf-dist/assets/index-*.js
 ```
 
-Scales (`prof.mjs` → `CFG`): `S` small, `M` ~950 live dots, `L` ~1650, `XL` ~2500 (frame clamp
-kicks in), `H` deliberately oversized. `SUBSPEED=10 PUBSPEED=9` env vars use non-maxed card
-levels so the per-card cooldown animations are active.
+Scales (`prof.mjs` → `CFG`): `S` small (drops into a DMQ), `M` ~950 live dots, `L` ~2800, `XL`
+over broker cap, `H` deliberately oversized and flooding, `U` the player-like heavy mesh (~14k
+consumed/sec, ~9.5k live dots, no drops; zoomed out via wheel events so the whole mesh is drawn).
+`SUBSPEED=10 PUBSPEED=9` env vars use non-maxed card levels so the per-card cooldown animations
+are active. `behavior.mjs` output includes `renderer` (`webgl` or `2d`) so you can tell which
+`EventCanvas` path was measured.
 
 Caveats: headless Chromium renders with software GL, so canvas cost is overstated and absolute
 fps is lower than a real GPU browser. Run one instance at a time. The in-page fps the scripts

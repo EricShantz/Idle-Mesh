@@ -13,6 +13,8 @@ const CFG = {
   L: { pubs: 24, brokers: 3, queuesPerBroker: 6, batchFireLevel: 2, throughputLevel: 30, bridges: false, cluster: true, subSpeed: 11 },
   XL: { pubs: 24, brokers: 3, queuesPerBroker: 7, batchFireLevel: 4, throughputLevel: 30, bridges: false, cluster: true, subSpeed: 11 },
   H: { pubs: 24, brokers: 3, queuesPerBroker: 8, batchFireLevel: 4, throughputLevel: 30, bridges: true, cluster: true, subSpeed: 11 },
+  // User-like: ~14,400 dots/s with broker caps NOT reached (24 pubs x 10 fires/s x batch 5 x 12-way fan-out), zoomed out so the whole mesh is on screen
+  U: { pubs: 24, brokers: 6, queuesPerBroker: 12, batchFireLevel: 4, throughputLevel: 35, bridges: false, cluster: true, subSpeed: 11, groupGap: 760, queueGap: 60, zoomOutSteps: 4 },
 }[SCALE];
 if (process.env.SUBSPEED) CFG.subSpeed = Number(process.env.SUBSPEED);
 CFG.pubSpeed = process.env.PUBSPEED ? Number(process.env.PUBSPEED) : 10;
@@ -34,11 +36,12 @@ function buildSave(c) {
   let cid = 0;
   const conn = (a, b) => connections.push({ id: `conn-${++cid}`, fromId: a, toId: b });
   const brokerIds = [];
+  const gap = c.groupGap ?? 700;
   for (let b = 0; b < c.brokers; b++) {
     const id = b === 0 ? 'webhook-1' : `broker-${b + 1}`;
     brokerIds.push(id);
     components.push({
-      id, type: 'broker', x: 700, y: 200 + b * 700, label: 'Broker', tags: {},
+      id, type: 'broker', x: 700, y: 200 + b * gap, label: 'Broker', tags: {},
       upgrades: {
         upgradeToBroker: 1, increaseThroughput: c.throughputLevel, addQueueSlot: c.queuesPerBroker, addBridgeSlot: 2,
         ...(c.cluster ? { upgradeToCluster: 1, addClusterSlot: 2 } : {}),
@@ -52,7 +55,7 @@ function buildSave(c) {
     const b = Math.floor(p / pubsPerBroker);
     const topic = TOPICS[p % TOPICS.length];
     components.push({
-      id, type: 'publisher', x: 150, y: 80 + b * 700 + (p % pubsPerBroker) * 70, label: 'Publisher', topic,
+      id, type: 'publisher', x: 150, y: 80 + b * gap + (p % pubsPerBroker) * 70, label: 'Publisher', topic,
       topicSegments: topic.split('/'), tags: {},
       upgrades: { autoPub: 1, publishSpeed: c.pubSpeed ?? 10, eventValue: 20, ...(p > 0 ? { networkTier: p } : {}) },
     });
@@ -64,14 +67,14 @@ function buildSave(c) {
       q++;
       const qid = `queue-${q}`;
       const sid = q === 1 ? 'sub-1' : `sub-${q}`;
-      const y = 80 + b * 700 + k * 80;
+      const y = 80 + b * gap + k * (c.queueGap ?? 80);
       components.push({ id: qid, type: 'queue', x: 1200, y, label: 'Queue', tags: {}, upgrades: { bufferSize: 17, addSubscriberSlot: 1 } });
       components.push({ id: sid, type: 'subscriber', x: 1650, y, label: 'Subscriber', tags: {}, upgrades: { fasterConsumption: c.subSpeed, consumptionValue: 20 } });
       conn(brokerIds[b], qid);
       conn(qid, sid);
     }
   }
-  components.push({ id: 'dmq-1', type: 'dmq', x: 700, y: 200 + c.brokers * 700, label: 'Dead Message Queue', tags: {}, upgrades: { dmqBufferSize: 5, dmqWidth: 2 } });
+  components.push({ id: 'dmq-1', type: 'dmq', x: 700, y: 200 + c.brokers * gap, label: 'Dead Message Queue', tags: {}, upgrades: { dmqBufferSize: 5, dmqWidth: 2 } });
   conn('dmq-1', brokerIds[0]);
 
   const propLevel = 10;
@@ -102,6 +105,8 @@ await page.evaluate(() => {
   const s = window.useGameStore.getState();
   if (s.activeTutorial) s.dismissTutorial(s.activeTutorial);
 });
+// Zoom out (wheel on the mesh, each step x0.7) so a tall mesh is actually on screen and gets drawn
+for (let z = 0; z < (CFG.zoomOutSteps ?? 0); z++) { await page.mouse.move(60, 60); await page.mouse.wheel(0, 100); await page.waitForTimeout(50); }
 
 async function sample(label, ms) {
   const r = await page.evaluate((ms) => new Promise(res => {

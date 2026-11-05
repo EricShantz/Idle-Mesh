@@ -17,7 +17,7 @@ src/
   components/
     MeshCanvas.tsx      # SVG connections + EventCanvas + NodeCards + NodeModal + drag handling
     ConnectionLine.tsx  # Individual connection: SVG line + arrowhead + click-to-detach drag
-    EventCanvas.tsx     # HTML5 canvas RAF loop, draws traveling/pausing/dropped dots
+    EventCanvas.tsx     # RAF loop: WebGL point sprites for traveling/queued/dropped dots (2D sprite fallback), 2D front canvas for pausing dots
     NodeCard.tsx        # Individual node: color, ↑ upgrade icon, upgrade badge, output port, click handlers
     NodeModal.tsx       # Floating upgrade modal anchored to selected node
     Sidebar.tsx         # Balance, stats, collapsible sections (Schema Registry, Mesh Upgrades, Mesh Components)
@@ -34,7 +34,7 @@ src/
     topicPool.ts        # Predefined topic pool for publisher/queue assignment
     tutorialConfig.tsx  # Tutorial slide definitions (title: string, body: ReactNode, optional graphic component)
   hooks/
-    useGameLoop.ts      # RAF game loop (dot movement, webhook slowdown, consume/drop logic) + sim-time auto-publisher poll + fps stat
+    useGameLoop.ts      # RAF game loop (dot movement, webhook slowdown, consume/drop logic) + sim-time auto-publisher poll + fps stat; ONE store commit per frame (commitFrame)
     useViewport.ts      # Pan/zoom viewport: context, ref-based state, screenToWorld/worldToScreen helpers
     useThrottledStore.ts # useThrottledGameStore(selector, ms): timer-sampled store selector for display-only values that change every frame
     useTypewriter.ts    # Character-by-character text reveal for Dave's speech bubbles (intro + win screen)
@@ -57,7 +57,7 @@ scripts/perf/           # Headless perf harness (CPU profile, React render count
 4. Blockage: if webhook occupied or subscriber busy, event drops
 5. Upgrade webhook → broker ($75) to unlock queues
 6. Buy queues, wire connections via drag-to-connect
-7. Automation via per-publisher auto-fire upgrades. The auto-publisher is polled every 100 ms of *simulation* time inside the game loop (not a wall-clock interval), so when frames run long publishing slows with everything else instead of flooding the mesh; all due publishers fire in one commit (`fireEvents`)
+7. Automation via per-publisher auto-fire upgrades. The auto-publisher is polled every 100 ms of *simulation* time inside the game loop (not a wall-clock interval), so when frames run long publishing slows with everything else instead of flooding the mesh; the due publishers' dots are appended inside the frame's single `commitFrame` commit (manual clicks use `fireEvents`)
 8. Broker fan-out: broker sends events to ALL connected queues with matching topics
 9. Prestige ("Schema Registry") for permanent upgrades — points = floor(1.5 × cbrt(millions earned)), first point at $1M, Nth point costs ~N³ million (`getPrestigePointsFor` in `prestigeUpgradeConfig.ts`)
 10. Publisher network tier: each publisher purchased (beyond the starter) permanently raises its own base event value by another 10% over the previous one, assigned by purchase order. Publisher purchases are capped at 24 (one per unique topic in the pool)
@@ -71,8 +71,8 @@ scripts/perf/           # Headless perf harness (CPU profile, React render count
 - All upgrade costs/effects in `upgradeConfig.ts` / `prestigeUpgradeConfig.ts` — avoid hardcoding
 - `getUpgradesForType` is duplicated in `NodeModal.tsx` and `NodeCard.tsx` — keep both in sync
 - Adding new shop items: add action logic to `gameStore.ts`, add UI to `Sidebar.tsx`
-- Performance rules (measured, see `scripts/perf/README.md`): the hot path is one store commit per frame (`updateDots`) plus one per auto-publish poll (`fireEvents`), both committed **without immer** (plain `set({...})`), and immer auto-freeze is off. Never select `eventDots` from a React component that renders every frame — derive a small value (see `queuedSlotSignature` in `NodeCard.tsx`); use `useThrottledGameStore` for sidebar-style numbers; drive per-frame visuals (cooldown overlays, webhook border) imperatively through refs. Paths and `originalNodeIds` arrays are immutable and used as WeakMap cache keys — never mutate them in place.
-- Before/after any perf or game-loop change: `npm run perf:build`, `npm run perf:serve`, then `node scripts/perf/behavior.mjs <S|M|L> <label>` and `node scripts/perf/compare.mjs <labelA> <labelB>` — consumed/dropped/earned per second must stay within noise
+- Performance rules (measured, see `scripts/perf/README.md`): the hot path is ONE store commit per frame — `commitFrame` in `gameStore.ts` takes the moved dots, the frame's consumes, the drop count, the due auto-publishers and the queue slot signatures and applies them with a plain `set({...})` (no immer; `applyConsumes` is the pure consume bookkeeping); immer auto-freeze is off. Never select `eventDots` from a React component that renders every frame — queue/DMQ cards read `queueSlotSignatures[id]` (a string the loop writes each frame); use `useThrottledGameStore` for sidebar-style numbers; drive per-frame visuals (cooldown overlays, webhook border) imperatively through refs. What a publisher emits per fire is cached per publisher (`getPublishPlan`) on the identity of `components`/`connections`/`upgrades`/`prestige` — never mutate those in place; paths and `originalNodeIds` arrays are immutable WeakMap cache keys. Dropped dots beyond `DROPPED_VISUAL_CAP` (300 falling at once) are counted but not animated unless the DMQ could catch them. Fork spawning at a broker triggers on progress crossing as well as pixel touch (a long frame can skip the touch box).
+- Before/after any perf or game-loop change: `npm run perf:build`, `npm run perf:serve`, then `node scripts/perf/behavior.mjs <S|M|L|U> <label>` and `node scripts/perf/compare.mjs <labelA> <labelB> S,M,L,U` — consumed/dropped/earned per second must stay within noise (`U` is the player-like heavy mesh)
 
 ## Detailed Documentation
 

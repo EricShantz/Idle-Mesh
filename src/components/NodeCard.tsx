@@ -50,19 +50,6 @@ type Props = {
 
 const NO_DOTS: EventDot[] = [];
 
-/** Oldest-first retry flags of the dots queued at a node: 'r' for a DMQ retry, 'n' otherwise.
- *  Everything the slot rows render is derived from this string, so a card only re-renders when
- *  the queue's contents actually change. */
-function queuedSlotSignature(dots: EventDot[], nodeId: string): string {
-  const queued: EventDot[] = [];
-  for (const d of dots) if (d.status === 'queued' && d.queuedAtNodeId === nodeId) queued.push(d);
-  if (queued.length === 0) return '';
-  queued.sort((a, b) => (a.pauseStartTime ?? 0) - (b.pauseStartTime ?? 0));
-  let sig = '';
-  for (const d of queued) sig += d.isRetry ? 'r' : 'n';
-  return sig;
-}
-
 /** Slot rows for a queue/DMQ card: `capacity` dots, empty ones first, then the queued dots
  *  newest-first (so the newest arrival fills the first occupied slot), wrapped `perRow` per row. */
 function renderSlotRows(signature: string, capacity: number, perRow: number, colorFor: (flag: string) => string) {
@@ -111,8 +98,10 @@ function NodeCardInner({ component }: Props) {
   // so they select that small signature string instead — the dot array is a new reference
   // every frame, and selecting it re-rendered every queue card every frame.
   const eventDots = useGameStore(s => (component.type === 'webhook' ? s.eventDots : NO_DOTS));
+  // Computed once per frame by the game loop (see commitFrame) — a string, so this only
+  // re-renders when the queue's contents actually change.
   const slotSignature = useGameStore(s =>
-    component.type === 'queue' || component.type === 'dmq' ? queuedSlotSignature(s.eventDots, component.id) : '');
+    component.type === 'queue' || component.type === 'dmq' ? (s.queueSlotSignatures[component.id] ?? '') : '');
   const draggingConnection = useGameStore(s => s.draggingConnection);
   const startDragConnection = useGameStore(s => s.startDragConnection);
   const setDraggingNodeId = useGameStore(s => s.setDraggingNodeId);
