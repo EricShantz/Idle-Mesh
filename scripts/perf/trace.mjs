@@ -31,9 +31,9 @@ await page.waitForTimeout(WALL);
 await cdp.send('Tracing.end');
 await done;
 const fps = await page.evaluate(() => new Promise(res => { let n = 0; const t0 = performance.now(); const f = t => { n++; if (t - t0 < 2000) requestAnimationFrame(f); else res(+(n / ((t - t0) / 1000)).toFixed(1)); }; requestAnimationFrame(f); }));
-const dots = await page.evaluate(() => window.useGameStore.getState().eventDots.length);
+const dots = await page.evaluate(() => window.__sim.liveDots());
 const frozen = await page.evaluate(() => {
-  const d = window.useGameStore.getState().eventDots;
+  const d = window.__sim.dots();
   let fd = 0, fp = 0;
   for (const x of d) { if (Object.isFrozen(x)) fd++; if (Object.isFrozen(x.path)) fp++; }
   return { dots: d.length, frozenDots: fd, frozenPaths: fp, componentsFrozen: Object.isFrozen(window.useGameStore.getState().components) };

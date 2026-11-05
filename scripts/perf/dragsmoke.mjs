@@ -41,7 +41,7 @@ const r = await page.evaluate(async () => {
   // every traveling dot must sit on its own path (interpolate and compare to the nearest segment)
   const interp = (path, p) => { const n = path.length - 1; if (p <= 0) return path[0]; const q = Math.min(p, 1) * n; const i = Math.min(Math.floor(q), n - 1); const t = q - i; return { x: path[i].x + (path[i + 1].x - path[i].x) * t, y: path[i].y + (path[i + 1].y - path[i].y) * t }; };
   let offPath = 0, traveling = 0;
-  for (const d of s.eventDots) {
+  for (const d of window.__sim.dots()) {
     if (d.status !== 'traveling') continue; traveling++;
     const pos = interp(d.path, d.progress);
     // distance from pos to the polyline
@@ -51,8 +51,8 @@ const r = await page.evaluate(async () => {
   }
   // and every path's last point must be a current subscriber or queue center
   let danglingPaths = 0;
-  for (const d of s.eventDots) { if (d.status !== 'traveling') continue; const e = d.path[d.path.length - 1]; if (!s.components.some(c => Math.abs(c.x - e.x) < 1 && Math.abs(c.y - e.y) < 1)) danglingPaths++; }
-  return { consumedPerSecDuringAndAfter: Math.round((s.eventsConsumed - consumedBefore) / el), traveling, offPath, danglingPaths, dropped: s.eventsDropped, liveDots: s.eventDots.length };
+  for (const d of window.__sim.dots()) { if (d.status !== 'traveling') continue; const e = d.path[d.path.length - 1]; if (!s.components.some(c => Math.abs(c.x - e.x) < 1 && Math.abs(c.y - e.y) < 1)) danglingPaths++; }
+  return { consumedPerSecDuringAndAfter: Math.round((s.eventsConsumed - consumedBefore) / el), traveling, offPath, danglingPaths, dropped: s.eventsDropped, liveDots: window.__sim.liveDots() };
 });
 console.log(SCALE, JSON.stringify(r), errors.length ? 'ERRORS: ' + errors.slice(0, 3).join(' | ') : 'no errors');
 await browser.close();

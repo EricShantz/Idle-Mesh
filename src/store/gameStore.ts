@@ -3,11 +3,11 @@ import { immer } from 'zustand/middleware/immer';
 import { setAutoFreeze } from 'immer';
 
 // immer's auto-freeze deep-walks and Object.freeze()s every unfrozen object reachable from a
-// produced state. eventDots is replaced by a fresh, unfrozen array every frame (commitFrame
-// commits it without immer), so every immer commit — consumeEvents once per frame,
-// any purchase — re-walked and re-froze every live dot and path: ~13% of frame time at ~1,600
-// dots. The freeze only guards against accidental in-place mutation, which this store never
-// relies on (the game loop rebuilds dots via spreads), so it is turned off.
+// produced state. When the store still held the dot array (replaced by a fresh, unfrozen array
+// every frame), every immer commit — consumeEvents once per frame, any purchase — re-walked and
+// re-froze every live dot and path: ~13% of frame time at ~1,600 dots. The dots live in the sim
+// now, but the freeze only guards against accidental in-place mutation, which this store never
+// relies on, so it stays off.
 setAutoFreeze(false);
 import { canConnect } from '../utils/connectionRules';
 import { getNextTopic } from './topicPool';
@@ -18,7 +18,7 @@ import { getPermanentSubPayoutMult, getPublisherCooldownMs, getEventValue as com
 import { getPublishPlan } from '../sim/publish';
 import { queueManualFire } from '../sim/simBridge';
 import type { TickSummary } from '../sim/sim';
-import type { ComponentType, GameComponent, Connection, EventDot, GlobalUpgrades, PrestigeState, Mesh } from '../sim/types';
+import type { ComponentType, GameComponent, Connection, GlobalUpgrades, PrestigeState, Mesh } from '../sim/types';
 import { prestigeNodes, isNodeAvailable, isNodePurchased, getPrestigePointsFor, PRESTIGE_MIN_EARNED, type PrestigeNode } from './prestigeUpgradeConfig';
 
 // The shared types and the store-free rules now live in src/sim (the simulation must not import
@@ -45,7 +45,6 @@ export type GameState = {
 
   components: GameComponent[];
   connections: Connection[];
-  eventDots: EventDot[];
   /** Per queue/DMQ id: one char per queued dot, oldest first ('r' retry, 'n' normal). Written by
    *  the game loop each frame so queue cards don't re-scan every live dot on every commit. */
   queueSlotSignatures: Record<string, string>;
@@ -87,7 +86,7 @@ export type GameState = {
   fireEvent: (publisherId: string) => void;
   consumeEvents: (batch: { value: number; subscriberId: string }[]) => void;
   removeCoinPop: (id: string) => void;
-  commitFrame: (summary: TickSummary, dots: EventDot[]) => void;
+  commitFrame: (summary: TickSummary) => void;
   earn: (amount: number) => void;
   spend: (amount: number) => boolean;
   selectNode: (nodeId: string | null) => void;
@@ -558,7 +557,6 @@ export const useGameStore = create<GameState>()(
         return comps;
       })(),
       connections: saved?.connections ?? createInitialConnections(),
-      eventDots: [], // never persist in-flight dots
       queueSlotSignatures: {},
 
       upgrades: saved?.upgrades ?? {
@@ -616,12 +614,12 @@ export const useGameStore = create<GameState>()(
         set(applyConsumes(state, batch, new Map(state.components.map(c => [c.id, c]))));
       },
 
-      // The whole frame — moved dots, consumes, drops, due auto-publishers, queue slot display —
-      // as ONE plain (non-immer) commit. Each commit runs every hook selector in the app and wakes
-      // the auto-save subscriber, so three commits per frame cost three times what one does.
-      // The sim owns the dots (it already appended the due publishers' new dots); the store
-      // mirrors the array for the canvas and keeps the persisted bookkeeping.
-      commitFrame: ({ consumed, droppedCount, publisherIds, publishes, queueSlotSignatures }: TickSummary, dots: EventDot[]) => {
+      // The whole frame — consumes, drops, due auto-publishers, queue slot display — as ONE plain
+      // (non-immer) commit. Each commit runs every hook selector in the app and wakes the
+      // auto-save subscriber, so three commits per frame cost three times what one does. The sim
+      // owns the dots (the canvas draws them from its position buffer); the store keeps only the
+      // persisted bookkeeping and the slot display.
+      commitFrame: ({ consumed, droppedCount, publisherIds, publishes, queueSlotSignatures }: TickSummary) => {
         const state = get();
         const patch: Partial<GameState> = consumed.length > 0
           ? applyConsumes(state, consumed, new Map(state.components.map(c => [c.id, c])))
@@ -632,7 +630,6 @@ export const useGameStore = create<GameState>()(
           patch.recentPublishes = recentPublishes;
         }
         if (droppedCount > 0) patch.eventsDropped = state.eventsDropped + droppedCount;
-        patch.eventDots = dots;
         patch.queueSlotSignatures = queueSlotSignatures;
         set(patch);
       },
@@ -1107,7 +1104,6 @@ export const useGameStore = create<GameState>()(
           draft.eventsDropped = 0;
           draft.components = createInitialComponents();
           draft.connections = createInitialConnections();
-          draft.eventDots = [];
           draft.upgrades = {
             propagationSpeed: 1.0,
             costReduction: 0,
@@ -1208,7 +1204,7 @@ function flushSave() {
 }
 
 function buildSaveSnapshot(state: GameState): string {
-  const { eventDots: _, queueSlotSignatures: _qs, recentEarnings: __, recentPublishes: ___________, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, activeTutorial: ________, showPrestigeTree: _________, showWinScreen: __________, ...toSave } = state;
+  const { queueSlotSignatures: _qs, recentEarnings: __, recentPublishes: ___________, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, activeTutorial: ________, showPrestigeTree: _________, showWinScreen: __________, ...toSave } = state;
   const data: Record<string, any> = {};
   for (const [key, val] of Object.entries(toSave)) {
     if (typeof val !== 'function') {
@@ -1226,7 +1222,7 @@ let lastChangeTime = 0;
 
 function captureSnapshotIfChanged(): boolean {
   const snapshot = buildSaveSnapshot(useGameStore.getState());
-  // Unchanged means only transient state (eventDots/recentEarnings/...) moved
+  // Unchanged means only transient state (queueSlotSignatures/recentEarnings/...) moved
   if (snapshot === lastSaveSnapshot) return false;
   lastSaveSnapshot = snapshot;
   pendingSnapshot = snapshot;

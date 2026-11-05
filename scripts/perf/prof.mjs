@@ -131,9 +131,9 @@ async function sample(label, ms) {
           realFps: +(frames / ((t - t0) / 1000)).toFixed(1),
           emaOfInstantFps: +ema.toFixed(1),
           p50dt: +dts[Math.floor(dts.length / 2)].toFixed(1), p95dt: +dts[Math.floor(dts.length * 0.95)].toFixed(1), maxdt: +dts[dts.length - 1].toFixed(1),
-          dots: s.eventDots.length, consumed: s.eventsConsumed, dropped: s.eventsDropped,
+          dots: window.__sim.liveDots(), consumed: s.eventsConsumed, dropped: s.eventsDropped,
           domNodes: document.querySelectorAll('*').length,
-          byStatus: s.eventDots.reduce((a, d) => (a[d.status] = (a[d.status] ?? 0) + 1, a), {}),
+          byStatus: window.__sim.byStatus(),
         });
       }
     };

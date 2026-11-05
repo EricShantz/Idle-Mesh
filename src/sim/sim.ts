@@ -4,6 +4,7 @@
 // auto-publisher poll and the publish-dot building; the dot array and every cache live here.
 // Nothing in this file may import from gameStore.ts, react, or touch window/document/localStorage.
 import { nextDotId, resetDotIds, buildPublishDots } from './publish';
+import { fillPositions } from './positions';
 import { getPermanentQueueBufferBonus, findNextInteractableId, getPermanentBrokerThroughputMult, getPublisherCooldownMs, BRIDGE_GOLD_COLOR } from './meshRules';
 import type { EventDot, GameComponent, Connection, Mesh } from './types';
 import { interpolatePath, normalizedSpeed, getSegmentSpeedScale, scaledTravelTime, getPathMetrics } from '../utils/pathUtils';
@@ -466,6 +467,8 @@ export class Sim {
   private firstDropAt: number | null = null;
   private lastSlotSignatures: Record<string, string> = {};
   private lastWebhookFill: Record<string, number> = {};
+  /** Clock of the last tick; the pausing-dot shrink in fillPositions is time-based. */
+  private lastNowMs = 0;
 
   /** Replaces the snapshot. Caches key on the identity of its four fields exactly as the loop's
    *  did on the store's, so a new `components` array (any move/add/remove) rebuilds them. */
@@ -497,6 +500,13 @@ export class Sim {
 
   getDots(): EventDot[] {
     return this.dots;
+  }
+
+  /** Writes [x, y, extent, r, g, b, a, glow] per drawable dot into `buf` (the EventCanvas vertex
+   *  layout, see positions.ts) and returns the entry count. `buf` must hold at least
+   *  getDots().length * FLOATS_PER_DOT floats. */
+  fillPositions(buf: Float32Array): number {
+    return fillPositions(this.dots, this.mesh.components, this.lastNowMs, buf);
   }
 
   private brokerRelayCounts(now: number): Record<string, number> {
@@ -551,6 +561,7 @@ export class Sim {
     // spread across that one enormous "frame". Capping it means a return from a tab switch
     // just resumes at normal pace (and ordinary hitches can't teleport dots either).
     const dt = Math.min(input.dtMs, MAX_FRAME_DT_MS);
+    this.lastNowMs = input.nowMs;
 
     // End-game win screen: freeze the simulation in place behind the overlay. dt is already
     // clamped, so resuming after dismissal just picks up at normal pace.

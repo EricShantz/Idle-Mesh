@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { useGameStore, meshOf } from '../store/gameStore';
-import { sim, takeManualFires, publishSummary } from '../sim/simBridge';
+import { sim, takeManualFires, publishSummary, fillPositions } from '../sim/simBridge';
 
 // The requestAnimationFrame driver around the simulation (src/sim/sim.ts). Per frame: the fps
-// stat, one `sim.tick` with this frame's delta and the publisher clicks since the last one, then
-// ONE store commit (`commitFrame`) with the tick's summary and the sim's dot array. The mesh the
+// stat, one `sim.tick` with this frame's delta and the publisher clicks since the last one, the
+// position buffer refill for the canvas, then ONE store commit (`commitFrame`) with the tick's
+// summary. The dots never enter the store: the canvas draws them from the buffer. The mesh the
 // sim runs on is kept current by a store subscription that compares the identity of the four
 // fields the rules read; a prestige resets the sim (dots cleared, dot ids restart).
 
@@ -79,6 +80,8 @@ export function useGameLoop() {
         manualFires: takeManualFires(),
       });
       publishSummary(summary);
+      // This tick's dot positions for the canvas (it no longer reads dot objects from the store).
+      fillPositions();
 
       // Show first-drop tutorial 1 second after the first drop
       if (summary.firstDropAt !== null && !firstDropTutorialShown && Date.now() - summary.firstDropAt >= 1000) {
@@ -86,10 +89,9 @@ export function useGameLoop() {
         useGameStore.getState().showTutorial('firstDrop');
       }
 
-      // One store commit for the whole frame: moved dots (plus the due publishers' new ones),
-      // this frame's consumes (money is added in the same commit), the drop count, the
-      // auto-publishers' cooldowns and the slot display.
-      state.commitFrame(summary, sim.getDots());
+      // One store commit for the whole frame: this frame's consumes (money is added in the same
+      // commit), the drop count, the auto-publishers' cooldowns and the slot display.
+      state.commitFrame(summary);
 
       rafRef.current = requestAnimationFrame(loop);
     };

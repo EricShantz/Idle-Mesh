@@ -84,7 +84,7 @@ const r = await page.evaluate(() => new Promise(res => {
     const perSec = {};
     for (const [k, v] of Object.entries(window.__renderStats.counts).sort((a, b) => b[1] - a[1])) perSec[k] = +(v / sec).toFixed(1);
     res({
-      seconds: +sec.toFixed(2), realFps: +(frames / sec).toFixed(1), liveDots: s.eventDots.length,
+      seconds: +sec.toFixed(2), realFps: +(frames / sec).toFixed(1), liveDots: window.__sim.liveDots(),
       storeCommitsPerSec: +(storeCommits / sec).toFixed(1),
       reactCommitsPerSec: +(window.__renderStats.commits / sec).toFixed(1),
       rafCallbacksPerFrame: +(window.__rafStats.calls / frames).toFixed(1),

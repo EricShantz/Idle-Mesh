@@ -36,10 +36,10 @@ const r = await page.evaluate((ms) => new Promise(res => {
   const start = { consumed: s0.eventsConsumed, dropped: s0.eventsDropped, earned: s0.totalEarned, t: performance.now() };
   const dotSamples = []; const queuedSamples = []; const pausingSamples = [];
   const sampler = setInterval(() => {
-    const d = window.useGameStore.getState().eventDots;
-    dotSamples.push(d.length);
-    queuedSamples.push(d.filter(x => x.status === 'queued').length);
-    pausingSamples.push(d.filter(x => x.status === 'pausing').length);
+    const by = window.__sim.byStatus();
+    dotSamples.push(window.__sim.liveDots());
+    queuedSamples.push(by.queued ?? 0);
+    pausingSamples.push(by.pausing ?? 0);
   }, 500);
   let frames = 0;
   const tick = (t) => { frames++; if (t - start.t < ms) requestAnimationFrame(tick); else finish(t); };
