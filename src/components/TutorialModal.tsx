@@ -7,7 +7,7 @@ import { PixelCharacter } from './IntroSequence';
 export function TutorialModal() {
   const activeTutorial = useGameStore(s => s.activeTutorial);
   const dismissTutorial = useGameStore(s => s.dismissTutorial);
-  // Once the player has hit the billion, Dave keeps the tux.
+  // Once the player has hit the trillion, Dave keeps the tux.
   const winSeen = useGameStore(s => s.winSeen);
   const [slideIndex, setSlideIndex] = useState(0);
 

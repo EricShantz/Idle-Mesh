@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { formatMoney } from '../utils/formatMoney';
+import { getPrestigePointsFor, getPrestigeThreshold } from '../store/prestigeUpgradeConfig';
 
 export function PrestigePanel() {
   const totalEarned = useGameStore(s => s.totalEarned);
@@ -10,12 +11,10 @@ export function PrestigePanel() {
 
   const [showConfirm, setShowConfirm] = useState(false);
 
-  // Scaling: Nth point costs N million (triangular numbers)
-  const t = totalEarned / 1_000_000;
-  const pointsToEarn = Math.floor((-1 + Math.sqrt(1 + 8 * t)) / 2);
+  // Point curve lives in prestigeUpgradeConfig.ts (cube-root of millions earned, gated at $1M)
+  const pointsToEarn = getPrestigePointsFor(totalEarned);
   const canPrestige = pointsToEarn >= 1;
-  const nextPointCost = (pointsToEarn + 1) * 1_000_000; // cost for the next point
-  const cumulativeCostForEarned = (pointsToEarn * (pointsToEarn + 1) / 2) * 1_000_000;
+  const nextPointThreshold = getPrestigeThreshold(pointsToEarn + 1);
 
   const handlePrestige = () => {
     performPrestige();
@@ -52,7 +51,7 @@ export function PrestigePanel() {
           Reset all progress. Earn {pointsToEarn > 0 ? pointsToEarn : '0'} prestige point{pointsToEarn !== 1 ? 's' : ''}.
         </div>
         <div className="mt-0.5 font-mono text-[10px] opacity-50">
-          Next point at {formatMoney(cumulativeCostForEarned + nextPointCost)} total earned
+          Next point at {formatMoney(nextPointThreshold)} total earned
         </div>
       </button>
 

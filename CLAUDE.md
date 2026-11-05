@@ -8,7 +8,7 @@ An idle clicker game themed around **event-driven architecture (EDA)**, inspired
 - **Styling**: Tailwind CSS v4 (`@tailwindcss/vite` plugin)
 - **Animation**: Framer Motion (component transitions) + raw Canvas API (event dot animation)
 - **State Management**: Zustand with `immer` middleware
-- **Persistence**: localStorage auto-save (key: `idle-mesh-save`), 500ms debounce. Excluded from save: `eventDots`, `recentEarnings`, `selectedNodeId`, `coinPops`, `draggingConnection`, `draggingNodeId`, `meshError`, `activeTutorial`, `showPrestigeTree`, `showWinScreen`
+- **Persistence**: localStorage auto-save (key: `idle-mesh-save`), 500ms debounce. Excluded from save: `eventDots`, `recentEarnings`, `recentPublishes`, `selectedNodeId`, `coinPops`, `draggingConnection`, `draggingNodeId`, `meshError`, `activeTutorial`, `showPrestigeTree`, `showWinScreen`
 
 ## File Structure
 
@@ -24,7 +24,7 @@ src/
     PrestigePanel.tsx   # Prestige stats, "Register Schema" button, confirmation dialog
     PrestigeTreePage.tsx # Full-page prestige skill tree with pan/zoom
     IntroSequence.tsx   # First-load cinematic: spaghetti diagram + Dave character intro; exports PixelCharacter (hoodie/tux outfits)
-    WinScreen.tsx       # End-game overlay at $1B/run: confetti canvas, banner, stats, tux Dave, Keep Playing / Start Over
+    WinScreen.tsx       # End-game overlay at $1T/run: confetti canvas, banner, stats, tux Dave, Keep Playing / Start Over
     TutorialModal.tsx   # Tutorial overlay with Dave (pixel-art character) delivering slides as speech bubbles
     TutorialGraphics.tsx # Animated SVG graphics for each tutorial slide (Framer Motion)
   store/
@@ -57,11 +57,11 @@ src/
 6. Buy queues, wire connections via drag-to-connect
 7. Automation via per-publisher auto-fire upgrades
 8. Broker fan-out: broker sends events to ALL connected queues with matching topics
-9. Prestige ("Schema Registry") for permanent upgrades — scaling cost: Nth point costs $N million (triangular)
+9. Prestige ("Schema Registry") for permanent upgrades — points = floor(1.5 × cbrt(millions earned)), first point at $1M, Nth point costs ~N³ million (`getPrestigePointsFor` in `prestigeUpgradeConfig.ts`)
 10. Publisher network tier: each publisher purchased (beyond the starter) permanently raises its own base event value by another 10% over the previous one, assigned by purchase order. Publisher purchases are capped at 24 (one per unique topic in the pool)
 11. Broker bridge bonus: events whose route crosses a broker-to-broker bridge connection earn +50% value and render as gold dots once they exit the broker they bridge from
 12. Queue value bonus: any event that passes through a queue on its way to a subscriber earns +5% value
-13. End game: earning `WIN_THRESHOLD` ($1B, `upgradeConfig.ts`) in a single run (`totalEarned`, which prestige resets) shows the `WinScreen` once per save (`winSeen` persists; only a full wipe clears it). The sidebar's "Road to $1 Billion" bar tracks per-run progress. Game loop + auto-publisher freeze while it's open; player picks Keep Playing or Start Over (full wipe, intro replays)
+13. End game: earning `WIN_THRESHOLD` ($1T, `upgradeConfig.ts`) in a single run (`totalEarned`, which prestige resets) shows the `WinScreen` once per save (`winSeen` persists; only a full wipe clears it). The sidebar's "Road to $1 Trillion" bar tracks per-run progress. Game loop + auto-publisher freeze while it's open; player picks Keep Playing or Start Over (full wipe, intro replays)
 
 ## Key Conventions
 
