@@ -1,7 +1,8 @@
 // Gameplay-equivalence check: runs a scenario for a fixed window and records what the player
-// would notice (events consumed/dropped per second, income per second, live dots, fps), plus a
-// screenshot. Compare two labels with compare.mjs.
+// would notice (events consumed/dropped per second, income per second, live dots, fps, sim
+// ticks/s), plus a screenshot. Compare two labels with compare.mjs.
 // usage: node behavior.mjs <scale> <label> [url]   (env SUBSPEED/PUBSPEED as in prof.mjs)
+//   url defaults to the preview server; append ?inlineSim to run the simulation on the main thread.
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,13 +34,15 @@ await page.waitForTimeout(WARMUP_MS);
 
 const r = await page.evaluate((ms) => new Promise(res => {
   const s0 = window.useGameStore.getState();
-  const start = { consumed: s0.eventsConsumed, dropped: s0.eventsDropped, earned: s0.totalEarned, t: performance.now() };
-  const dotSamples = []; const queuedSamples = []; const pausingSamples = [];
-  const sampler = setInterval(() => {
-    const d = window.useGameStore.getState().eventDots;
-    dotSamples.push(d.length);
-    queuedSamples.push(d.filter(x => x.status === 'queued').length);
-    pausingSamples.push(d.filter(x => x.status === 'pausing').length);
+  const start = { consumed: s0.eventsConsumed, dropped: s0.eventsDropped, earned: s0.totalEarned, t: performance.now(), stats: window.__sim.stats() };
+  const dotSamples = []; const queuedSamples = []; const pausingSamples = []; const tickRateSamples = [];
+  // byStatus is a round trip to the sim worker (the dots live there); liveDots is the latest summary's count
+  const sampler = setInterval(async () => {
+    const by = await window.__sim.byStatus();
+    dotSamples.push(window.__sim.liveDots());
+    queuedSamples.push(by.queued ?? 0);
+    pausingSamples.push(by.pausing ?? 0);
+    tickRateSamples.push(window.__sim.ticksPerSec());
   }, 500);
   let frames = 0;
   const tick = (t) => { frames++; if (t - start.t < ms) requestAnimationFrame(tick); else finish(t); };
@@ -48,16 +51,25 @@ const r = await page.evaluate((ms) => new Promise(res => {
     const s = window.useGameStore.getState();
     const sec = (t - start.t) / 1000;
     const avg = a => +(a.reduce((x, y) => x + y, 0) / Math.max(1, a.length)).toFixed(0);
+    // sim timing over the window: ms per tick on the sim's thread, post->receive round trip (worker only),
+    // the share of frames whose input went out late (the previous tick had not returned at the frame) and
+    // the share of frames whose input never went out on its own (the next frame came first; deltas merged)
+    const st = window.__sim.stats(), d = k => st[k] - start.stats[k];
+    const ticks = Math.max(1, d('ticks'));
     res({
       seconds: +sec.toFixed(2),
       realFps: +(frames / sec).toFixed(1),
+      simTicksPerSec: +(tickRateSamples.reduce((x, y) => x + y, 0) / Math.max(1, tickRateSamples.length)).toFixed(1),
+      tickMs: +(d('tickMsTotal') / ticks).toFixed(2), roundTripMs: +(d('roundTripMsTotal') / ticks).toFixed(2),
+      lateInputPct: +(100 * d('inputsLate') / Math.max(1, d('framesSent') + d('framesBusy'))).toFixed(1),
+      mergedFramePct: +(100 * (d('framesBusy') - d('inputsLate')) / Math.max(1, d('framesSent') + d('framesBusy'))).toFixed(1),
       consumedPerSec: +((s.eventsConsumed - start.consumed) / sec).toFixed(1),
       droppedPerSec: +((s.eventsDropped - start.dropped) / sec).toFixed(2),
       earnedPerSec: +((s.totalEarned - start.earned) / sec).toFixed(2),
       avgLiveDots: avg(dotSamples), maxLiveDots: Math.max(...dotSamples),
       avgQueued: avg(queuedSamples), avgPausing: avg(pausingSamples),
       coinPopsNow: s.coinPops.length,
-      renderer: window.__eventCanvasRenderer, cards: s.components.length, connections: s.connections.length,
+      renderer: window.__eventCanvasRenderer, simMode: window.__sim.mode(), cards: s.components.length, connections: s.connections.length,
     });
   };
   requestAnimationFrame(tick);

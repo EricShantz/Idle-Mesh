@@ -1,8 +1,7 @@
-import { memo, useState, useRef, useEffect, useMemo, useSyncExternalStore } from 'react';
+import { memo, useState, useRef, useEffect, useSyncExternalStore } from 'react';
 import { motion } from 'framer-motion';
-import { type GameComponent, type EventDot, useGameStore, getPermanentQueueBufferBonus, getPermanentBrokerThroughputMult } from '../store/gameStore';
-import { interpolatePath } from '../utils/pathUtils';
-import { getBrokerUtilization, getSubscriberConsume } from '../hooks/useGameLoop';
+import { type GameComponent, useGameStore, getPermanentQueueBufferBonus, getPermanentBrokerThroughputMult } from '../store/gameStore';
+import { getBrokerUtilization, getSubscriberConsume, getWebhookFill } from '../sim/simStats';
 import {
   publisherUpgrades,
   webhookUpgrades,
@@ -48,7 +47,6 @@ type Props = {
   component: GameComponent;
 };
 
-const NO_DOTS: EventDot[] = [];
 
 /** Slot rows for a queue/DMQ card: `capacity` dots, empty ones first, then the queued dots
  *  newest-first (so the newest arrival fills the first occupied slot), wrapped `perRow` per row. */
@@ -93,11 +91,10 @@ function NodeCardInner({ component }: Props) {
     return count;
   });
   const moveComponent = useGameStore(s => s.moveComponent);
-  // Only the webhook (transit animation) renders from the live dot list itself. Queue and DMQ
-  // cards show slot dots, which depend only on the ordered retry flags of the dots queued here,
-  // so they select that small signature string instead — the dot array is a new reference
-  // every frame, and selecting it re-rendered every queue card every frame.
-  const eventDots = useGameStore(s => (component.type === 'webhook' ? s.eventDots : NO_DOTS));
+  // Queue and DMQ cards show slot dots, which depend only on the ordered retry flags of the
+  // dots queued here, so they select a small signature string rather than the dot array (a new
+  // reference every frame, which re-rendered every queue card every frame). The webhook's
+  // transit animation reads the sim's per-tick webhookFill through simStats instead.
   // Computed once per frame by the game loop (see commitFrame) — a string, so this only
   // re-renders when the queue's contents actually change.
   const slotSignature = useGameStore(s =>
@@ -235,34 +232,9 @@ function NodeCardInner({ component }: Props) {
     ? getBrokerUtilization(component.id, (8 + (component.upgrades['increaseThroughput'] ?? 0) * ((component.upgrades['increaseThroughput'] ?? 0) + 9) / 2) * brokerThroughputMult * clusterSlots)
     : 0;
 
-  // Compute dot's normalized x-position through this webhook/broker (0→1), or -1 if none
   const isWebhook = component.type === 'webhook';
-  const dotProgress = useMemo(() => {
-    if (!isWebhook) return -1;
-    const halfW = 60;
-    const topOff = 28;
-    const botOff = 28;
-    const dotR = 6;
-    let best = -1;
-    for (const d of eventDots) {
-      if (d.status !== 'traveling') continue;
-      const pos = interpolatePath(d.path, d.progress);
-      const left = component.x - halfW;
-      const right = component.x + halfW;
-      const top = component.y - topOff;
-      const bottom = component.y + botOff;
-      const cx = Math.max(left, Math.min(pos.x, right));
-      const cy = Math.max(top, Math.min(pos.y, bottom));
-      if (Math.hypot(pos.x - cx, pos.y - cy) <= dotR) {
-        const t = Math.max(0, Math.min(1, (pos.x - left) / (right - left)));
-        if (t > best) best = t;
-      }
-    }
-    return best;
-  }, [isWebhook, component.x, component.y, eventDots]);
 
   // Imperative RAF-driven border animation synced to dot position
-  const dotProgressRef = useRef(-1);
   const svgRef = useRef<SVGSVGElement>(null);
   const topPathRef = useRef<SVGPathElement>(null);
   const botPathRef = useRef<SVGPathElement>(null);
@@ -270,8 +242,6 @@ function NodeCardInner({ component }: Props) {
   const displayedProgress = useRef(0);
   const currentOpacity = useRef(0);
   const graceTicks = useRef(0); // hold animation for N frames after dot exits
-
-  dotProgressRef.current = dotProgress;
 
   useEffect(() => {
     if (!isWebhook) return;
@@ -282,7 +252,9 @@ function NodeCardInner({ component }: Props) {
     if (botPathRef.current) botPathRef.current.style.strokeDashoffset = '35';
 
     const tick = () => {
-      const dp = dotProgressRef.current;
+      // Normalized x-position (0→1) of the furthest dot inside the box, or -1 if none; the
+      // sim computes it each tick from the same box test this card used to run per dot.
+      const dp = getWebhookFill(component.id);
 
       if (dp >= 0) {
         if (!graceTicks.current || displayedProgress.current > 1) {
@@ -321,7 +293,7 @@ function NodeCardInner({ component }: Props) {
     };
     borderRaf.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(borderRaf.current);
-  }, [isWebhook]);
+  }, [isWebhook, component.id]);
 
   const handleOutputPortDown = (e: React.PointerEvent) => {
     e.stopPropagation();

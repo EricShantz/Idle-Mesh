@@ -3,104 +3,38 @@ import { immer } from 'zustand/middleware/immer';
 import { setAutoFreeze } from 'immer';
 
 // immer's auto-freeze deep-walks and Object.freeze()s every unfrozen object reachable from a
-// produced state. eventDots is replaced by a fresh, unfrozen array every frame (updateDots and
-// fireEvents commit it without immer), so every immer commit — consumeEvents once per frame,
-// any purchase — re-walked and re-froze every live dot and path: ~13% of frame time at ~1,600
-// dots. The freeze only guards against accidental in-place mutation, which this store never
-// relies on (the game loop rebuilds dots via spreads), so it is turned off.
+// produced state. When the store still held the dot array (replaced by a fresh, unfrozen array
+// every frame), every immer commit — consumeEvents once per frame, any purchase — re-walked and
+// re-froze every live dot and path: ~13% of frame time at ~1,600 dots. The dots live in the sim
+// now, but the freeze only guards against accidental in-place mutation, which this store never
+// relies on, so it stays off.
 setAutoFreeze(false);
 import { canConnect } from '../utils/connectionRules';
 import { getNextTopic } from './topicPool';
-import { topicMatches, computeBroadenedTopic } from '../utils/topicMatching';
-import { normalizedSpeed } from '../utils/pathUtils';
-import { computeOrthogonalWaypoints } from '../utils/orthogonalPath';
-import { getSmoothedFps } from '../hooks/useGameLoop';
-import { getNodeHalfExtents, WIN_THRESHOLD } from './upgradeConfig';
+import { computeBroadenedTopic } from '../utils/topicMatching';
+import { getSmoothedFps } from '../hooks/useSimBridge';
+import { WIN_THRESHOLD } from './upgradeConfig';
+import { getPermanentSubPayoutMult, getPublisherCooldownMs, getEventValue as computeEventValue, getAllPathsWithNodes } from '../sim/meshRules';
+import { getPublishPlan } from '../sim/publish';
+import { queueManualFire } from '../sim/simBridge';
+import type { TickSummary } from '../sim/sim';
+import type { ComponentType, GameComponent, Connection, GlobalUpgrades, PrestigeState, Mesh } from '../sim/types';
 import { prestigeNodes, isNodeAvailable, isNodePurchased, getPrestigePointsFor, PRESTIGE_MIN_EARNED, type PrestigeNode } from './prestigeUpgradeConfig';
 
-export type ComponentType = 'publisher' | 'webhook' | 'broker' | 'queue' | 'subscriber' | 'dmq';
+// The shared types and the store-free rules now live in src/sim (the simulation must not import
+// the store); they are re-exported here so existing imports keep working.
+export type { ComponentType, GameComponent, Connection, EventDot } from '../sim/types';
+export {
+  findNextInteractableId, firstBridgeExitNodeId, pathCrossesBridge, getQueueValueMultiplier,
+  BRIDGE_GOLD_COLOR, BRIDGE_VALUE_MULT, QUEUE_VALUE_BONUS_PER_HOP,
+  getPermanentSpeedMult, getPermanentCostReduction, getPermanentShopDiscount, getPermanentValueBoost,
+  getPermanentPubRateMult, getPermanentSubPayoutMult, getPermanentBrokerThroughputMult,
+  getPermanentQueueBufferBonus, getPublisherTierMultiplier, getPublisherCooldownMs,
+} from '../sim/meshRules';
 
-export type GameComponent = {
-  id: string;
-  type: ComponentType;
-  x: number;
-  y: number;
-  label: string;
-  topic?: string;
-  topicSegments?: string[];
-  subscriptionTopic?: string;
-  subscriptionSegments?: string[];
-  tags: Record<string, string>;
-  upgrades: Record<string, number>;
-};
-
-export type Connection = {
-  id: string;
-  fromId: string;
-  toId: string;
-  topicLabel?: string;
-};
-
-export type EventDot = {
-  id: string;
-  path: { x: number; y: number }[];
-  progress: number;
-  speed: number;
-  status: 'traveling' | 'pausing' | 'queued' | 'dropped' | 'consumed';
-  pauseStartTime?: number;
-  queuedAtNodeId?: string;
-  dropX?: number;
-  dropY?: number;
-  dropVY?: number;
-  color: string;
-  opacity: number;
-  value: number;
-  moneyAdded?: boolean;
-  isRetry?: boolean;
-  originalNodeIds?: string[];
-  nodeWpIndices?: number[];
-  originalValue?: number;
-  forkPaths?: { waypoints: { x: number; y: number }[]; nodeIds: string[]; value?: number; color?: string }[];
-  forkNodeId?: string;
-  nextNodeId?: string;
-  /** Broker node this dot must pass before switching to the bridge-crossing gold color. */
-  bridgeGoldAfterNodeId?: string;
-};
-
-/** Find the first queue or subscriber ID in a route's node list. */
-export function findNextInteractableId(nodeIds: string[], components: GameComponent[]): string | undefined {
-  for (const id of nodeIds) {
-    const c = components.find(comp => comp.id === id);
-    if (c && (c.type === 'queue' || c.type === 'subscriber')) return id;
-  }
-  return undefined;
-}
-
-/** The node right before the first broker-to-broker bridge hop on a route, if any. */
-export function firstBridgeExitNodeId(nodeIds: string[], components: GameComponent[]): string | undefined {
-  for (let i = 0; i < nodeIds.length - 1; i++) {
-    const a = components.find(c => c.id === nodeIds[i]);
-    const b = components.find(c => c.id === nodeIds[i + 1]);
-    if (a?.type === 'broker' && b?.type === 'broker') return nodeIds[i];
-  }
-  return undefined;
-}
-
-/** True if a route's node list crosses a broker-to-broker bridge connection anywhere. */
-export function pathCrossesBridge(nodeIds: string[], components: GameComponent[]): boolean {
-  return firstBridgeExitNodeId(nodeIds, components) !== undefined;
-}
-
-export const BRIDGE_GOLD_COLOR = '#fde047';
-export const BRIDGE_VALUE_MULT = 1.5;
-
-/** Value bonus earned per queue a route passes through on its way to a subscriber. */
-export const QUEUE_VALUE_BONUS_PER_HOP = 0.05;
-
-/** Multiplier for the number of queue hops in a route's node list (1 + 5% per queue). */
-export function getQueueValueMultiplier(nodeIds: string[], components: GameComponent[]): number {
-  const queueHops = nodeIds.filter(id => components.find(c => c.id === id)?.type === 'queue').length;
-  return 1 + queueHops * QUEUE_VALUE_BONUS_PER_HOP;
+/** The four store fields the simulation reads, as the snapshot it takes. */
+export function meshOf(state: Pick<GameState, 'components' | 'connections' | 'upgrades' | 'prestige'>): Mesh {
+  return { components: state.components, connections: state.connections, upgrades: state.upgrades, prestige: state.prestige };
 }
 
 export type GameState = {
@@ -111,17 +45,11 @@ export type GameState = {
 
   components: GameComponent[];
   connections: Connection[];
-  eventDots: EventDot[];
   /** Per queue/DMQ id: one char per queued dot, oldest first ('r' retry, 'n' normal). Written by
    *  the game loop each frame so queue cards don't re-scan every live dot on every commit. */
   queueSlotSignatures: Record<string, string>;
 
-  upgrades: {
-    propagationSpeed: number;
-    costReduction: number;
-    batchFire: number;
-    globalValueMultiplier: number;
-  };
+  upgrades: GlobalUpgrades;
 
   // One aggregated entry per frame (not per event): `count` events worth `amount` total.
   recentEarnings: { time: number; amount: number; count: number }[];
@@ -134,12 +62,7 @@ export type GameState = {
 
   globalUpgradeLevels: Record<string, number>;
 
-  prestige: {
-    points: number;
-    totalPoints: number;
-    count: number;
-    permanentUpgradeLevels: Record<string, number>;
-  };
+  prestige: PrestigeState;
 
   tutorialsSeen: Record<string, boolean>;
   activeTutorial: string | null;
@@ -161,20 +84,14 @@ export type GameState = {
 
   // Actions
   fireEvent: (publisherId: string) => void;
-  fireEvents: (publisherIds: string[]) => void;
-  consumeEvent: (dotId: string, value: number, subscriberId: string) => void;
   consumeEvents: (batch: { value: number; subscriberId: string }[]) => void;
   removeCoinPop: (id: string) => void;
-  dropEvent: (dotId: string) => void;
-  updateDots: (updateFn: (dots: EventDot[]) => EventDot[]) => void;
-  commitFrame: (frame: FrameCommit) => void;
-  removeDot: (dotId: string) => void;
+  commitFrame: (summary: TickSummary) => void;
   earn: (amount: number) => void;
   spend: (amount: number) => boolean;
   selectNode: (nodeId: string | null) => void;
   upgradeComponent: (componentId: string, upgradeKey: string) => void;
   purchaseGlobalUpgrade: (upgradeKey: string) => void;
-  isPathOccupied: (publisherId: string) => boolean;
   getPathForPublisher: (publisherId: string) => { x: number; y: number }[];
   getAllPathsForPublisher: (publisherId: string) => { x: number; y: number }[][];
   _getAllPathsWithNodes: (publisherId: string) => { waypoints: { x: number; y: number }[]; nodeIds: string[] }[];
@@ -211,64 +128,6 @@ function checkEarningMilestones(draft: GameState) {
   if (draft.totalEarned >= WIN_THRESHOLD && !draft.winSeen && !draft.showWinScreen) {
     draft.showWinScreen = true;
   }
-}
-
-// Permanent prestige speed multiplier (count of purchased speed nodes)
-function getPermanentSpeedMult(state: Pick<GameState, 'prestige'>): number {
-  const p = state.prestige.permanentUpgradeLevels;
-  const speedNodes = ['globalSpeed1', 'globalSpeed2'].filter(k => (p[k] ?? 0) > 0).length;
-  return 1 + speedNodes * 0.15;
-}
-
-// Permanent prestige cost reduction
-export function getPermanentCostReduction(state: Pick<GameState, 'prestige'>): number {
-  return (state.prestige.permanentUpgradeLevels['globalCostRed'] ?? 0) > 0 ? 0.10 : 0;
-}
-
-// Permanent shop discount
-export function getPermanentShopDiscount(state: Pick<GameState, 'prestige'>): number {
-  return (state.prestige.permanentUpgradeLevels['globalShopDiscount'] ?? 0) > 0 ? 0.15 : 0;
-}
-
-// Permanent value boost (count of purchased value nodes × $0.50)
-export function getPermanentValueBoost(state: Pick<GameState, 'prestige'>): number {
-  const p = state.prestige.permanentUpgradeLevels;
-  const valueNodes = ['subValue1', 'subValue2'].filter(k => (p[k] ?? 0) > 0).length;
-  return valueNodes * 0.50;
-}
-
-// Permanent publisher rate multiplier (pubRoot)
-export function getPermanentPubRateMult(state: Pick<GameState, 'prestige'>): number {
-  return (state.prestige.permanentUpgradeLevels['pubRoot'] ?? 0) > 0 ? 1.2 : 1.0;
-}
-
-// Permanent subscriber payout multiplier (subRoot)
-export function getPermanentSubPayoutMult(state: Pick<GameState, 'prestige'>): number {
-  return (state.prestige.permanentUpgradeLevels['subRoot'] ?? 0) > 0 ? 1.25 : 1.0;
-}
-
-// Permanent broker throughput cap multiplier (brokerRouting) — stacks on top of
-// whatever level the broker's "Increase Throughput" shop upgrade is at.
-export function getPermanentBrokerThroughputMult(state: Pick<GameState, 'prestige'>): number {
-  return (state.prestige.permanentUpgradeLevels['brokerRouting'] ?? 0) > 0 ? 1.25 : 1.0;
-}
-
-// Permanent queue buffer bonus (queueRoot + queueBuffer)
-export function getPermanentQueueBufferBonus(state: Pick<GameState, 'prestige'>): number {
-  const p = state.prestige.permanentUpgradeLevels;
-  return ((p['queueRoot'] ?? 0) > 0 ? 2 : 0) + ((p['queueBuffer'] ?? 0) > 0 ? 4 : 0);
-}
-
-// Publisher network effect: each purchased publisher is permanently assigned a tier at
-// purchase time (1st purchased = tier 1, 2nd = tier 2, ...), set once in addComponent via
-// upgrades.networkTier. Each tier adds another 10 percentage points to that publisher's
-// own base event value (tier 1 = +10%, tier 2 = +20%, tier 3 = +30%, ...), so the Nth
-// publisher you buy produces events worth 10% more than the (N-1)th. This only ever pays
-// off through that specific publisher's own events, so a publisher that never fires (e.g.
-// unconnected) simply never realizes the bonus — no separate "is it connected" check needed.
-export function getPublisherTierMultiplier(tier: number | undefined): number {
-  if (!tier) return 1;
-  return 1 + tier * 0.1;
 }
 
 // Single source of truth for the upgrade levels a component of a given type should
@@ -379,9 +238,8 @@ function grantHeadStartQueue(draft: GameState) {
   draft.connections.push({ id: `conn-${++connectionIdCounter}`, fromId: broker.id, toId: qId });
 }
 
-let dotIdCounter = 0;
 const coinPopTracking: Record<string, { count: number; windowStart: number; pendingAmount: number }> = {};
-export function nextDotId() { return `dot-${++dotIdCounter}`; }
+let coinPopIdCounter = 0;
 let componentIdCounter = 10; // start above initial component count, bumped after load
 let connectionIdCounter = 10; // bumped after load
 
@@ -402,25 +260,6 @@ function initCountersFromSaved(saved: Partial<GameState> | null) {
   }
 }
 
-
-/** Wall-clock milliseconds between fires for a publisher at its current publishSpeed level. */
-export function getPublisherCooldownMs(pub: { upgrades: Record<string, number> }, state: Pick<GameState, 'prestige'>): number {
-  const publishSpeedLevel = pub.upgrades['publishSpeed'] ?? 0;
-  const baseCooldown = 1000; // 1 second base cooldown
-  const publishBoostPct = publishSpeedLevel * (publishSpeedLevel + 9) / 2;
-  return baseCooldown * (1 - publishBoostPct / 100) / getPermanentPubRateMult(state);
-}
-
-/** Everything one game-loop frame changes, applied in a single store commit (see commitFrame). */
-export type FrameCommit = {
-  /** The frame's moved/arrived/dropped dots (new publishes are appended by the store). */
-  dots: EventDot[];
-  consumed: { value: number; subscriberId: string }[];
-  droppedCount: number;
-  /** Auto-publishers due this frame. */
-  publisherIds: string[];
-  queueSlotSignatures: Record<string, string>;
-};
 
 // The per-frame consume bookkeeping as a pure function over plain objects: returns only the
 // fields a batch of consumes changes. Used by consumeEvents and commitFrame instead of an immer
@@ -476,7 +315,7 @@ function applyConsumes(
       const showEveryN = track.count <= maxPopsPerSec ? 1 : Math.ceil(track.count / maxPopsPerSec);
       if (track.count % showEveryN === 0 && coinPops.length < maxActivePops) {
         if (!popsCopied) { coinPops = coinPops.slice(); popsCopied = true; }
-        coinPops.push({ id: 'coin-' + (++dotIdCounter), x: sub.x, y: sub.y, amount: track.pendingAmount });
+        coinPops.push({ id: 'coin-' + (++coinPopIdCounter), x: sub.x, y: sub.y, amount: track.pendingAmount });
         track.pendingAmount = 0;
       }
     }
@@ -502,263 +341,20 @@ function applyConsumes(
   return patch;
 }
 
-// Fires a set of publishers against a state snapshot without committing: the dots to append,
-// the updated cooldown map, and the publish-rate entries. Publishers that can't fire (no
-// outgoing connection, no broker on any path) are skipped and keep their old cooldown.
-function buildPublishBatch(state: GameState, publisherIds: string[], now: number) {
-  const newDots: EventDot[] = [];
+// The cooldown map and publish-rate entries for publishers that fired at `now` (the sim built
+// their dots). Shared by the manual click and commitFrame.
+function applyPublishes(state: GameState, publisherIds: string[], counts: number[], now: number) {
   const cooldowns = { ...state.publisherCooldowns };
   const publishes: { time: number; count: number }[] = [];
-  for (const id of publisherIds) {
-    const built = buildPublishDots(state, id);
-    if (!built) continue;
-    cooldowns[id] = now;
-    publishes.push({ time: now, count: built.fireCount });
-    for (const d of built.dots) newDots.push(d);
+  for (let i = 0; i < publisherIds.length; i++) {
+    cooldowns[publisherIds[i]] = now;
+    publishes.push({ time: now, count: counts[i] });
   }
   const cutoff = now - 5000;
   const recent = state.recentPublishes.length > 0 && state.recentPublishes[0].time < cutoff
     ? state.recentPublishes.filter(e => e.time > cutoff)
     : state.recentPublishes;
-  return { newDots, cooldowns, recentPublishes: recent.concat(publishes) };
-}
-
-// What one publisher emits per fire, minus the per-dot identity: shared by every dot of a batch
-// and by every fire until the mesh changes. Computing this used to walk the whole connection
-// graph and do several components.find scans per path on every single fire (10/s per publisher).
-type PlannedDot = Pick<EventDot, 'path' | 'speed' | 'color' | 'value' | 'originalNodeIds' | 'nextNodeId' | 'bridgeGoldAfterNodeId' | 'forkPaths' | 'forkNodeId'>;
-type PublishPlan = { fireCount: number; entries: PlannedDot[] };
-type PublishPlanEntry = {
-  componentsRef: GameComponent[];
-  connectionsRef: Connection[];
-  upgradesRef: GameState['upgrades'];
-  prestigeRef: GameState['prestige'];
-  plan: PublishPlan | null;
-};
-const publishPlanCache = new Map<string, PublishPlanEntry>();
-
-function getPublishPlan(state: GameState, publisherId: string): PublishPlan | null {
-  const cached = publishPlanCache.get(publisherId);
-  if (cached && cached.componentsRef === state.components && cached.connectionsRef === state.connections &&
-      cached.upgradesRef === state.upgrades && cached.prestigeRef === state.prestige) {
-    return cached.plan;
-  }
-  const plan = computePublishPlan(state, publisherId);
-  publishPlanCache.set(publisherId, {
-    componentsRef: state.components, connectionsRef: state.connections,
-    upgradesRef: state.upgrades, prestigeRef: state.prestige, plan,
-  });
-  return plan;
-}
-
-// Builds the dots one publisher fire emits, without committing anything. Returns null when the
-// publisher can't fire at all (no outgoing connection, or no broker reachable to drop at), in
-// which case nothing happens and the cooldown is not consumed — same as before the auto-publisher
-// was batched. Shared by fireEvent (manual click) and fireEvents (per-poll batch).
-function buildPublishDots(state: GameState, publisherId: string): { dots: EventDot[]; fireCount: number } | null {
-  const plan = getPublishPlan(state, publisherId);
-  if (!plan) return null;
-  const dots: EventDot[] = [];
-  for (let batch = 0; batch < plan.fireCount; batch++) {
-    for (const e of plan.entries) {
-      dots.push({
-        id: nextDotId(),
-        path: e.path,
-        progress: batch * -0.04,
-        speed: e.speed,
-        status: 'traveling',
-        color: e.color,
-        opacity: 1,
-        value: e.value,
-        originalValue: e.value,
-        originalNodeIds: e.originalNodeIds,
-        nextNodeId: e.nextNodeId,
-        forkPaths: e.forkPaths,
-        forkNodeId: e.forkNodeId,
-        bridgeGoldAfterNodeId: e.bridgeGoldAfterNodeId,
-      });
-    }
-  }
-  return { dots, fireCount: plan.fireCount };
-}
-
-function computePublishPlan(state: GameState, publisherId: string): PublishPlan | null {
-  const pub = state.components.find(c => c.id === publisherId);
-  if (!pub) return null;
-  const fireCount = state.upgrades.batchFire > 0 ? state.upgrades.batchFire : 1;
-  const entries: PlannedDot[] = [];
-
-  const allPaths = state._getAllPathsWithNodes(publisherId);
-  const allValidPaths = allPaths.filter(p => p.waypoints.length >= 2);
-  if (allValidPaths.length === 0) {
-    // No valid paths — fire event to the first connected node and let it drop there
-    const directConn = state.connections.find(c => c.fromId === publisherId);
-    if (!directConn) return null;
-    const target = state.components.find(c => c.id === directConn.toId);
-    if (!target) return null;
-    // Build path using node centers, then expand orthogonally with bounds
-    const nodePath = [{ x: pub.x, y: pub.y }, { x: target.x, y: target.y }];
-    const truncatedWaypoints: { x: number; y: number }[] = [nodePath[0]];
-    if (Math.abs(nodePath[0].y - nodePath[1].y) >= 10) {
-      const { halfW: pubHalfW, halfH: pubHalfH } = getNodeHalfExtents(pub);
-      const { halfW: tgtHalfW, halfH: tgtHalfH } = getNodeHalfExtents(target);
-      const portStartX = pub.x + pubHalfW + 24;
-      const portEndX = target.x - tgtHalfW - 2;
-      const fromBounds = {
-        left: pub.x - pubHalfW,
-        right: pub.x + pubHalfW + 24,
-        top: pub.y - pubHalfH,
-        bottom: pub.y + pubHalfH,
-      };
-      const toBounds = {
-        left: target.x - tgtHalfW,
-        right: target.x + tgtHalfW,
-        top: target.y - tgtHalfH,
-        bottom: target.y + tgtHalfH,
-      };
-      const segWaypoints = computeOrthogonalWaypoints(portStartX, pub.y, portEndX, target.y, fromBounds, toBounds);
-      for (let w = 1; w < segWaypoints.length - 1; w++) {
-        truncatedWaypoints.push(segWaypoints[w]);
-      }
-    }
-    truncatedWaypoints.push(nodePath[1]);
-    const baseValue = state.getEventValue(publisherId);
-    const bridgeExitNodeId = firstBridgeExitNodeId([publisherId, target.id], state.components);
-    const queueMult = getQueueValueMultiplier([publisherId, target.id], state.components);
-    const value = (bridgeExitNodeId ? baseValue * BRIDGE_VALUE_MULT : baseValue) * queueMult;
-    const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state), truncatedWaypoints);
-    entries.push({
-      path: truncatedWaypoints,
-      speed,
-      color: '#22d3ee',
-      value,
-      originalNodeIds: [publisherId, target.id],
-      nextNodeId: findNextInteractableId([publisherId, target.id], state.components),
-      bridgeGoldAfterNodeId: bridgeExitNodeId,
-    });
-    return { fireCount, entries };
-  }
-
-  // Topic filtering: only keep paths where the queue's subscription matches the publisher's topic
-  const pubTopic = pub.topic;
-  const validPaths = pubTopic
-    ? allValidPaths.filter(p => {
-      const queueId = p.nodeIds.find(id =>
-        state.components.find(c => c.id === id)?.type === 'queue');
-      if (!queueId) return true; // no queue in path, allow
-      const queue = state.components.find(c => c.id === queueId);
-      return !queue?.subscriptionTopic || topicMatches(pubTopic, queue.subscriptionTopic);
-    })
-    : allValidPaths;
-  if (validPaths.length === 0) {
-    // No matching queues — create a dot that travels to the broker and drops there
-    // Find any path that reaches a broker
-    const anyPath = allValidPaths[0];
-    if (!anyPath) return null;
-    const brokerIdx = anyPath.nodeIds.findIndex(id =>
-      state.components.find(c => c.id === id)?.type === 'broker');
-    if (brokerIdx < 0) return null;
-    const broker = state.components.find(c => c.id === anyPath.nodeIds[brokerIdx])!;
-    // Build a truncated path: publisher → broker left edge
-    const brokerLeftEdge = { x: broker.x - 62, y: broker.y };
-    // Find the last waypoint before the broker and append the edge point
-    const truncatedWaypoints = [anyPath.waypoints[0]];
-    for (const wp of anyPath.waypoints.slice(1)) {
-      if (Math.abs(wp.x - broker.x) < 80 && Math.abs(wp.y - broker.y) < 40) break;
-      truncatedWaypoints.push(wp);
-    }
-    truncatedWaypoints.push(brokerLeftEdge);
-    const truncatedNodeIds = anyPath.nodeIds.slice(0, brokerIdx + 1);
-
-    const baseValue = state.getEventValue(publisherId);
-    const bridgeExitNodeId = firstBridgeExitNodeId(truncatedNodeIds, state.components);
-    const queueMult = getQueueValueMultiplier(truncatedNodeIds, state.components);
-    const value = (bridgeExitNodeId ? baseValue * BRIDGE_VALUE_MULT : baseValue) * queueMult;
-    const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state), truncatedWaypoints);
-    entries.push({
-      path: truncatedWaypoints,
-      speed,
-      color: '#22d3ee',
-      value,
-      originalNodeIds: truncatedNodeIds,
-      nextNodeId: findNextInteractableId(truncatedNodeIds, state.components),
-      bridgeGoldAfterNodeId: bridgeExitNodeId,
-    });
-    return { fireCount, entries };
-  }
-
-  // Broker fan-out: send to ALL matching queues (one path per unique queue per broker)
-  // Group paths by their broker (the node before the queue where paths diverge)
-  const selectedPaths: typeof validPaths = [];
-  const groupedByBroker = new Map<string, typeof validPaths>();
-
-  for (const p of validPaths) {
-    const queueNode = p.nodeIds.find(id => state.components.find(c => c.id === id)?.type === 'queue');
-    if (!queueNode) {
-      // No queue in path (e.g. direct broker→subscriber), always include
-      selectedPaths.push(p);
-      continue;
-    }
-    // Find the node before the queue (the broker) as the grouping key
-    const queueIdx = p.nodeIds.indexOf(queueNode);
-    const brokerId = queueIdx > 0 ? p.nodeIds[queueIdx - 1] : 'none';
-    if (!groupedByBroker.has(brokerId)) groupedByBroker.set(brokerId, []);
-    groupedByBroker.get(brokerId)!.push(p);
-  }
-
-  // Broker fans out to ALL matching queues (real EDA behavior).
-  // Deduplicate so we get one path per unique queue.
-  for (const [, group] of groupedByBroker) {
-    const seen = new Set<string>();
-    for (const p of group) {
-      const queueId = p.nodeIds.find(id => state.components.find(c => c.id === id)?.type === 'queue');
-      if (!queueId) { selectedPaths.push(p); continue; }
-      if (!seen.has(queueId)) {
-        seen.add(queueId);
-        selectedPaths.push(p);
-      }
-    }
-  }
-
-  const baseValue = state.getEventValue(publisherId);
-  const baseSpeed = 0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state);
-  const valueForPath = (nodeIds: string[]) => {
-    const bridgeMult = pathCrossesBridge(nodeIds, state.components) ? BRIDGE_VALUE_MULT : 1;
-    const queueMult = getQueueValueMultiplier(nodeIds, state.components);
-    return baseValue * bridgeMult * queueMult;
-  };
-  const colorForPath = (nodeIds: string[]) =>
-    pathCrossesBridge(nodeIds, state.components) ? BRIDGE_GOLD_COLOR : '#22d3ee';
-
-  // Group selected paths by their first broker so we create one dot per broker fork point
-  const forkGroups = new Map<string, typeof selectedPaths>();
-  for (const p of selectedPaths) {
-    // Find first broker in the path (index 1 is typically the broker after publisher)
-    const firstBrokerId = p.nodeIds.find(id =>
-      state.components.find(c => c.id === id)?.type === 'broker') ?? 'none';
-    if (!forkGroups.has(firstBrokerId)) forkGroups.set(firstBrokerId, []);
-    forkGroups.get(firstBrokerId)!.push(p);
-  }
-
-  for (const [brokerId, group] of forkGroups) {
-    const primary = group[0];
-    const forks = group.length > 1
-      ? group.slice(1).map(f => ({ ...f, value: valueForPath(f.nodeIds), color: colorForPath(f.nodeIds) }))
-      : undefined;
-    const primaryValue = valueForPath(primary.nodeIds);
-    entries.push({
-      path: primary.waypoints,
-      speed: normalizedSpeed(baseSpeed, primary.waypoints),
-      color: '#22d3ee',
-      value: primaryValue,
-      originalNodeIds: primary.nodeIds,
-      nextNodeId: findNextInteractableId(primary.nodeIds, state.components),
-      forkPaths: forks,
-      forkNodeId: brokerId !== 'none' ? brokerId : undefined,
-      bridgeGoldAfterNodeId: firstBridgeExitNodeId(primary.nodeIds, state.components),
-    });
-  }
-  return entries.length > 0 ? { fireCount, entries } : null;
+  return { cooldowns, recentPublishes: recent.concat(publishes) };
 }
 
 function createInitialComponents(): GameComponent[] {
@@ -961,7 +557,6 @@ export const useGameStore = create<GameState>()(
         return comps;
       })(),
       connections: saved?.connections ?? createInitialConnections(),
-      eventDots: [], // never persist in-flight dots
       queueSlotSignatures: {},
 
       upgrades: saved?.upgrades ?? {
@@ -995,22 +590,18 @@ export const useGameStore = create<GameState>()(
         const pub = state.components.find(c => c.id === publisherId);
         if (!pub) return;
         // Manual clicks are gated on wall-clock cooldown. The auto-publisher gates on sim-time
-        // cooldown inside the game loop instead (see useGameLoop), so a slow frame rate slows
+        // cooldown inside the simulation instead (see sim.ts), so a slow frame rate slows
         // publishing in step with everything else rather than flooding the mesh.
         const lastFireTime = state.publisherCooldowns[publisherId] ?? 0;
         if (Date.now() - lastFireTime < getPublisherCooldownMs(pub, state)) return;
-        get().fireEvents([publisherId]);
-      },
-
-      // Fire several publishers in ONE store commit, bypassing immer (see updateDots for why:
-      // a draft of the live dot array is expensive to proxy and to finalize). Publishers that
-      // can't fire (no outgoing connection, no broker on any path) are skipped and keep their
-      // old cooldown timestamp, exactly as a failed fireEvent used to.
-      fireEvents: (publisherIds: string[]) => {
-        const state = get();
-        const { newDots, cooldowns, recentPublishes } = buildPublishBatch(state, publisherIds, Date.now());
-        if (newDots.length === 0) return;
-        set({ eventDots: state.eventDots.concat(newDots), publisherCooldowns: cooldowns, recentPublishes });
+        // A publisher that can't fire (no outgoing connection, no broker on any path) does
+        // nothing and keeps its old cooldown, as before. The dots themselves are built by the
+        // sim at the start of its next tick; the cooldown is written now so the card reacts.
+        const plan = getPublishPlan(meshOf(state), publisherId);
+        if (!plan) return;
+        const { cooldowns, recentPublishes } = applyPublishes(state, [publisherId], [plan.fireCount], Date.now());
+        set({ publisherCooldowns: cooldowns, recentPublishes });
+        queueManualFire(publisherId);
       },
 
       // All of a frame's consumes in ONE store commit. Every commit runs an immer produce over
@@ -1023,63 +614,29 @@ export const useGameStore = create<GameState>()(
         set(applyConsumes(state, batch, new Map(state.components.map(c => [c.id, c]))));
       },
 
-      // The whole frame — moved dots, consumes, drops, due auto-publishers, queue slot display —
-      // as ONE plain (non-immer) commit. Each commit runs every hook selector in the app and wakes
-      // the auto-save subscriber, so three commits per frame cost three times what one does.
-      commitFrame: ({ dots, consumed, droppedCount, publisherIds, queueSlotSignatures }: FrameCommit) => {
+      // The whole frame — consumes, drops, due auto-publishers, queue slot display — as ONE plain
+      // (non-immer) commit. Each commit runs every hook selector in the app and wakes the
+      // auto-save subscriber, so three commits per frame cost three times what one does. The sim
+      // owns the dots (the canvas draws them from its position buffer); the store keeps only the
+      // persisted bookkeeping and the slot display.
+      commitFrame: ({ consumed, droppedCount, publisherIds, publishes, queueSlotSignatures }: TickSummary) => {
         const state = get();
         const patch: Partial<GameState> = consumed.length > 0
           ? applyConsumes(state, consumed, new Map(state.components.map(c => [c.id, c])))
           : {};
-        let eventDots = dots;
         if (publisherIds.length > 0) {
-          const { newDots, cooldowns, recentPublishes } = buildPublishBatch(state, publisherIds, Date.now());
-          if (newDots.length > 0) {
-            eventDots = dots.concat(newDots);
-            patch.publisherCooldowns = cooldowns;
-            patch.recentPublishes = recentPublishes;
-          }
+          const { cooldowns, recentPublishes } = applyPublishes(state, publisherIds, publishes.map(p => p.count), Date.now());
+          patch.publisherCooldowns = cooldowns;
+          patch.recentPublishes = recentPublishes;
         }
         if (droppedCount > 0) patch.eventsDropped = state.eventsDropped + droppedCount;
-        patch.eventDots = eventDots;
         patch.queueSlotSignatures = queueSlotSignatures;
         set(patch);
-      },
-
-      consumeEvent: (_dotId: string, value: number, subscriberId: string) => {
-        get().consumeEvents([{ value, subscriberId }]);
       },
 
       removeCoinPop: (id: string) => {
         set(draft => {
           draft.coinPops = draft.coinPops.filter(c => c.id !== id);
-        });
-      },
-
-      dropEvent: (dotId: string) => {
-        set(draft => {
-          const d = draft.eventDots.find(d => d.id === dotId);
-          if (d) {
-            d.status = 'dropped';
-            d.color = '#ff4444';
-            d.dropVY = 0;
-            draft.eventsDropped += 1;
-          }
-        });
-      },
-
-      updateDots: (updateFn: (dots: EventDot[]) => EventDot[]) => {
-        // Run the game loop against the plain committed array and bypass immer for the
-        // commit. Inside produce(), eventDots is a draft Proxy — every property read in the
-        // loop's nested per-dot scans is a trap, and `{ ...dot }` enumerates keys through it.
-        // At a few hundred live dots that is hundreds of thousands of trapped reads per frame.
-        // The loop never mutates a dot in place (it rebuilds via spreads), so this is safe.
-        set({ eventDots: updateFn(get().eventDots) });
-      },
-
-      removeDot: (dotId: string) => {
-        set(draft => {
-          draft.eventDots = draft.eventDots.filter(d => d.id !== dotId);
         });
       },
 
@@ -1182,10 +739,7 @@ export const useGameStore = create<GameState>()(
           draft.connections = draft.connections.filter(
             c => c.fromId !== componentId && c.toId !== componentId
           );
-          // Remove any dots queued at this component or with it in their path
-          draft.eventDots = draft.eventDots.filter(
-            d => d.queuedAtNodeId !== componentId
-          );
+          // (Dots queued at this component are pruned by the sim when it sees the new mesh.)
           // Remove the component
           draft.components = draft.components.filter(c => c.id !== componentId);
           // Clear selection if this node was selected
@@ -1515,100 +1069,13 @@ export const useGameStore = create<GameState>()(
         });
       },
 
-      isPathOccupied: (publisherId: string) => {
-        const state = get();
-        return state.eventDots.some(
-          d => d.status === 'traveling' && d.path[0]?.x === state.components.find(c => c.id === publisherId)?.x
-            && d.path[0]?.y === state.components.find(c => c.id === publisherId)?.y
-        );
-      },
-
       getAllPathsForPublisher: (publisherId: string) => {
         return get()._getAllPathsWithNodes(publisherId).map(p => p.waypoints);
       },
 
       _getAllPathsWithNodes: (publisherId: string) => {
         const state = get();
-        const results: { waypoints: { x: number; y: number }[]; nodeIds: string[] }[] = [];
-
-        function walk(nodeId: string, currentPath: { x: number; y: number }[], currentNodeIds: string[], visited: Set<string>) {
-          if (visited.has(nodeId)) return;
-          visited.add(nodeId);
-          const node = state.components.find(c => c.id === nodeId);
-          if (!node) return;
-          const path = [...currentPath, { x: node.x, y: node.y }];
-          const nodeIds = [...currentNodeIds, nodeId];
-
-          // Outgoing connections + reverse bridge connections (bridges are bidirectional)
-          const nextConns = state.connections.filter(c => c.fromId === nodeId);
-          const reverseBridgeConns = node.type === 'broker'
-            ? state.connections.filter(c => c.toId === nodeId &&
-              state.components.find(comp => comp.id === c.fromId)?.type === 'broker')
-            : [];
-          const allNext = [
-            ...nextConns.map(c => c.toId),
-            ...reverseBridgeConns.map(c => c.fromId),
-          ];
-          if (allNext.length === 0) {
-            // Only record paths that end at a subscriber or a queue (for buffering)
-            if (node.type === 'subscriber' || node.type === 'queue') {
-              results.push({ waypoints: path, nodeIds });
-            }
-          } else {
-            for (const nextId of allNext) {
-              walk(nextId, path, nodeIds, new Set(visited));
-            }
-          }
-        }
-
-        walk(publisherId, [], [], new Set());
-
-        // Expand node-center paths into orthogonal waypoints
-        // Uses computeOrthogonalWaypoints to match SVG connection line routing
-        return results.map(({ waypoints: nodePath, nodeIds }) => {
-          if (nodePath.length < 2) return { waypoints: nodePath, nodeIds };
-          const expanded: { x: number; y: number }[] = [nodePath[0]];
-          for (let i = 0; i < nodePath.length - 1; i++) {
-            const a = nodePath[i];
-            const b = nodePath[i + 1];
-            if (Math.abs(a.y - b.y) >= 10) {
-              const aNode = state.components.find(c => c.id === nodeIds[i]);
-              const bNode = state.components.find(c => c.id === nodeIds[i + 1]);
-              // Detect reverse bridge traversal: dot goes a→b but connection is b→a
-              const isReverseBridge = aNode?.type === 'broker' && bNode?.type === 'broker' &&
-                !state.connections.some(c => c.fromId === nodeIds[i] && c.toId === nodeIds[i + 1]) &&
-                state.connections.some(c => c.fromId === nodeIds[i + 1] && c.toId === nodeIds[i]);
-              const src = isReverseBridge ? b : a;
-              const dst = isReverseBridge ? a : b;
-              const srcNode = isReverseBridge ? bNode : aNode;
-              const dstNode = isReverseBridge ? aNode : bNode;
-              const { halfW: srcHalfW, halfH: srcHalfH } = srcNode ? getNodeHalfExtents(srcNode) : { halfW: 60, halfH: 28 };
-              const { halfW: dstHalfW, halfH: dstHalfH } = dstNode ? getNodeHalfExtents(dstNode) : { halfW: 60, halfH: 28 };
-              const portStartX = src.x + srcHalfW + 24; // port right edge
-              const portEndX = dst.x - dstHalfW - 2;    // target left edge
-              const fromBounds = {
-                left: src.x - srcHalfW,
-                right: src.x + srcHalfW + 24,
-                top: src.y - srcHalfH,
-                bottom: src.y + srcHalfH,
-              };
-              const toBounds = {
-                left: dst.x - dstHalfW,
-                right: dst.x + dstHalfW,
-                top: dst.y - dstHalfH,
-                bottom: dst.y + dstHalfH,
-              };
-              const segWaypoints = computeOrthogonalWaypoints(portStartX, src.y, portEndX, dst.y, fromBounds, toBounds);
-              const intermediates = segWaypoints.slice(1, -1);
-              if (isReverseBridge) intermediates.reverse();
-              for (const wp of intermediates) {
-                expanded.push(wp);
-              }
-            }
-            expanded.push(b);
-          }
-          return { waypoints: expanded, nodeIds };
-        });
+        return getAllPathsWithNodes(state.components, state.connections, publisherId);
       },
 
       getPathForPublisher: (publisherId: string) => {
@@ -1616,14 +1083,7 @@ export const useGameStore = create<GameState>()(
         return paths[0] ?? [];
       },
 
-      getEventValue: (publisherId: string) => {
-        const state = get();
-        const pub = state.components.find(c => c.id === publisherId);
-        if (!pub) return 0.5;
-        const valueLevel = pub.upgrades['eventValue'] ?? 0;
-        const base = 1.0 + valueLevel * 0.45 + valueLevel * valueLevel * 0.05 + getPermanentValueBoost(state);
-        return base * getPublisherTierMultiplier(pub.upgrades['networkTier']);
-      },
+      getEventValue: (publisherId: string) => computeEventValue(get(), publisherId),
 
       performPrestige: () => {
         const state = get();
@@ -1644,7 +1104,6 @@ export const useGameStore = create<GameState>()(
           draft.eventsDropped = 0;
           draft.components = createInitialComponents();
           draft.connections = createInitialConnections();
-          draft.eventDots = [];
           draft.upgrades = {
             propagationSpeed: 1.0,
             costReduction: 0,
@@ -1668,8 +1127,6 @@ export const useGameStore = create<GameState>()(
           // Show prestige tree
           draft.showPrestigeTree = true;
         });
-
-        dotIdCounter = 0;
 
         return true;
       },
@@ -1747,7 +1204,7 @@ function flushSave() {
 }
 
 function buildSaveSnapshot(state: GameState): string {
-  const { eventDots: _, queueSlotSignatures: _qs, recentEarnings: __, recentPublishes: ___________, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, activeTutorial: ________, showPrestigeTree: _________, showWinScreen: __________, ...toSave } = state;
+  const { queueSlotSignatures: _qs, recentEarnings: __, recentPublishes: ___________, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, activeTutorial: ________, showPrestigeTree: _________, showWinScreen: __________, ...toSave } = state;
   const data: Record<string, any> = {};
   for (const [key, val] of Object.entries(toSave)) {
     if (typeof val !== 'function') {
@@ -1765,7 +1222,7 @@ let lastChangeTime = 0;
 
 function captureSnapshotIfChanged(): boolean {
   const snapshot = buildSaveSnapshot(useGameStore.getState());
-  // Unchanged means only transient state (eventDots/recentEarnings/...) moved
+  // Unchanged means only transient state (queueSlotSignatures/recentEarnings/...) moved
   if (snapshot === lastSaveSnapshot) return false;
   lastSaveSnapshot = snapshot;
   pendingSnapshot = snapshot;

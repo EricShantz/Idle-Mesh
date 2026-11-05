@@ -1,10 +1,37 @@
 // Headless CPU profile of Idle Mesh under a synthetic heavy mesh.
-// usage: node prof.mjs <M|H> [url]
+// usage: node prof.mjs <M|H> [url] [--worker]
+//   --worker profiles the simulation worker thread (the sim runs there) instead of the page's main thread.
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 
-const SCALE = process.argv[2] ?? 'M';
-const PAGE_URL = process.argv[3] ?? 'http://localhost:5198/Idle-Mesh/';
+const WORKER = process.argv.includes('--worker');
+const ARGS = process.argv.slice(2).filter(a => a !== '--worker');
+const SCALE = ARGS[0] ?? 'M';
+const PAGE_URL = ARGS[1] ?? 'http://localhost:5198/Idle-Mesh/';
+// Playwright's CDPSession only reaches the page; the worker is a separate target, so with --worker the
+// browser also opens a debugging port and the profile is taken over a raw CDP WebSocket (flattened session).
+const DEBUG_PORT = 9333;
+
+async function profileWorker(ms) {
+  const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/version`)).json();
+  const ws = new WebSocket(webSocketDebuggerUrl);
+  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+  let nextId = 1; const waiting = new Map();
+  ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.id && waiting.has(m.id)) { const { res, rej } = waiting.get(m.id); waiting.delete(m.id); m.error ? rej(new Error(m.error.message)) : res(m.result); } };
+  const send = (method, params = {}, sessionId) => new Promise((res, rej) => { const id = nextId++; waiting.set(id, { res, rej }); ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })); });
+  const { targetInfos } = await send('Target.getTargets');
+  const w = targetInfos.find(t => t.type === 'worker' && /sim\.worker/.test(t.url));
+  if (!w) throw new Error('no sim worker target (is the page running inline?); targets: ' + targetInfos.map(t => `${t.type} ${t.url}`).join(', '));
+  const { sessionId } = await send('Target.attachToTarget', { targetId: w.targetId, flatten: true });
+  await send('Profiler.enable', {}, sessionId);
+  await send('Profiler.setSamplingInterval', { interval: 200 }, sessionId);
+  await send('Profiler.start', {}, sessionId);
+  await new Promise(r => setTimeout(r, ms));
+  const { profile } = await send('Profiler.stop', {}, sessionId);
+  await send('Target.detachFromTarget', { sessionId }).catch(() => {});
+  ws.close();
+  return profile;
+}
 const EXE = process.env.CHROME_PATH ?? 'C:/Users/shant/AppData/Local/ms-playwright/chromium-1228/chrome-win64/chrome.exe';
 
 const CFG = {
@@ -14,6 +41,8 @@ const CFG = {
   XL: { pubs: 24, brokers: 3, queuesPerBroker: 7, batchFireLevel: 4, throughputLevel: 30, bridges: false, cluster: true, subSpeed: 11 },
   H: { pubs: 24, brokers: 3, queuesPerBroker: 8, batchFireLevel: 4, throughputLevel: 30, bridges: true, cluster: true, subSpeed: 11 },
   // User-like: ~14,400 dots/s with broker caps NOT reached (24 pubs x 10 fires/s x batch 5 x 12-way fan-out), zoomed out so the whole mesh is on screen
+  // Early game: one publisher through a real webhook (slow zone + occupied-drop rule) straight to a level-0 subscriber
+  W: { pubs: 1, brokers: 1, webhook: true, queuesPerBroker: 0, directSub: true, batchFireLevel: 0, throughputLevel: 0, bridges: false, cluster: false, subSpeed: 0 },
   U: { pubs: 24, brokers: 6, queuesPerBroker: 12, batchFireLevel: 4, throughputLevel: 35, bridges: false, cluster: true, subSpeed: 11, groupGap: 760, queueGap: 60, zoomOutSteps: 4 },
 }[SCALE];
 if (process.env.SUBSPEED) CFG.subSpeed = Number(process.env.SUBSPEED);
@@ -40,13 +69,15 @@ function buildSave(c) {
   for (let b = 0; b < c.brokers; b++) {
     const id = b === 0 ? 'webhook-1' : `broker-${b + 1}`;
     brokerIds.push(id);
-    components.push({
-      id, type: 'broker', x: 700, y: 200 + b * gap, label: 'Broker', tags: {},
-      upgrades: {
-        upgradeToBroker: 1, increaseThroughput: c.throughputLevel, addQueueSlot: c.queuesPerBroker, addBridgeSlot: 2,
-        ...(c.cluster ? { upgradeToCluster: 1, addClusterSlot: 2 } : {}),
-      },
-    });
+    components.push(c.webhook
+      ? { id, type: 'webhook', x: 700, y: 200 + b * gap, label: 'Webhook', tags: {}, upgrades: {} }
+      : {
+        id, type: 'broker', x: 700, y: 200 + b * gap, label: 'Broker', tags: {},
+        upgrades: {
+          upgradeToBroker: 1, increaseThroughput: c.throughputLevel, addQueueSlot: c.queuesPerBroker, addBridgeSlot: 2,
+          ...(c.cluster ? { upgradeToCluster: 1, addClusterSlot: 2 } : {}),
+        },
+      });
   }
   if (c.bridges) for (let b = 0; b < c.brokers - 1; b++) conn(brokerIds[b], brokerIds[b + 1]);
   const pubsPerBroker = Math.ceil(c.pubs / c.brokers);
@@ -74,6 +105,10 @@ function buildSave(c) {
       conn(qid, sid);
     }
   }
+  if (c.directSub) {
+    components.push({ id: 'sub-1', type: 'subscriber', x: 1200, y: 200, label: 'Subscriber', tags: {}, upgrades: { fasterConsumption: c.subSpeed, consumptionValue: 0 } });
+    conn(brokerIds[0], 'sub-1');
+  }
   components.push({ id: 'dmq-1', type: 'dmq', x: 700, y: 200 + c.brokers * gap, label: 'Dead Message Queue', tags: {}, upgrades: { dmqBufferSize: 5, dmqWidth: 2 } });
   conn('dmq-1', brokerIds[0]);
 
@@ -93,7 +128,8 @@ function buildSave(c) {
 }
 
 const save = buildSave(CFG);
-const browser = await chromium.launch({ executablePath: EXE, args: ['--disable-frame-rate-limit=false'] });
+// JSFLAGS=--no-turbo-inlining gives per-function attribution inside the hot loop (V8 otherwise inlines it all into `loop`)
+const browser = await chromium.launch({ executablePath: EXE, args: ['--disable-frame-rate-limit=false', ...(WORKER ? [`--remote-debugging-port=${DEBUG_PORT}`] : []), ...(process.env.JSFLAGS ? [`--js-flags=${process.env.JSFLAGS}`] : [])] });
 const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 const errors = [];
 page.on('pageerror', e => errors.push(String(e)));
@@ -118,14 +154,14 @@ async function sample(label, ms) {
       else {
         dts.sort((a, b) => a - b);
         const s = window.useGameStore.getState();
-        res({
+        window.__sim.byStatus().then(byStatus => res({
           realFps: +(frames / ((t - t0) / 1000)).toFixed(1),
           emaOfInstantFps: +ema.toFixed(1),
           p50dt: +dts[Math.floor(dts.length / 2)].toFixed(1), p95dt: +dts[Math.floor(dts.length * 0.95)].toFixed(1), maxdt: +dts[dts.length - 1].toFixed(1),
-          dots: s.eventDots.length, consumed: s.eventsConsumed, dropped: s.eventsDropped,
+          dots: window.__sim.liveDots(), consumed: s.eventsConsumed, dropped: s.eventsDropped,
           domNodes: document.querySelectorAll('*').length,
-          byStatus: s.eventDots.reduce((a, d) => (a[d.status] = (a[d.status] ?? 0) + 1, a), {}),
-        });
+          byStatus, simTicksPerSec: +window.__sim.ticksPerSec().toFixed(1), simMode: window.__sim.mode(),
+        }));
       }
     };
     requestAnimationFrame(tick);
@@ -138,12 +174,17 @@ await sample('warmup-1', 3000);
 await sample('warmup-2', 3000);
 const before = await sample('steady', 4000);
 
-const cdp = await page.context().newCDPSession(page);
-await cdp.send('Profiler.enable');
-await cdp.send('Profiler.setSamplingInterval', { interval: 200 });
-await cdp.send('Profiler.start');
-await page.waitForTimeout(8000);
-const { profile } = await cdp.send('Profiler.stop');
+let profile;
+if (WORKER) {
+  profile = await profileWorker(8000);
+} else {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Profiler.enable');
+  await cdp.send('Profiler.setSamplingInterval', { interval: 200 });
+  await cdp.send('Profiler.start');
+  await page.waitForTimeout(8000);
+  ({ profile } = await cdp.send('Profiler.stop'));
+}
 await sample('after', 3000);
 
 // ---- aggregate
@@ -183,16 +224,16 @@ const pct = us => (100 * us / total).toFixed(1).padStart(5) + '%';
 const ms = us => (us / 1000).toFixed(0).padStart(6) + 'ms';
 const top = (m, n) => [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n);
 
-console.log(`\n=== SCALE ${SCALE}: ${CFG.pubs} pubs, ${CFG.brokers} brokers, ${CFG.brokers * CFG.queuesPerBroker} queues/subs, batch ${CFG.batchFireLevel + 1}, bridges ${CFG.bridges} ===`);
+console.log(`\n=== SCALE ${SCALE}${WORKER ? ' (sim worker thread)' : ' (main thread)'}: ${CFG.pubs} pubs, ${CFG.brokers} brokers, ${CFG.brokers * CFG.queuesPerBroker} queues/subs, batch ${CFG.batchFireLevel + 1}, bridges ${CFG.bridges} ===`);
 console.log(`profile total ${(total / 1000).toFixed(0)}ms over 8000ms wall; live dots ~${before.dots}; realFps ${before.realFps}`);
 console.log('\n--- self time by file ---');
 for (const [k, v] of top(byFile, 25)) console.log(pct(v), ms(v), k);
 console.log('\n--- self time by function (top 45) ---');
 for (const [k, v] of top(byFn, 45)) console.log(pct(v), ms(v), k);
 console.log('\n--- inclusive time, selected roots ---');
-const want = /(^loop @ src\/hooks\/useGameLoop)|(^render @ src\/components\/EventCanvas)|(^tick @ src\/components\/NodeCard)|(performWorkUntilDeadline)|(^fireEvent @)|(^consumeEvents @)|(^updateDots @)|(^shouldReleaseTo @)|(^drawDot @)|(^isComponentOccupied @)|(^rebuildPathFromNodeIds @)|(^_getAllPathsWithNodes @)|(^finalize @)|(^freeze @)|(^produce @)|(^setState @)|(^useStore @)|(^subscribe)|(^flushSync|^commitRoot|^performSyncWorkOnRoot|^performWorkOnRoot|^renderRootSync)|(^runSaveCheck|^buildSaveSnapshot)|(^getSegmentSpeedScale)|(^interpolatePath)|(^scaledTravelTime)|(^recordDrop)|(^tryBrokerRelay)/;
+const want = /(^tick @ )|(^fillPositions @ )|(^buildPublishDots @ )|(^onmessage @ )|(^receiveTick @ )|(^commitFrame @ )|(^applyConsumes @ )|(^render @ src\/components\/EventCanvas)|(^tick @ src\/components\/NodeCard)|(performWorkUntilDeadline)|(^fireEvent @)|(^consumeEvents @)|(^updateDots @)|(^shouldReleaseTo @)|(^drawDot @)|(^isComponentOccupied @)|(^rebuildPathFromNodeIds @)|(^_getAllPathsWithNodes @)|(^finalize @)|(^freeze @)|(^produce @)|(^setState @)|(^useStore @)|(^subscribe)|(^flushSync|^commitRoot|^performSyncWorkOnRoot|^performWorkOnRoot|^renderRootSync)|(^runSaveCheck|^buildSaveSnapshot)|(^getSegmentSpeedScale)|(^interpolatePath)|(^scaledTravelTime)|(^recordDrop)|(^tryBrokerRelay)/;
 for (const [k, v] of [...incl.entries()].filter(([k]) => want.test(k)).sort((a, b) => b[1] - a[1])) console.log(pct(v), ms(v), k);
 if (errors.length) console.log('\nERRORS:', errors.slice(0, 5));
 fs.mkdirSync(new URL('./.out/', import.meta.url), { recursive: true });
-fs.writeFileSync(new URL(`./.out/profile-${SCALE}.cpuprofile`, import.meta.url), JSON.stringify(profile));
+fs.writeFileSync(new URL(`./.out/profile-${SCALE}${WORKER ? '-worker' : ''}.cpuprofile`, import.meta.url), JSON.stringify(profile));
 await browser.close();

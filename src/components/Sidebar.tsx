@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { useGameStore, getPermanentShopDiscount } from '../store/gameStore';
 import { globalUpgrades, getUpgradeCost, WIN_THRESHOLD } from '../store/upgradeConfig';
-import { getSmoothedFps } from '../hooks/useGameLoop';
+import { getSmoothedFps } from '../hooks/useSimBridge';
+import { getSimTicksPerSec } from '../sim/simBridge';
 import { useThrottledGameStore } from '../hooks/useThrottledStore';
 import { TOPIC_POOL } from '../store/topicPool';
 import { formatMoney } from '../utils/formatMoney';
@@ -28,6 +29,8 @@ const DMQ_COST = 100;
 const PUBLISHER_BASE_COST = 150;
 const SUBSCRIBER_BASE_COST = 75;
 const BROKER_BASE_COST = 200;
+// The simulation runs in a Web Worker and reports its own rate; the frame rate is the UI's.
+const SIM_RATE_TIP = 'Simulation ticks per second. The sim steps at most 100 ms per tick, so below 10 ticks/s it runs slower than real time and income drops with it.';
 
 function getGlobalUpgradeValueDisplay(key: string, level: number): string | null {
   const next = level + 1;
@@ -129,8 +132,10 @@ export function Sidebar() {
   // Sampled once a second rather than read every render — the sidebar re-renders every frame
   // (balance ticks), and a value that changes 60 times a second isn't readable.
   const [fps, setFps] = useState(() => Math.round(getSmoothedFps()));
+  // The simulation's own rate (it runs in a worker, so it can differ from the frame rate).
+  const [simRate, setSimRate] = useState(() => Math.round(getSimTicksPerSec()));
   useEffect(() => {
-    const timer = setInterval(() => setFps(Math.round(getSmoothedFps())), 1000);
+    const timer = setInterval(() => { setFps(Math.round(getSmoothedFps())); setSimRate(Math.round(getSimTicksPerSec())); }, 1000);
     return () => clearInterval(timer);
   }, []);
 
@@ -291,6 +296,8 @@ export function Sidebar() {
           <span className="text-gray-300 text-right">{components.length}</span>
           <span className="text-gray-500">Frame rate</span>
           <span className={`text-right ${fps >= 50 ? 'text-gray-300' : fps >= 30 ? 'text-amber-400' : 'text-red-400'}`}>{fps} fps</span>
+          <span className="text-gray-500" title={SIM_RATE_TIP}>Sim rate</span>
+          <span className={`text-right ${simRate >= 50 ? 'text-gray-300' : simRate >= 10 ? 'text-amber-400' : 'text-red-400'}`} title={SIM_RATE_TIP}>{simRate} ticks/s</span>
         </div>
       </div>
 
