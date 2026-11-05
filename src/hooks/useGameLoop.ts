@@ -75,6 +75,8 @@ export function getMinFps() { return _minFps === Infinity ? getSmoothedFps() : _
  *  setInterval kept firing at full speed into a mesh that was moving in slow motion, and the
  *  pile-up made every following frame slower still. */
 const AUTO_PUB_POLL_MS = 100;
+// Max falling (dropped) dots animated at once; drops beyond this are counted but not drawn.
+export const DROPPED_VISUAL_CAP = 300;
 let autoPubAccumulator = 0;
 let simNow = 0;
 /** Sim-time timestamp of each publisher's last auto fire (wall-clock cooldowns live in the store). */
@@ -374,7 +376,9 @@ export function useGameLoop() {
       const toConsume: { id: string; value: number; subscriberId: string }[] = [];
       let droppedCount = 0;
 
-      state.updateDots(dots => {
+      // Queue/DMQ slot display for this frame, filled in below and committed with the dots.
+      let queueSlotSignatures: Record<string, string> = {};
+      const frameDots = ((dots: Dot[]): Dot[] => {
         // Use a mutable array so each dot sees the results of earlier dots in the same frame
         const updated: Dot[] = [];
         // Track queues whose dots were rebuilt in post-drag cleanup this frame
@@ -473,6 +477,24 @@ export function useGameLoop() {
           if (bucket) bucket.push(d); else pausingBySub.set(k, [d]);
         };
         for (const d of dots) if (d.status === 'pausing' && d.path.length > 0) addPausing(d);
+
+        // Dropped dots are pure visuals once the drop is counted — the one exception being a dot
+        // that falls onto the DMQ and gets re-queued. In a flood (brokers over cap) they were
+        // three quarters of all live dots, each still allocated, moved and drawn every frame for
+        // 2.5 s. Beyond DROPPED_VISUAL_CAP falling dots, new drops are counted but not animated,
+        // unless they fall where the DMQ could catch them.
+        let droppedVisuals = 0;
+        for (const d of dots) if (d.status === 'dropped') droppedVisuals++;
+        const dmqHalfWForCatch = dmqCompForCount ? (120 + (dmqCompForCount.upgrades['dmqWidth'] ?? 0) * 40) / 2 : 0;
+        const pushDropped = (d: Dot) => {
+          const x = d.dropX ?? 0;
+          const catchable = dmqCompForCount !== undefined && !d.isRetry &&
+            x >= dmqCompForCount.x - dmqHalfWForCatch && x <= dmqCompForCount.x + dmqHalfWForCatch;
+          if (droppedVisuals < DROPPED_VISUAL_CAP || catchable) {
+            droppedVisuals++;
+            updated.push(d);
+          }
+        };
 
         for (let i = 0; i < dots.length; i++) {
           let dot = dots[i];
@@ -647,7 +669,7 @@ export function useGameLoop() {
               droppedCount++;
               const failComp = pathComps[0]?.comp;
               if (failComp) recordDrop(failComp.id, 'path-invalid', failComp.label);
-              updated.push({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: dropColor } as Dot);
+              pushDropped({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: dropColor } as Dot);
               continue;
             }
 
@@ -676,7 +698,7 @@ export function useGameLoop() {
               if (approaching && isComponentOccupied(webhookComponent.id)) {
                 droppedCount++;
                 recordDrop(webhookComponent.id, 'webhook-occupied', webhookComponent.label);
-                updated.push({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: dropColor } as Dot);
+                pushDropped({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: dropColor } as Dot);
                 continue;
               }
             }
@@ -698,7 +720,7 @@ export function useGameLoop() {
                 if (!tryBrokerRelay(pc.comp.id, cap, now)) {
                   droppedCount++;
                   recordDrop(pc.comp.id, 'broker-capped', pc.comp.label);
-                  updated.push({ ...dot, status: 'dropped', dropX: pc.comp.x, dropY: pc.comp.y, dropVY: 0, color: dropColor } as Dot);
+                  pushDropped({ ...dot, status: 'dropped', dropX: pc.comp.x, dropY: pc.comp.y, dropVY: 0, color: dropColor } as Dot);
                   brokerCapped = true;
                   break;
                 }
@@ -709,7 +731,13 @@ export function useGameLoop() {
             // Fork spawning: when dot with forkPaths passes its fork broker, spawn fork dots
             if (dot.forkPaths && dot.forkNodeId) {
               const forkComp = componentById.get(dot.forkNodeId);
-              if (forkComp && dotTouchesNode(newPos.x, newPos.y, forkComp.x, forkComp.y)) {
+              // Trigger on crossing the broker's waypoint by progress, not only on the pixel
+              // touch box: inside a DMR Cluster the dot moves at 2.5x, and on a long frame it
+              // could jump clean over the box — the forks then never spawned and all but one of
+              // the fan-out events silently vanished (measured ~30% of throughput at ~20 fps).
+              const forkPc = pathComps.find(pc => pc.comp.id === dot.forkNodeId);
+              const crossedFork = forkPc !== undefined && newProgress >= forkPc.idx / (dot.path.length - 1);
+              if (forkComp && (crossedFork || dotTouchesNode(newPos.x, newPos.y, forkComp.x, forkComp.y))) {
                 for (const fork of dot.forkPaths) {
                   const forkDotId = nextDotId();
                   // Build fork path starting from the broker position onward
@@ -731,7 +759,7 @@ export function useGameLoop() {
                     if (!tryBrokerRelay(forkComp.id, forkCap, now)) {
                       droppedCount++;
                       recordDrop(forkComp.id, 'broker-capped', forkComp.label);
-                      updated.push({
+                      pushDropped({
                         id: forkDotId,
                         path: forkWaypoints,
                         progress: 0,
@@ -829,7 +857,7 @@ export function useGameLoop() {
                 } else {
                   droppedCount++;
                   recordDrop(queue.id, 'queue-full', queue.label);
-                  updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
+                  pushDropped({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
                 }
                 queued = true;
               }
@@ -869,7 +897,7 @@ export function useGameLoop() {
                 } else {
                   droppedCount++;
                   recordDrop(subscriber.id, 'subscriber-occupied', subscriber.label);
-                  updated.push({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
+                  pushDropped({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
                 }
                 continue;
               }
@@ -880,7 +908,7 @@ export function useGameLoop() {
               droppedCount++;
               const lastComp = pathComps[pathComps.length - 1]?.comp;
               if (lastComp) recordDrop(lastComp.id, 'path-incomplete', lastComp.label);
-              updated.push({ ...dot, status: 'dropped', dropX: endPos.x, dropY: endPos.y, dropVY: 0, color: dropColor } as Dot);
+              pushDropped({ ...dot, status: 'dropped', dropX: endPos.x, dropY: endPos.y, dropVY: 0, color: dropColor } as Dot);
               continue;
             }
 
@@ -911,7 +939,7 @@ export function useGameLoop() {
 
             // DMQ catch: check if dropping dot lands on the DMQ
             if (!dot.isRetry) {
-              const dmq = state.components.find(c => c.type === 'dmq');
+              const dmq = dmqCompForCount;
               if (dmq) {
                 const dmqWidthLevel = dmq.upgrades['dmqWidth'] ?? 0;
                 const dmqHalfW = (120 + dmqWidthLevel * 40) / 2;
@@ -1451,19 +1479,30 @@ export function useGameLoop() {
           }
         }
 
-        return updated;
-      });
-
-      // Increment dropped counter
-      if (droppedCount > 0) {
-        useGameStore.setState(state => ({
-          ...state,
-          eventsDropped: state.eventsDropped + droppedCount,
-        }));
-        // Track first drop time for tutorial
-        if (!firstDropTime && !firstDropTutorialShown) {
-          firstDropTime = Date.now();
+        // Queue/DMQ slot display: one char per queued dot, oldest first. Computed once here
+        // for every node instead of by each card re-scanning every live dot on every commit.
+        const queuedByNode = new Map<string, Dot[]>();
+        for (const d of updated) {
+          if (d.status === 'queued' && d.queuedAtNodeId) {
+            const b = queuedByNode.get(d.queuedAtNodeId);
+            if (b) b.push(d); else queuedByNode.set(d.queuedAtNodeId, [d]);
+          }
         }
+        const sigs: Record<string, string> = {};
+        for (const [nodeId, list] of queuedByNode) {
+          list.sort((a, b) => (a.pauseStartTime ?? 0) - (b.pauseStartTime ?? 0));
+          let sig = '';
+          for (const d of list) sig += d.isRetry ? 'r' : 'n';
+          sigs[nodeId] = sig;
+        }
+        queueSlotSignatures = sigs;
+
+        return updated;
+      })(state.eventDots);
+
+      // Track first drop time for tutorial
+      if (droppedCount > 0 && !firstDropTime && !firstDropTutorialShown) {
+        firstDropTime = Date.now();
       }
 
       // Show first-drop tutorial 1 second after the first drop
@@ -1472,33 +1511,28 @@ export function useGameLoop() {
         useGameStore.getState().showTutorial('firstDrop');
       }
 
-      // Add money for dots that reached 50% of animation — one store commit for the whole
-      // frame's consumes (each commit notifies every selector in the app and wakes the
-      // auto-save subscriber); the 5s earnings window is pruned inside that same commit.
-      if (toConsume.length > 0) {
-        useGameStore.getState().consumeEvents(toConsume);
-      }
-
-      // Auto-publisher: one poll per AUTO_PUB_POLL_MS of sim time, all due publishers in a
-      // single commit. Runs after this frame's movement so a new dot is first moved on the
-      // next frame, like it was when the setInterval pushed it between frames. (dt is
-      // clamped to MAX_FRAME_DT_MS, so at most one poll is ever due per frame.)
+      // Auto-publisher: one poll per AUTO_PUB_POLL_MS of sim time. Runs after this frame's
+      // movement so a new dot is first moved on the next frame, like it was when the setInterval
+      // pushed it between frames. (dt is clamped to MAX_FRAME_DT_MS, so at most one poll is ever
+      // due per frame.)
       simNow += dt;
       autoPubAccumulator += dt;
+      const due: string[] = [];
       if (autoPubAccumulator >= AUTO_PUB_POLL_MS) {
         autoPubAccumulator -= AUTO_PUB_POLL_MS;
-        const fresh = useGameStore.getState();
-        const due: string[] = [];
-        for (const pub of fresh.components) {
+        for (const pub of state.components) {
           if (pub.type !== 'publisher' || (pub.upgrades['autoPub'] ?? 0) < 1) continue;
           const last = autoFireLastSim.get(pub.id);
-          if (last === undefined || simNow - last >= getPublisherCooldownMs(pub, fresh)) {
+          if (last === undefined || simNow - last >= getPublisherCooldownMs(pub, state)) {
             autoFireLastSim.set(pub.id, simNow);
             due.push(pub.id);
           }
         }
-        if (due.length > 0) fresh.fireEvents(due);
       }
+
+      // One store commit for the whole frame: moved dots, this frame's consumes (money is added
+      // in the same commit), the drop count, the due publishers' new dots, and the slot display.
+      state.commitFrame({ dots: frameDots, consumed: toConsume, droppedCount, publisherIds: due, queueSlotSignatures });
 
       rafRef.current = requestAnimationFrame(loop);
     };

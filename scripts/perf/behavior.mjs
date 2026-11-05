@@ -16,7 +16,7 @@ const WINDOW_MS = 15000;
 
 const src = fs.readFileSync(new URL('./prof.mjs', import.meta.url), 'utf8');
 const saveBuilder = src.slice(src.indexOf('const CFG ='), src.indexOf('const save = buildSave'));
-const save = new Function('SCALE', 'process', saveBuilder + '\nreturn buildSave(CFG);')(SCALE, process);
+const { save, CFG } = new Function('SCALE', 'process', saveBuilder + '\nreturn { save: buildSave(CFG), CFG };')(SCALE, process);
 
 const browser = await chromium.launch({ executablePath: EXE });
 const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
@@ -27,6 +27,8 @@ await page.addInitScript(s => localStorage.setItem('idle-mesh-save', s), JSON.st
 await page.goto(PAGE_URL);
 await page.waitForTimeout(1500);
 await page.evaluate(() => { const s = window.useGameStore.getState(); if (s.activeTutorial) s.dismissTutorial(s.activeTutorial); });
+// Zoom out (wheel on the mesh, x0.7 per step) so tall scenarios are actually on screen
+for (let z = 0; z < (CFG.zoomOutSteps ?? 0); z++) { await page.mouse.move(60, 60); await page.mouse.wheel(0, 100); await page.waitForTimeout(50); }
 await page.waitForTimeout(WARMUP_MS);
 
 const r = await page.evaluate((ms) => new Promise(res => {
@@ -55,7 +57,7 @@ const r = await page.evaluate((ms) => new Promise(res => {
       avgLiveDots: avg(dotSamples), maxLiveDots: Math.max(...dotSamples),
       avgQueued: avg(queuedSamples), avgPausing: avg(pausingSamples),
       coinPopsNow: s.coinPops.length,
-      cards: s.components.length, connections: s.connections.length,
+      renderer: window.__eventCanvasRenderer, cards: s.components.length, connections: s.connections.length,
     });
   };
   requestAnimationFrame(tick);
