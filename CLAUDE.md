@@ -84,3 +84,5 @@ See `claude-docs/` for in-depth reference (read as needed, not loaded by default
 - `dev-notes.md` — viewport, drag mechanics, path geometry, DMQ internals, prestige, tutorials, debugging tips
 - `roadmap.md` — feature roadmap, known bugs, nice-to-have polish items
 - `topic-routing-design.md` — topic system design decisions, matching rules, broadening, multi-broker bridging
+- `worker-refactor-plan.md` — phased plan (with gates) to move the dot simulation into a Web Worker; read before touching `useGameLoop.ts` structure
+- `worker-refactor-progress.md` — session handoff for that plan: which phase is next, tree state, findings; every session reads it first and rewrites it last

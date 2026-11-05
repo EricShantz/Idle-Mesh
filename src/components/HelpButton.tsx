@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 import { tutorials } from '../store/tutorialConfig';
-import { getActiveDrops, type DropReason } from '../hooks/useGameLoop';
+import { getActiveDrops, type DropReason } from '../sim/simStats';
 import { TOPIC_POOL } from '../store/topicPool';
 import type { ComponentType, ReactNode } from 'react';
 import {
