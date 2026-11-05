@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useGameStore, nextDotId, getPermanentQueueBufferBonus, findNextInteractableId, getPermanentBrokerThroughputMult, getPublisherCooldownMs, BRIDGE_GOLD_COLOR, type EventDot, type GameComponent, type Connection } from '../store/gameStore';
-import { interpolatePath, normalizedSpeed, getSegmentSpeedScale, scaledTravelTime } from '../utils/pathUtils';
+import { interpolatePath, normalizedSpeed, getSegmentSpeedScale, scaledTravelTime, getPathMetrics } from '../utils/pathUtils';
 import { computeOrthogonalWaypoints, computeVerticalFirstWaypoints } from '../utils/orthogonalPath';
 import { getClusterSlotCount, getNodeHalfExtents } from '../store/upgradeConfig';
 
@@ -299,10 +299,135 @@ function dedupeConsecutiveWaypoints(path: { x: number; y: number }[]): { x: numb
 
 type Dot = EventDot;
 type PathComps = { comp: GameComponent; idx: number }[];
-type PathInfo = { componentsRef: GameComponent[]; comps: PathComps; endSubscriber: GameComponent | undefined };
+/** A progress interval along a path (endpoints inclusive, in clamped [0, 1] progress). */
+type Zone = { start: number; end: number };
+/** A node on the path: its waypoint's progress and the progress at which a dot first touches it. */
+type NodeMark = { comp: GameComponent; idx: number; centerP: number; touchStart: number };
+/**
+ * The route profile: everything the per-frame rules need to know about a path, precomputed as
+ * progress fractions so a dot's frame is an add and a few compares instead of a dozen pixel
+ * tests. Cached per path (below) and rebuilt when the component layout changes, exactly like the
+ * node list and end subscriber it grew out of. Fractions, not pixels, so it survives a cable
+ * getting longer or shorter while a node is dragged (progress is remapped the same way).
+ */
+type PathInfo = {
+  componentsRef: GameComponent[];
+  comps: PathComps;
+  endSubscriber: GameComponent | undefined;
+  /** Per segment: average segment length / this segment's (what getSegmentSpeedScale returns). */
+  segScale: number[];
+  /** Inside the webhook's touch box: speed x0.4. */
+  slowZones: Zone[];
+  /** Inside a DMR Cluster's bounds: speed x2.5. */
+  fastZones: Zone[];
+  /** The 20px band left of the webhook where an occupied webhook drops arrivals. */
+  approachZones: Zone[];
+  /** One per entry of `comps`, in path order. */
+  marks: NodeMark[];
+  /** Last mark per component id (what `findLast` over comps used to return). */
+  markById: Map<string, NodeMark>;
+  /** Single-entry memos for the per-dot lookups: dots on one path share a route and a target,
+   *  so a property compare replaces a WeakMap/Map lookup per dot per frame. */
+  rvIds?: string[];
+  rvConnections?: Connection[];
+  rvInvalid?: boolean;
+  nextId?: string;
+  nextMark?: NodeMark;
+};
+
+function inZones(zones: Zone[], p: number): boolean {
+  for (const z of zones) if (p >= z.start && p <= z.end) return true;
+  return false;
+}
+
+function addZone(zones: Zone[], start: number, end: number) {
+  const last = zones[zones.length - 1];
+  if (last && start <= last.end + 1e-9) { if (end > last.end) last.end = end; return; }
+  zones.push({ start, end });
+}
+
+/** Progress intervals where the path lies inside an axis-aligned rect (edges inclusive). */
+function rectZones(path: { x: number; y: number }[], left: number, right: number, top: number, bottom: number): Zone[] {
+  const n = path.length - 1;
+  const zones: Zone[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = path[i];
+    const b = path[i + 1];
+    let t0 = 0;
+    let t1 = 1;
+    const dx = b.x - a.x;
+    if (Math.abs(dx) < 1e-9) {
+      if (a.x < left || a.x > right) continue;
+    } else {
+      let ta = (left - a.x) / dx;
+      let tb = (right - a.x) / dx;
+      if (ta > tb) { const t = ta; ta = tb; tb = t; }
+      if (ta > t0) t0 = ta;
+      if (tb < t1) t1 = tb;
+    }
+    const dy = b.y - a.y;
+    if (Math.abs(dy) < 1e-9) {
+      if (a.y < top || a.y > bottom) continue;
+    } else {
+      let ta = (top - a.y) / dy;
+      let tb = (bottom - a.y) / dy;
+      if (ta > tb) { const t = ta; ta = tb; tb = t; }
+      if (ta > t0) t0 = ta;
+      if (tb < t1) t1 = tb;
+    }
+    if (t0 > t1) continue;
+    addZone(zones, (i + t0) / n, (i + t1) / n);
+  }
+  return zones;
+}
+
+/**
+ * Progress intervals where dotTouchesNode(pos, node) holds. The touch shape is the node box grown
+ * by DOT_RADIUS with rounded corners; a cable entering through a face (every real route does) is
+ * exact from the grown box alone, and the ends are refined against the exact test in case a
+ * segment only clips a corner.
+ */
+function touchZones(path: { x: number; y: number }[], nodeX: number, nodeY: number): Zone[] {
+  const coarse = rectZones(path,
+    nodeX - NODE_HALF_W - DOT_RADIUS, nodeX + NODE_HALF_W + DOT_RADIUS,
+    nodeY - NODE_TOP_OFFSET - DOT_RADIUS, nodeY + NODE_BOTTOM_OFFSET + DOT_RADIUS);
+  const touches = (prog: number) => { const q = interpolatePath(path, prog); return dotTouchesNode(q.x, q.y, nodeX, nodeY); };
+  const zones: Zone[] = [];
+  for (const z of coarse) {
+    let { start, end } = z;
+    const startOk = touches(start);
+    const endOk = touches(end);
+    if (!startOk || !endOk) {
+      let probe = -1;
+      for (let k = 0; k <= 32; k++) { const q = start + (end - start) * k / 32; if (touches(q)) { probe = q; break; } }
+      if (probe < 0) continue; // only grazes a rounded corner: never actually touches
+      if (!startOk) { let lo = start; let hi = probe; for (let k = 0; k < 24; k++) { const mid = (lo + hi) / 2; if (touches(mid)) hi = mid; else lo = mid; } start = hi; }
+      if (!endOk) { let lo = probe; let hi = end; for (let k = 0; k < 24; k++) { const mid = (lo + hi) / 2; if (touches(mid)) lo = mid; else hi = mid; } end = lo; }
+    }
+    zones.push({ start, end });
+  }
+  return zones;
+}
 /** Layout-derived data per path array (see getPathInfo in the loop). Paths are never mutated
  *  in place, so keying on the array is exact; entries are collected with their dot. */
 const pathInfoCache = new WeakMap<{ x: number; y: number }[], PathInfo>();
+
+/** Fork spawn geometry per (fork waypoint array, broker): the slice from the broker onward and
+ *  its route, computed once and shared by every dot the fork spawns. Each spawn used to slice
+ *  fresh arrays, so thousands of fork dots per second each carried a unique path — and a unique
+ *  route profile and validity entry to build and garbage-collect. */
+type ForkSpawn = {
+  componentsRef: GameComponent[];
+  nodeIdsRef: string[];
+  waypoints: { x: number; y: number }[];
+  nodeIds: string[];
+  nextNodeId: string | undefined;
+};
+const forkSpawnCache = new WeakMap<{ x: number; y: number }[], Map<string, ForkSpawn>>();
+
+/** Queue→subscriber release path per (queue, subscriber position), rebuilt when components move. */
+type ReleasePath = { componentsRef: GameComponent[]; path: { x: number; y: number }[]; progress: number; nodeIds: string[] };
+const releasePathCache = new Map<string, ReleasePath>();
 type RouteValidity = { componentsRef: GameComponent[]; connectionsRef: Connection[]; invalid: boolean };
 /** Whether a route (a dot's originalNodeIds, shared by every dot of one fire) still has a
  *  connection for each hop, cached until the component or connection list changes. */
@@ -379,6 +504,10 @@ export function useGameLoop() {
       // Queue/DMQ slot display for this frame, filled in below and committed with the dots.
       let queueSlotSignatures: Record<string, string> = {};
       const frameDots = ((dots: Dot[]): Dot[] => {
+        // One clock read per frame: the rules only ever compare times within a frame or against
+        // windows of hundreds of ms, and the calls were being made once per dot.
+        const frameNow = performance.now();
+        const nowMs = Date.now();
         // Use a mutable array so each dot sees the results of earlier dots in the same frame
         const updated: Dot[] = [];
         // Track queues whose dots were rebuilt in post-drag cleanup this frame
@@ -454,7 +583,38 @@ export function useGameLoop() {
             }
           }
           const end = path[path.length - 1];
-          info = { componentsRef: state.components, comps, endSubscriber: end ? subscriberNear(end.x, end.y) : undefined };
+          const n = path.length - 1;
+          const metrics = getPathMetrics(path);
+          const segScale = metrics.lengths.map(len => (len === 0 ? 1 : metrics.avgLen / len));
+          const marks: NodeMark[] = comps.map(({ comp, idx }) => {
+            const centerP = n > 0 ? idx / n : 0;
+            // The touch interval around the node's own waypoint (a cable can't reach the center
+            // without entering the box, so it always exists; the fallback is just for safety).
+            const own = touchZones(path, comp.x, comp.y).find(z => z.start <= centerP && centerP <= z.end);
+            return { comp, idx, centerP, touchStart: own ? own.start : centerP };
+          });
+          const markById = new Map<string, NodeMark>();
+          for (const mk of marks) markById.set(mk.comp.id, mk);
+          let approachZones: Zone[] = [];
+          if (webhookComponent) {
+            const leftEdge = webhookComponent.x - NODE_HALF_W - DOT_RADIUS;
+            approachZones = rectZones(path, leftEdge - 20, leftEdge, -Infinity, Infinity);
+          }
+          const fastZones: Zone[] = [];
+          for (const cb of clusterBounds) {
+            for (const z of rectZones(path, cb.x - cb.halfW, cb.x + cb.halfW, cb.y - cb.halfH, cb.y + cb.halfH)) fastZones.push(z);
+          }
+          info = {
+            componentsRef: state.components,
+            comps,
+            endSubscriber: end ? subscriberNear(end.x, end.y) : undefined,
+            segScale,
+            slowZones: webhookComponent ? touchZones(path, webhookComponent.x, webhookComponent.y) : [],
+            fastZones,
+            approachZones,
+            marks,
+            markById,
+          };
           pathInfoCache.set(path, info);
           return info;
         };
@@ -478,6 +638,32 @@ export function useGameLoop() {
         };
         for (const d of dots) if (d.status === 'pausing' && d.path.length > 0) addPausing(d);
 
+        const forkSpawnFor = (fork: { waypoints: { x: number; y: number }[]; nodeIds: string[] }, forkComp: GameComponent): ForkSpawn => {
+          let byBroker = forkSpawnCache.get(fork.waypoints);
+          if (!byBroker) { byBroker = new Map(); forkSpawnCache.set(fork.waypoints, byBroker); }
+          const hit = byBroker.get(forkComp.id);
+          if (hit && hit.componentsRef === state.components && hit.nodeIdsRef === fork.nodeIds) return hit;
+          // Build fork path starting from the broker position onward: route from the broker, and
+          // waypoints from the one closest to the broker
+          const brokerIdxInFork = fork.nodeIds.indexOf(forkComp.id);
+          const nodeIds = brokerIdxInFork >= 0 ? fork.nodeIds.slice(brokerIdxInFork) : fork.nodeIds;
+          let brokerWpIdx = 0;
+          let bestDist = Infinity;
+          for (let wi = 0; wi < fork.waypoints.length; wi++) {
+            const d = Math.hypot(fork.waypoints[wi].x - forkComp.x, fork.waypoints[wi].y - forkComp.y);
+            if (d < bestDist) { bestDist = d; brokerWpIdx = wi; }
+          }
+          const entry: ForkSpawn = {
+            componentsRef: state.components,
+            nodeIdsRef: fork.nodeIds,
+            waypoints: fork.waypoints.slice(brokerWpIdx),
+            nodeIds,
+            nextNodeId: findNextInteractableId(nodeIds, state.components),
+          };
+          byBroker.set(forkComp.id, entry);
+          return entry;
+        };
+
         // Dropped dots are pure visuals once the drop is counted — the one exception being a dot
         // that falls onto the DMQ and gets re-queued. In a flood (brokers over cap) they were
         // three quarters of all live dots, each still allocated, moved and drawn every frame for
@@ -496,15 +682,13 @@ export function useGameLoop() {
           }
         };
 
-        for (let i = 0; i < dots.length; i++) {
-          let dot = dots[i];
-
-          // Helper: check if a component is occupied — sees already-processed + remaining dots
-          const isComponentOccupied = (componentId: string) => {
+        // Helper: check if a component is occupied — sees already-processed + remaining dots.
+        // Defined once per frame: as a per-dot closure it allocated two functions per dot per frame.
+        const isComponentOccupied = (componentId: string, self: Dot, i: number) => {
             const comp = componentById.get(componentId);
             if (!comp) return false;
             const occupiedBy = (d: Dot) => {
-              if (d.id === dot.id) return false; // never block yourself
+              if (d.id === self.id) return false; // never block yourself
               if (d.status === 'pausing' || d.status === 'queued') {
                 const lastPos = d.path[d.path.length - 1];
                 return Math.hypot(comp.x - lastPos.x, comp.y - lastPos.y) < 50;
@@ -519,7 +703,10 @@ export function useGameLoop() {
             for (const d of updated) if (occupiedBy(d)) return true;
             for (let j = i + 1; j < dots.length; j++) if (occupiedBy(dots[j])) return true;
             return false;
-          };
+        };
+
+        for (let i = 0; i < dots.length; i++) {
+          let dot = dots[i];
 
           // Post-drag cleanup: if dot was rebuilt during drag (has nodeWpIndices) but drag ended,
           // rebuild one final time from current positions to account for Y-snap
@@ -611,12 +798,16 @@ export function useGameLoop() {
 
           if (dot.status === 'traveling') {
             const dropColor = dot.isRetry ? '#4a5568' : '#ff4444';
-            const eventPos = interpolatePath(dot.path, dot.progress);
-
-            // Drop dots whose path no longer matches the connection graph (connection was removed)
-            // Component nodes on the path (orthogonal midpoints skipped) — cached per path
+            // Everything a frame needs to know about the route — where nodes, slow/fast zones and
+            // touch boxes sit as progress fractions — comes from the cached route profile. A dot's
+            // frame is then an add and a few compares; pixel positions are only computed when a
+            // rule actually fires (drop positions), not for every dot every frame.
             const pathInfo = getPathInfo(dot.path);
             const pathComps = pathInfo.comps;
+            const p = dot.progress;
+            const pClamped = p < 0 ? 0 : p; // interpolatePath holds negative progress at the path start
+
+            // Drop dots whose path no longer matches the connection graph (connection was removed)
             // Check each consecutive component pair ahead of the dot has a connection
             // Skip validation while a node is being dragged — dragging moves positions
             // but doesn't disconnect cables, so the position-based matching would give false positives
@@ -630,6 +821,9 @@ export function useGameLoop() {
               // depends on the route and the current graph, so it is cached on the node-id array
               // (shared by every dot of a fire) until components or connections change.
               if (!state.draggingNodeId) {
+                if (pathInfo.rvIds === dot.originalNodeIds && pathInfo.rvConnections === state.connections) {
+                  pathInvalid = pathInfo.rvInvalid === true;
+                } else {
                 let rv = routeValidityCache.get(dot.originalNodeIds);
                 if (!rv || rv.componentsRef !== state.components || rv.connectionsRef !== state.connections) {
                   const validationNodes = dot.originalNodeIds.map(id => componentById.get(id)).filter(Boolean) as GameComponent[];
@@ -648,7 +842,11 @@ export function useGameLoop() {
                   rv = { componentsRef: state.components, connectionsRef: state.connections, invalid };
                   routeValidityCache.set(dot.originalNodeIds, rv);
                 }
+                pathInfo.rvIds = dot.originalNodeIds;
+                pathInfo.rvConnections = state.connections;
+                pathInfo.rvInvalid = rv.invalid;
                 pathInvalid = rv.invalid;
+                }
               }
             } else {
               for (let pc = 0; pc < pathComps.length - 1 && !state.draggingNodeId; pc++) {
@@ -669,58 +867,48 @@ export function useGameLoop() {
               droppedCount++;
               const failComp = pathComps[0]?.comp;
               if (failComp) recordDrop(failComp.id, 'path-invalid', failComp.label);
+              const eventPos = interpolatePath(dot.path, p);
               pushDropped({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: dropColor } as Dot);
               continue;
             }
 
+            // Speed: segment scale (constant pixel speed), x0.4 inside the webhook's touch box, x2.5
+            // inside a DMR Cluster (it renders much larger and hides dots behind an opaque
+            // background — speed through so it still feels instantaneous). All read off the route
+            // profile at the dot's current progress, as the pixel tests did at its current position.
+            const segScale = pathInfo.segScale;
+            const segCount = segScale.length;
             let actualSpeed = dot.speed * state.upgrades.propagationSpeed;
+            if (segCount > 0) actualSpeed *= segScale[Math.min(Math.floor(pClamped * segCount), segCount - 1)];
+            if (pathInfo.slowZones.length > 0 && inZones(pathInfo.slowZones, pClamped)) actualSpeed *= 0.4;
+            if (pathInfo.fastZones.length > 0 && inZones(pathInfo.fastZones, pClamped)) actualSpeed *= 2.5;
 
-            // Scale speed by segment length ratio so dots move at constant pixel speed
-            actualSpeed *= getSegmentSpeedScale(dot.path, dot.progress);
-
-            if (webhookComponent && dotTouchesNode(eventPos.x, eventPos.y, webhookComponent.x, webhookComponent.y)) {
-              actualSpeed *= 0.4;
+            // Only block dots approaching from the left, just before the webhook's left edge
+            if (webhookComponent && pathInfo.approachZones.length > 0 && inZones(pathInfo.approachZones, pClamped) &&
+                isComponentOccupied(webhookComponent.id, dot, i)) {
+              const eventPos = interpolatePath(dot.path, p);
+              droppedCount++;
+              recordDrop(webhookComponent.id, 'webhook-occupied', webhookComponent.label);
+              pushDropped({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: dropColor } as Dot);
+              continue;
             }
 
-            // DMR Cluster nodes render much larger than a regular broker and hide dots
-            // behind an opaque background — speed through so it still feels instantaneous.
-            for (const cb of clusterBounds) {
-              if (Math.abs(eventPos.x - cb.x) <= cb.halfW && Math.abs(eventPos.y - cb.y) <= cb.halfH) {
-                actualSpeed *= 2.5;
-                break;
-              }
-            }
-
-            if (webhookComponent) {
-              // Only block dots approaching from the left, just before the node's left edge
-              const leftEdge = webhookComponent.x - NODE_HALF_W - DOT_RADIUS;
-              const approaching = eventPos.x < leftEdge && eventPos.x >= leftEdge - 20;
-              if (approaching && isComponentOccupied(webhookComponent.id)) {
-                droppedCount++;
-                recordDrop(webhookComponent.id, 'webhook-occupied', webhookComponent.label);
-                pushDropped({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: dropColor } as Dot);
-                continue;
-              }
-            }
-
-            const newProgress = Math.min(dot.progress + actualSpeed * dt, 1);
-            const newPos = interpolatePath(dot.path, newProgress);
+            const newProgress = Math.min(p + actualSpeed * dt, 1);
 
             // Broker throughput cap: every broker the dot passes through gates against its OWN
             // cap (not just the first) — a bridge hop is a real relay, not a free pass, so
             // chaining brokers no longer lets a route dodge capacity limits. The DMR Cluster
             // upgrade is the intended way to raise a given broker's own ceiling instead.
             let brokerCapped = false;
-            const now = performance.now();
-            for (const pc of pathComps) {
-              if (pc.comp.type !== 'broker') continue;
-              const brokerProgress = pc.idx / (dot.path.length - 1);
-              if (dot.progress < brokerProgress && newProgress >= brokerProgress) {
-                const cap = getBrokerCap(pc.comp, getPermanentBrokerThroughputMult(state));
-                if (!tryBrokerRelay(pc.comp.id, cap, now)) {
+            const now = frameNow;
+            for (const mk of pathInfo.marks) {
+              if (mk.comp.type !== 'broker') continue;
+              if (p < mk.centerP && newProgress >= mk.centerP) {
+                const cap = getBrokerCap(mk.comp, getPermanentBrokerThroughputMult(state));
+                if (!tryBrokerRelay(mk.comp.id, cap, now)) {
                   droppedCount++;
-                  recordDrop(pc.comp.id, 'broker-capped', pc.comp.label);
-                  pushDropped({ ...dot, status: 'dropped', dropX: pc.comp.x, dropY: pc.comp.y, dropVY: 0, color: dropColor } as Dot);
+                  recordDrop(mk.comp.id, 'broker-capped', mk.comp.label);
+                  pushDropped({ ...dot, status: 'dropped', dropX: mk.comp.x, dropY: mk.comp.y, dropVY: 0, color: dropColor } as Dot);
                   brokerCapped = true;
                   break;
                 }
@@ -731,27 +919,18 @@ export function useGameLoop() {
             // Fork spawning: when dot with forkPaths passes its fork broker, spawn fork dots
             if (dot.forkPaths && dot.forkNodeId) {
               const forkComp = componentById.get(dot.forkNodeId);
-              // Trigger on crossing the broker's waypoint by progress, not only on the pixel
-              // touch box: inside a DMR Cluster the dot moves at 2.5x, and on a long frame it
-              // could jump clean over the box — the forks then never spawned and all but one of
-              // the fan-out events silently vanished (measured ~30% of throughput at ~20 fps).
-              const forkPc = pathComps.find(pc => pc.comp.id === dot.forkNodeId);
-              const crossedFork = forkPc !== undefined && newProgress >= forkPc.idx / (dot.path.length - 1);
-              if (forkComp && (crossedFork || dotTouchesNode(newPos.x, newPos.y, forkComp.x, forkComp.y))) {
+              // Fires once the dot's progress reaches the point where it enters the broker's touch
+              // box (the profile's touchStart): the same frame the old per-frame pixel test fired,
+              // but a long frame can't skip it — inside a DMR Cluster the dot moves at 2.5x and
+              // used to jump clean over the box, so the forks never spawned and all but one of the
+              // fan-out events silently vanished (~30% of throughput at ~20 fps).
+              const forkMark = pathInfo.markById.get(dot.forkNodeId);
+              if (forkComp && forkMark && newProgress >= forkMark.touchStart) {
                 for (const fork of dot.forkPaths) {
                   const forkDotId = nextDotId();
-                  // Build fork path starting from the broker position onward
-                  const brokerIdxInFork = fork.nodeIds.indexOf(dot.forkNodeId!);
-                  const forkStartNodeIds = brokerIdxInFork >= 0 ? fork.nodeIds.slice(brokerIdxInFork) : fork.nodeIds;
-                  // Build waypoints from broker onward using the fork's full waypoints
-                  // Find the waypoint closest to the broker
-                  let brokerWpIdx = 0;
-                  let bestDist = Infinity;
-                  for (let wi = 0; wi < fork.waypoints.length; wi++) {
-                    const d = Math.hypot(fork.waypoints[wi].x - forkComp.x, fork.waypoints[wi].y - forkComp.y);
-                    if (d < bestDist) { bestDist = d; brokerWpIdx = wi; }
-                  }
-                  const forkWaypoints = fork.waypoints.slice(brokerWpIdx);
+                  // Path and route from the broker onward, shared by every dot spawned from this
+                  // fork (see forkSpawnFor) so they also share one cached route profile.
+                  const { waypoints: forkWaypoints, nodeIds: forkStartNodeIds, nextNodeId: forkNextNodeId } = forkSpawnFor(fork, forkComp);
                   if (forkWaypoints.length >= 2) {
                     // Fork dots spawn at the publisher's first broker (ingestion point),
                     // so they count against that broker's throughput cap
@@ -786,7 +965,7 @@ export function useGameLoop() {
                         value: fork.value ?? dot.value,
                         originalValue: fork.value ?? dot.originalValue,
                         originalNodeIds: forkStartNodeIds,
-                        nextNodeId: findNextInteractableId(forkStartNodeIds, state.components),
+                        nextNodeId: forkNextNodeId,
                       });
                     }
                   }
@@ -814,28 +993,30 @@ export function useGameLoop() {
             // If the dot has a nextNodeId tag, only that specific component can capture it.
             // This prevents dots from being intercepted by unrelated nodes that happen to
             // sit on the geometric path (e.g. a queue placed on top of a DMQ→broker line).
-            const nextInteractable = dot.nextNodeId
-              ? pathComps.findLast(pc => pc.comp.id === dot.nextNodeId)
-              : pathComps.find(pc => {
-                  const compProgress = pc.idx / (dot.path.length - 1);
-                  return compProgress > dot.progress - 0.01 && (pc.comp.type === 'queue' || pc.comp.type === 'subscriber');
-                });
+            let nextInteractable: NodeMark | undefined;
+            if (dot.nextNodeId) {
+              if (pathInfo.nextId !== dot.nextNodeId) {
+                pathInfo.nextId = dot.nextNodeId;
+                pathInfo.nextMark = pathInfo.markById.get(dot.nextNodeId);
+              }
+              nextInteractable = pathInfo.nextMark;
+            } else {
+              nextInteractable = pathInfo.marks.find(mk => mk.centerP > p - 0.01 && (mk.comp.type === 'queue' || mk.comp.type === 'subscriber'));
+            }
 
             // Check collision with queues — only the next queue on the path
             let queued = false;
             if (nextInteractable && nextInteractable.comp.type === 'queue') {
               const queue = nextInteractable.comp;
-              // During drag, pixel collision can fail because orthogonal paths are rebuilt
-              // each frame (dot pixel position shifts while progress approaches the queue).
-              // Fall back to progress-based capture when dot reaches the queue's waypoint.
-              const queueProgress = nextInteractable.idx / (dot.path.length - 1);
-              const reachedByProgress = state.draggingNodeId && newProgress >= queueProgress;
-              // When nextNodeId is set, use only progress-based detection to avoid
-              // premature capture when the queue is physically on an earlier path segment.
+              // With nextNodeId: progress-based, just before the queue's waypoint (avoids premature
+              // capture when the queue is physically on an earlier path segment). Without: the
+              // progress at which the dot enters the queue's touch box — a late frame now captures
+              // instead of skipping the box. Both sit at or before the waypoint, which is what the
+              // old drag-time "reached by progress" fallback checked for.
               const touchesQueue = dot.nextNodeId
-                ? newProgress >= queueProgress - 0.01
-                : dotTouchesNode(newPos.x, newPos.y, queue.x, queue.y);
-              if (reachedByProgress || touchesQueue) {
+                ? newProgress >= nextInteractable.centerP - 0.01
+                : newProgress >= nextInteractable.touchStart;
+              if (touchesQueue) {
                 const bufferSize = 3 + (queue.upgrades['bufferSize'] ?? 0) + getPermanentQueueBufferBonus(state);
                 // Gate on last frame's backlog, not on dots that arrived earlier this same frame
                 // (see queueBacklogCounts above for why).
@@ -853,10 +1034,11 @@ export function useGameLoop() {
                   const resolvedDot = dot.bridgeGoldAfterNodeId
                     ? { ...dot, color: BRIDGE_GOLD_COLOR, bridgeGoldAfterNodeId: undefined }
                     : dot;
-                  updated.push({ ...resolvedDot, status: 'queued', pauseStartTime: Date.now(), queuedAtNodeId: queue.id, progress: newProgress } as Dot);
+                  updated.push({ ...resolvedDot, status: 'queued', pauseStartTime: nowMs, queuedAtNodeId: queue.id, progress: newProgress } as Dot);
                 } else {
                   droppedCount++;
                   recordDrop(queue.id, 'queue-full', queue.label);
+                  const newPos = interpolatePath(dot.path, newProgress);
                   pushDropped({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
                 }
                 queued = true;
@@ -868,10 +1050,9 @@ export function useGameLoop() {
             if (nextInteractable && nextInteractable.comp.type === 'subscriber') {
               const subscriber = nextInteractable.comp;
 
-              const subProgress = nextInteractable.idx / (dot.path.length - 1);
               const touchesSub = dot.nextNodeId
-                ? newProgress >= subProgress - 0.01
-                : dotTouchesNode(newPos.x, newPos.y, subscriber.x, subscriber.y);
+                ? newProgress >= nextInteractable.centerP - 0.01
+                : newProgress >= nextInteractable.touchStart;
               if (touchesSub) {
                 // A subscriber is occupied only if a dot consuming there still has time remaining.
                 // Only the dots pausing at this same subscriber can matter, so check that bucket
@@ -882,13 +1063,13 @@ export function useGameLoop() {
                 if (bucket) {
                   for (const d of bucket) {
                     if (d.id === dot.id || d.status !== 'pausing' || d.moneyAdded || d.path.length === 0) continue;
-                    const elapsed = Date.now() - (d.pauseStartTime ?? Date.now());
+                    const elapsed = nowMs - (d.pauseStartTime ?? nowMs);
                     // Allow arrival within 50ms of consumption finishing to account for frame timing
                     if (elapsed < occConsumeDuration - 50) { isSubscriberOccupied = true; break; }
                   }
                 }
                 if (!isSubscriberOccupied) {
-                  const pausingDot = { ...dot, status: 'pausing', pauseStartTime: Date.now(), progress: newProgress } as Dot;
+                  const pausingDot = { ...dot, status: 'pausing', pauseStartTime: nowMs, progress: newProgress } as Dot;
                   updated.push(pausingDot);
                   addPausing(pausingDot);
                   if (pathInfo.endSubscriber) {
@@ -897,6 +1078,7 @@ export function useGameLoop() {
                 } else {
                   droppedCount++;
                   recordDrop(subscriber.id, 'subscriber-occupied', subscriber.label);
+                  const newPos = interpolatePath(dot.path, newProgress);
                   pushDropped({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
                 }
                 continue;
@@ -912,9 +1094,13 @@ export function useGameLoop() {
               continue;
             }
 
-            updated.push({ ...dot, progress: newProgress } as Dot);
+            // Nothing happened this frame: advance in place. Dot objects are owned by the loop
+            // (the array is committed without immer and nothing else keeps references across
+            // frames), so there is no reason to allocate a copy per dot per frame.
+            dot.progress = newProgress;
+            updated.push(dot);
           } else if (dot.status === 'pausing') {
-            const elapsed = Date.now() - (dot.pauseStartTime ?? Date.now());
+            const elapsed = nowMs - (dot.pauseStartTime ?? nowMs);
             const subscriber = getPathInfo(dot.path).endSubscriber;
             const consumeDuration = consumeDurationFor(subscriber);
             if (elapsed >= consumeDuration && !dot.moneyAdded) {
@@ -930,12 +1116,7 @@ export function useGameLoop() {
           } else if (dot.status === 'dropped') {
             const newVY = (dot.dropVY ?? 0) + 0.3 * dt / 16;
             const newDropY = (dot.dropY ?? 0) + newVY;
-            const newDot = {
-              ...dot,
-              dropVY: newVY,
-              dropY: newDropY,
-              opacity: dot.opacity - dt / 2500,
-            } as Dot;
+            const newOpacity = dot.opacity - dt / 2500;
 
             // DMQ catch: check if dropping dot lands on the DMQ
             if (!dot.isRetry) {
@@ -955,7 +1136,7 @@ export function useGameLoop() {
                     updated.push({
                       ...dot,
                       status: 'queued',
-                      pauseStartTime: Date.now(),
+                      pauseStartTime: nowMs,
                       queuedAtNodeId: dmq.id,
                       dropX: undefined,
                       dropY: undefined,
@@ -969,8 +1150,11 @@ export function useGameLoop() {
               }
             }
 
-            if (newDot.opacity > 0) {
-              updated.push(newDot);
+            if (newOpacity > 0) {
+              dot.dropVY = newVY;
+              dot.dropY = newDropY;
+              dot.opacity = newOpacity;
+              updated.push(dot);
             }
           } else {
             updated.push(dot);
@@ -1026,13 +1210,16 @@ export function useGameLoop() {
         for (const d of updated) {
           if (d.path.length === 0) continue;
           if (d.status !== 'pausing' && d.status !== 'traveling') continue;
+          // Most traveling dots are still bound for a queue; settle that from nextNodeId before
+          // paying for the profile lookup.
+          if (d.status === 'traveling' && d.nextNodeId !== undefined && !subscriberIds.has(d.nextNodeId)) continue;
           const sub = getPathInfo(d.path).endSubscriber;
           if (!sub) continue;
           if (d.status === 'pausing') {
             if (d.moneyAdded) continue;
             // A pausing dot is already mid-consumption, so it finishes at `remaining`, not at
             // `arrival + consumeDuration` like an incoming dot would.
-            const elapsed = Date.now() - (d.pauseStartTime ?? Date.now());
+            const elapsed = nowMs - (d.pauseStartTime ?? nowMs);
             const remaining = Math.max(consumeDurationFor(sub) - elapsed, 0);
             const t = timingFor(sub.id);
             t.pausingRemaining = Math.max(t.pausingRemaining ?? 0, remaining);
@@ -1109,8 +1296,13 @@ export function useGameLoop() {
           if (!hasSubscriber) break; // FIFO — oldest remaining can't go, don't skip ahead
 
           // Pre-build release paths for all connected subscribers
-          const buildReleasePath = (subTarget: { x: number; y: number }) => {
-            if (!queue) return { path: dot.path, progress: dot.progress };
+          const buildReleasePath = (subTarget: { x: number; y: number; comp: GameComponent }): ReleasePath => {
+            if (!queue) return { componentsRef: state.components, path: dot.path, progress: dot.progress, nodeIds: [queueId, subTarget.comp.id] };
+            // Pure function of the queue's and subscriber's positions: build once per pair and
+            // let every released dot share the array (and therefore one cached route profile).
+            const cacheKey = queue.id + '->' + subTarget.comp.id;
+            const cached = releasePathCache.get(cacheKey);
+            if (cached && cached.componentsRef === state.components) return cached;
             const queuePoint = { x: queue.x, y: queue.y };
             const extension: { x: number; y: number }[] = [];
             if (Math.abs(queue.y - subTarget.y) >= 5) {
@@ -1147,7 +1339,9 @@ export function useGameLoop() {
               const clearanceFraction = segLen > 0 ? (NODE_HALF_W + DOT_RADIUS + 2) / segLen : 1;
               releaseProgress = Math.min(clearanceFraction / totalSegments, 1);
             }
-            return { path: releasePath, progress: releaseProgress };
+            const built: ReleasePath = { componentsRef: state.components, path: releasePath, progress: releaseProgress, nodeIds: [queue.id, subTarget.comp.id] };
+            releasePathCache.set(cacheKey, built);
+            return built;
           };
 
           // Predictive release: release when the dot would arrive as the subscriber finishes consuming
@@ -1205,10 +1399,7 @@ export function useGameLoop() {
           }
 
           // Build release paths and check timing for each target
-          const releaseData = targets.map(sub => ({
-            sub,
-            ...buildReleasePath(sub),
-          }));
+          const releaseData = targets.map(sub => ({ sub, release: buildReleasePath(sub) }));
 
           // Same-frame releases are spread across the frame's own travel distance (the k-th of
           // N starts k/N of one frame's movement behind, as negative progress that clamps to
@@ -1225,7 +1416,7 @@ export function useGameLoop() {
           };
 
           // With fanout: all subscribers must be ready; without: just the target
-          let canRelease = releaseData.every(rd => shouldReleaseTo(rd.sub, rd.path, rd.progress - releaseStaggerFor(rd.path)));
+          let canRelease = releaseData.every(rd => shouldReleaseTo(rd.sub, rd.release.path, rd.release.progress - releaseStaggerFor(rd.release.path)));
 
           // During drag, shouldReleaseTo timing is unreliable (in-flight dots' paths/speeds
           // are rebuilt each frame). Enforce a minimum interval based on consume duration
@@ -1238,25 +1429,22 @@ export function useGameLoop() {
             const fcLevel = subComp?.upgrades['fasterConsumption'] ?? 0;
             const boostPct = Math.min(fcLevel * (fcLevel + 9) / 2, 100);
             const minInterval = 1000 * (1 - boostPct / 100); // consume duration
-            if (Date.now() - lastRelease < minInterval) {
+            if (nowMs - lastRelease < minInterval) {
               canRelease = false;
             }
           }
 
           if (!canRelease) break; // FIFO — oldest remaining can't go yet, don't skip ahead
 
-          queueLastReleaseTime.set(queueId, Date.now());
+          queueLastReleaseTime.set(queueId, nowMs);
           releaseSeq++;
 
           for (let ti = 0; ti < releaseData.length; ti++) {
-            const { path: releasePath, progress: releaseProgress, sub: releaseSub } = releaseData[ti];
+            const { release: { path: releasePath, progress: releaseProgress, nodeIds: releaseNodeIds }, sub: releaseSub } = releaseData[ti];
             const releaseDot = { ...dot, path: releasePath };
             const releaseSpeed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, releasePath);
-            // Find subscriber ID for this target so originalNodeIds stays in sync with the release path
-            const releaseSubComp = state.components.find(c =>
-              c.type === 'subscriber' && Math.hypot(c.x - releaseSub.x, c.y - releaseSub.y) < 1
-            );
-            const releaseNodeIds = [queueId, ...(releaseSubComp ? [releaseSubComp.id] : [])];
+            // The target carries its subscriber component, so originalNodeIds stays in sync with the release path
+            const releaseSubComp: GameComponent | undefined = releaseSub.comp;
             let released: Dot;
             if (ti === 0) {
               released = { ...releaseDot, status: 'traveling', progress: releaseProgress - releaseStaggerFor(releasePath), speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined, originalNodeIds: releaseNodeIds, nextNodeId: releaseSubComp?.id, nodeWpIndices: undefined } as Dot;
@@ -1418,7 +1606,7 @@ export function useGameLoop() {
 
                 let canRelease = false;
                 if (targetComp.type === 'queue') {
-                  canRelease = (Date.now() - lastDmqReleaseTime) >= 500;
+                  canRelease = (nowMs - lastDmqReleaseTime) >= 500;
                 } else {
                   // Subscriber — predictive timing (same logic as queue release)
                   const actualSpeed = speed * state.upgrades.propagationSpeed;
@@ -1437,7 +1625,7 @@ export function useGameLoop() {
                     if (Math.hypot(dEnd.x - targetComp!.x, dEnd.y - targetComp!.y) >= 50) continue;
 
                     if (d.status === 'pausing' && !d.moneyAdded) {
-                      const elapsed = Date.now() - (d.pauseStartTime ?? Date.now());
+                      const elapsed = nowMs - (d.pauseStartTime ?? nowMs);
                       const remaining = Math.max(consumeDuration - elapsed, 0);
                       latestSlotOpen = Math.max(latestSlotOpen, remaining);
                     }
@@ -1454,7 +1642,7 @@ export function useGameLoop() {
 
                 if (!canRelease) break; // Only attempt the oldest queued dot — if it can't release, wait
 
-                lastDmqReleaseTime = Date.now();
+                lastDmqReleaseTime = nowMs;
                 updated[i] = {
                   ...dot,
                   status: 'traveling',

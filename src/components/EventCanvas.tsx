@@ -263,8 +263,25 @@ function renderGl(
   for (const dot of dots) {
     let x: number, y: number, extent: number, glow: number;
     if (dot.status === 'traveling' || dot.status === 'queued') {
-      const pos = dotDrawPos(dot, componentById);
-      x = pos.x; y = pos.y; extent = GLOW_EXTENT; glow = 1;
+      // interpolatePath inlined: no {x, y} allocation per dot per frame
+      const path = dot.path;
+      const queue = dot.status === 'queued' && dot.queuedAtNodeId ? componentById.get(dot.queuedAtNodeId) : undefined;
+      if (queue) {
+        x = queue.x; y = queue.y;
+      } else if (path.length < 2) {
+        x = path[0]?.x ?? 0; y = path[0]?.y ?? 0;
+      } else if (dot.progress <= 0) {
+        x = path[0].x; y = path[0].y;
+      } else {
+        const segs = path.length - 1;
+        const sp = Math.min(dot.progress, 1) * segs;
+        const si = Math.min(Math.floor(sp), segs - 1);
+        const t = sp - si;
+        const a = path[si];
+        const b = path[si + 1];
+        x = a.x + (b.x - a.x) * t; y = a.y + (b.y - a.y) * t;
+      }
+      extent = GLOW_EXTENT; glow = 1;
     } else if (dot.status === 'dropped') {
       x = dot.dropX ?? dot.path[0].x; y = dot.dropY ?? dot.path[0].y; extent = DOT_RADIUS; glow = 0;
     } else {

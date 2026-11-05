@@ -14,6 +14,8 @@ const CFG = {
   XL: { pubs: 24, brokers: 3, queuesPerBroker: 7, batchFireLevel: 4, throughputLevel: 30, bridges: false, cluster: true, subSpeed: 11 },
   H: { pubs: 24, brokers: 3, queuesPerBroker: 8, batchFireLevel: 4, throughputLevel: 30, bridges: true, cluster: true, subSpeed: 11 },
   // User-like: ~14,400 dots/s with broker caps NOT reached (24 pubs x 10 fires/s x batch 5 x 12-way fan-out), zoomed out so the whole mesh is on screen
+  // Early game: one publisher through a real webhook (slow zone + occupied-drop rule) straight to a level-0 subscriber
+  W: { pubs: 1, brokers: 1, webhook: true, queuesPerBroker: 0, directSub: true, batchFireLevel: 0, throughputLevel: 0, bridges: false, cluster: false, subSpeed: 0 },
   U: { pubs: 24, brokers: 6, queuesPerBroker: 12, batchFireLevel: 4, throughputLevel: 35, bridges: false, cluster: true, subSpeed: 11, groupGap: 760, queueGap: 60, zoomOutSteps: 4 },
 }[SCALE];
 if (process.env.SUBSPEED) CFG.subSpeed = Number(process.env.SUBSPEED);
@@ -40,13 +42,15 @@ function buildSave(c) {
   for (let b = 0; b < c.brokers; b++) {
     const id = b === 0 ? 'webhook-1' : `broker-${b + 1}`;
     brokerIds.push(id);
-    components.push({
-      id, type: 'broker', x: 700, y: 200 + b * gap, label: 'Broker', tags: {},
-      upgrades: {
-        upgradeToBroker: 1, increaseThroughput: c.throughputLevel, addQueueSlot: c.queuesPerBroker, addBridgeSlot: 2,
-        ...(c.cluster ? { upgradeToCluster: 1, addClusterSlot: 2 } : {}),
-      },
-    });
+    components.push(c.webhook
+      ? { id, type: 'webhook', x: 700, y: 200 + b * gap, label: 'Webhook', tags: {}, upgrades: {} }
+      : {
+        id, type: 'broker', x: 700, y: 200 + b * gap, label: 'Broker', tags: {},
+        upgrades: {
+          upgradeToBroker: 1, increaseThroughput: c.throughputLevel, addQueueSlot: c.queuesPerBroker, addBridgeSlot: 2,
+          ...(c.cluster ? { upgradeToCluster: 1, addClusterSlot: 2 } : {}),
+        },
+      });
   }
   if (c.bridges) for (let b = 0; b < c.brokers - 1; b++) conn(brokerIds[b], brokerIds[b + 1]);
   const pubsPerBroker = Math.ceil(c.pubs / c.brokers);
@@ -74,6 +78,10 @@ function buildSave(c) {
       conn(qid, sid);
     }
   }
+  if (c.directSub) {
+    components.push({ id: 'sub-1', type: 'subscriber', x: 1200, y: 200, label: 'Subscriber', tags: {}, upgrades: { fasterConsumption: c.subSpeed, consumptionValue: 0 } });
+    conn(brokerIds[0], 'sub-1');
+  }
   components.push({ id: 'dmq-1', type: 'dmq', x: 700, y: 200 + c.brokers * gap, label: 'Dead Message Queue', tags: {}, upgrades: { dmqBufferSize: 5, dmqWidth: 2 } });
   conn('dmq-1', brokerIds[0]);
 
@@ -93,7 +101,8 @@ function buildSave(c) {
 }
 
 const save = buildSave(CFG);
-const browser = await chromium.launch({ executablePath: EXE, args: ['--disable-frame-rate-limit=false'] });
+// JSFLAGS=--no-turbo-inlining gives per-function attribution inside the hot loop (V8 otherwise inlines it all into `loop`)
+const browser = await chromium.launch({ executablePath: EXE, args: ['--disable-frame-rate-limit=false', ...(process.env.JSFLAGS ? [`--js-flags=${process.env.JSFLAGS}`] : [])] });
 const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 const errors = [];
 page.on('pageerror', e => errors.push(String(e)));
