@@ -111,7 +111,9 @@ function getUpgradeValueDisplay(upgradeKey: string, currentLevel: number, _topic
 export function NodeModal() {
   const selectedNodeId = useGameStore(s => s.selectedNodeId);
   const components = useGameStore(s => s.components);
-  const balance = useGameStore(s => s.balance);
+  // Balance moves every frame; only follow it while the modal is actually open, otherwise the
+  // closed modal re-rendered on every commit just to return null.
+  const balance = useGameStore(s => (s.selectedNodeId ? s.balance : 0));
   const costReduction = useGameStore(s => {
     const p = s.prestige.permanentUpgradeLevels;
     const permCost = (p['globalCostRed'] ?? 0) > 0 ? 0.10 : 0;
