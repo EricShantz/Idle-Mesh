@@ -7,7 +7,7 @@ import { normalizedSpeed } from '../utils/pathUtils';
 import { computeOrthogonalWaypoints } from '../utils/orthogonalPath';
 import { getSmoothedFps } from '../hooks/useGameLoop';
 import { getNodeHalfExtents, WIN_THRESHOLD } from './upgradeConfig';
-import { prestigeNodes, isNodeAvailable, isNodePurchased, type PrestigeNode } from './prestigeUpgradeConfig';
+import { prestigeNodes, isNodeAvailable, isNodePurchased, getPrestigePointsFor, PRESTIGE_MIN_EARNED, type PrestigeNode } from './prestigeUpgradeConfig';
 
 export type ComponentType = 'publisher' | 'webhook' | 'broker' | 'queue' | 'subscriber' | 'dmq';
 
@@ -113,6 +113,8 @@ export type GameState = {
 
   // One aggregated entry per frame (not per event): `count` events worth `amount` total.
   recentEarnings: { time: number; amount: number; count: number }[];
+  // One entry per publisher fire: `count` events emitted. Feeds the sidebar "Published/sec" stat.
+  recentPublishes: { time: number; count: number }[];
   coinPops: { id: string; x: number; y: number; amount: number }[];
   selectedNodeId: string | null;
   meshError: string | null;
@@ -189,12 +191,23 @@ export type GameState = {
 // tutorial at $1M and the end-game win screen at WIN_THRESHOLD. The win fires once per save;
 // `winSeen` survives prestige and only a full wipe clears it.
 function checkEarningMilestones(draft: GameState) {
-  if (draft.totalEarned >= 1_000_000 && !draft.tutorialsSeen['prestigeAvailable'] && !draft.activeTutorial) {
+  if (draft.totalEarned >= PRESTIGE_MIN_EARNED && !draft.tutorialsSeen['prestigeAvailable'] && !draft.activeTutorial) {
     draft.activeTutorial = 'prestigeAvailable';
   }
   if (draft.totalEarned >= WIN_THRESHOLD && !draft.winSeen && !draft.showWinScreen) {
     draft.showWinScreen = true;
   }
+}
+
+// Records a publisher fire in the 5s "Published/sec" window (transient, sidebar stat only).
+// Counts events the publisher emitted (batch size), not broker fan-out copies.
+function recordPublish(draft: GameState, count: number) {
+  const now = Date.now();
+  const cutoff = now - 5000;
+  if (draft.recentPublishes.length > 0 && draft.recentPublishes[0].time < cutoff) {
+    draft.recentPublishes = draft.recentPublishes.filter(e => e.time > cutoff);
+  }
+  draft.recentPublishes.push({ time: now, count });
 }
 
 // Permanent prestige speed multiplier (count of purchased speed nodes)
@@ -598,6 +611,7 @@ export const useGameStore = create<GameState>()(
       globalUpgradeLevels: saved?.globalUpgradeLevels ?? migrateGlobalUpgradeLevels(saved?.upgrades),
 
       recentEarnings: [],
+      recentPublishes: [],
       coinPops: [],
       selectedNodeId: null,
       meshError: null,
@@ -668,6 +682,7 @@ export const useGameStore = create<GameState>()(
           set(draft => {
             draft.publisherCooldowns[publisherId] = Date.now();
             const fireCount = state.upgrades.batchFire > 0 ? state.upgrades.batchFire : 1;
+            recordPublish(draft, fireCount);
             for (let batch = 0; batch < fireCount; batch++) {
               const dotId = `dot-${++dotIdCounter}`;
               draft.eventDots.push({
@@ -728,6 +743,7 @@ export const useGameStore = create<GameState>()(
               set(draft => {
                 draft.publisherCooldowns[publisherId] = Date.now();
                 const fireCount = state.upgrades.batchFire > 0 ? state.upgrades.batchFire : 1;
+                recordPublish(draft, fireCount);
                 for (let batch = 0; batch < fireCount; batch++) {
                   const dotId = `dot-${++dotIdCounter}`;
                   draft.eventDots.push({
@@ -807,6 +823,7 @@ export const useGameStore = create<GameState>()(
         set(draft => {
           draft.publisherCooldowns[publisherId] = Date.now();
           const fireCount = state.upgrades.batchFire > 0 ? state.upgrades.batchFire : 1;
+          recordPublish(draft, fireCount);
           for (let batch = 0; batch < fireCount; batch++) {
             for (const [brokerId, group] of forkGroups) {
               const primary = group[0];
@@ -1483,12 +1500,9 @@ export const useGameStore = create<GameState>()(
 
       performPrestige: () => {
         const state = get();
-        if (state.totalEarned < 1_000_000) return false;
-
-        // Scaling: Nth point costs N million (triangular numbers)
-        // Total for N points = N*(N+1)/2 million, so N = floor((-1+sqrt(1+8T))/2) where T = totalEarned/1M
-        const t = state.totalEarned / 1_000_000;
-        const pointsEarned = Math.floor((-1 + Math.sqrt(1 + 8 * t)) / 2);
+        // Point curve lives in prestigeUpgradeConfig.ts (cube-root of millions earned, gated at $1M)
+        const pointsEarned = getPrestigePointsFor(state.totalEarned);
+        if (pointsEarned < 1) return false;
 
         set(draft => {
           // Award prestige points
@@ -1512,6 +1526,7 @@ export const useGameStore = create<GameState>()(
           };
           draft.globalUpgradeLevels = {};
           draft.recentEarnings = [];
+          draft.recentPublishes = [];
           draft.coinPops = [];
           draft.selectedNodeId = null;
           draft.meshError = null;
@@ -1605,7 +1620,7 @@ function flushSave() {
 }
 
 function buildSaveSnapshot(state: GameState): string {
-  const { eventDots: _, recentEarnings: __, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, activeTutorial: ________, showPrestigeTree: _________, showWinScreen: __________, ...toSave } = state;
+  const { eventDots: _, recentEarnings: __, recentPublishes: ___________, selectedNodeId: ___, coinPops: ____, draggingConnection: _____, draggingNodeId: ______, meshError: _______, activeTutorial: ________, showPrestigeTree: _________, showWinScreen: __________, ...toSave } = state;
   const data: Record<string, any> = {};
   for (const [key, val] of Object.entries(toSave)) {
     if (typeof val !== 'function') {

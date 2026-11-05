@@ -59,6 +59,7 @@ export function Sidebar() {
   const eventsConsumed = useGameStore(s => s.eventsConsumed);
   const eventsDropped = useGameStore(s => s.eventsDropped);
   const recentEarnings = useGameStore(s => s.recentEarnings);
+  const recentPublishes = useGameStore(s => s.recentPublishes);
   const components = useGameStore(s => s.components);
   const upgrades = useGameStore(s => s.upgrades);
   const prestige = useGameStore(s => s.prestige);
@@ -88,8 +89,8 @@ export function Sidebar() {
     statsClickTimes.current = recent;
     if (recent.length >= STATS_CLICK_THRESHOLD) {
       statsClickTimes.current = [];
-      earn(1_000_000_000);
-      setCheatMessage('Schema Registry backdoor found: +$1,000,000');
+      earn(WIN_THRESHOLD);
+      setCheatMessage('Schema Registry backdoor found: +$1,000,000,000,000');
       setTimeout(() => setCheatMessage(null), 3000);
     }
   }
@@ -119,7 +120,9 @@ export function Sidebar() {
   const earningsPerSec = recent.length > 0
     ? recent.reduce((sum, e) => sum + e.amount, 0) / 5
     : 0;
-  const eventsPerSec = recent.length > 0 ? recent.reduce((sum, e) => sum + e.count, 0) / 5 : 0;
+  const consumedPerSec = recent.length > 0 ? recent.reduce((sum, e) => sum + e.count, 0) / 5 : 0;
+  const recentPub = recentPublishes.filter(e => e.time > now - 5000);
+  const publishedPerSec = recentPub.length > 0 ? recentPub.reduce((sum, e) => sum + e.count, 0) / 5 : 0;
   // Sampled once a second rather than read every render — the sidebar re-renders every frame
   // (balance ticks), and a value that changes 60 times a second isn't readable.
   const [fps, setFps] = useState(() => Math.round(getSmoothedFps()));
@@ -214,7 +217,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Road to $1B — per-run progress toward the end game (resets on prestige).
+      {/* Road to $1T — per-run progress toward the end game (resets on prestige).
           One meter: the amount sits inside the bar, the percentage on its right edge. */}
       {(() => {
         const progress = Math.min(totalEarned / WIN_THRESHOLD, 1);
@@ -224,7 +227,7 @@ export function Sidebar() {
         return (
           <div>
             <div className={`text-xs uppercase tracking-wider mb-1 ${gold ? 'text-amber-400' : 'text-gray-500'}`}>
-              Road to $1 Billion{winSeen && ' ✓'}
+              Road to $1 Trillion{winSeen && ' ✓'}
             </div>
             <div
               className="relative w-full rounded overflow-hidden"
@@ -250,7 +253,7 @@ export function Sidebar() {
                   {formatMoney(totalEarned)}
                 </span>
                 <span className={gold ? 'text-amber-300' : 'text-gray-400'} style={{ textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}>
-                  {pct.toFixed(pct < 10 ? 2 : 1)}%
+                  {pct > 0 && pct < 0.01 ? '<0.01' : pct.toFixed(pct < 10 ? 2 : 1)}%
                 </span>
               </div>
             </div>
@@ -275,8 +278,10 @@ export function Sidebar() {
           <span className="text-green-400 text-right">{eventsConsumed.toLocaleString()}</span>
           <span className="text-gray-500">Dropped</span>
           <span className="text-red-400 text-right">{eventsDropped.toLocaleString()}</span>
-          <span className="text-gray-500">Events/sec</span>
-          <span className="text-gray-300 text-right">{eventsPerSec.toFixed(1)}</span>
+          <span className="text-gray-500">Published/sec</span>
+          <span className="text-gray-300 text-right">{publishedPerSec.toFixed(1)}</span>
+          <span className="text-gray-500">Consumed/sec</span>
+          <span className="text-gray-300 text-right">{consumedPerSec.toFixed(1)}</span>
           <span className="text-gray-500">$/sec</span>
           <span className="text-cyan-400 text-right">{formatMoney(earningsPerSec)}</span>
           <span className="text-gray-500">Mesh size</span>

@@ -316,7 +316,7 @@ const SPEECH_LINES = [
   "Point-to-point connections everywhere. If one service goes down, it takes half the system with it!",
   "No buffering, no retry logic, no fault tolerance. Events just get lost when things go wrong.",
   "That's it! I'm going to rebuild this using Event-Driven Architecture!",
-  "...and I'm going to make a BILLION dollars doing it!",
+  "...and I'm going to make a TRILLION dollars doing it!",
 ];
 // Lines before this index use the frustrated expression
 const FRUSTRATED_LINE_COUNT = 3;

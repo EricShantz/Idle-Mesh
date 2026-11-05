@@ -65,3 +65,25 @@ export const branchColors: Record<PrestigeBranch, { primary: string; dim: string
   queue:      { primary: '#f97316', dim: '#f9731688', bg: '#1c1207', bgActive: '#7c2d12' },
   subscriber: { primary: '#22c55e', dim: '#22c55e88', bg: '#0c1a10', bgActive: '#166534' },
 };
+
+// ── Prestige point curve ──
+// Points awarded for a run = floor(PRESTIGE_POINT_SCALE * cbrt(totalEarned / $1M)), with the first
+// point gated at PRESTIGE_MIN_EARNED. Cube-root growth means early points come quickly (1 at $1M,
+// 2 at ~$2.4M, 3 at ~$8M, 5 at ~$37M) but the Nth point costs ~N³ million, so late points are sparse
+// (10 at ~$296M, 20 at ~$2.4B, 50 at ~$37B, 100 at ~$296B, 150 for a full $1T run).
+export const PRESTIGE_MIN_EARNED = 1_000_000;
+export const PRESTIGE_POINT_SCALE = 1.5;
+
+/** Prestige points a run worth `totalEarned` would award. */
+export function getPrestigePointsFor(totalEarned: number): number {
+  if (totalEarned < PRESTIGE_MIN_EARNED) return 0;
+  const t = totalEarned / 1_000_000;
+  // Small epsilon so hitting a threshold exactly (per getPrestigeThreshold) is not lost to float error.
+  return Math.floor(PRESTIGE_POINT_SCALE * Math.cbrt(t) + 1e-9);
+}
+
+/** Total earned required for a run to award at least `points` prestige points. */
+export function getPrestigeThreshold(points: number): number {
+  if (points <= 1) return PRESTIGE_MIN_EARNED;
+  return Math.pow(points / PRESTIGE_POINT_SCALE, 3) * 1_000_000;
+}

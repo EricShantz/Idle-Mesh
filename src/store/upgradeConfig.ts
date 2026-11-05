@@ -9,7 +9,7 @@ export type UpgradeDef = {
 };
 
 // End-game: reaching this much earned in a single run (resets on prestige) wins the game.
-export const WIN_THRESHOLD = 1_000_000_000;
+export const WIN_THRESHOLD = 1_000_000_000_000;
 
 export const publisherUpgrades: UpgradeDef[] = [
   {
