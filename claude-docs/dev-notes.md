@@ -89,7 +89,7 @@
 - DMQ width for collision = `(120 + dmqWidthLevel * 40) / 2` as half-width.
 
 ## Adaptive Coin Pop Throttling
-- `consumeEvent()` tracks per-subscriber pop rate via module-level `coinPopTracking`. Smoothed FPS via `getSmoothedFps()` using low-pass filter.
+- `consumeEvent()` tracks per-subscriber pop rate via module-level `coinPopTracking`. Smoothed FPS via `getSmoothedFps()`: a low-pass filter on the raw (unclamped) frame time, inverted — not an average of instantaneous fps, which over-reads on uneven frames, and not the clamped dt, which floored the stat at 10. Frames over 1 s (tab switch) are skipped.
 - Three tiers: ≥50 FPS (5 pops/sec, 12 max), 35–49 FPS (2 pops/sec, 6 max), <35 FPS (1 pop/sec, 3 max). Skipped pops aggregate amounts.
 
 ## Adding New Shop Items
@@ -136,10 +136,20 @@
 ## End Game (Win Screen)
 - Trigger: `checkEarningMilestones(draft)` in `gameStore.ts` runs after both earning paths (`consumeEvents`, `earn`). When `totalEarned >= WIN_THRESHOLD` (`upgradeConfig.ts`, $1T) and `!winSeen`, it sets `showWinScreen = true`. Because `performPrestige` zeroes `totalEarned`, progress toward the win resets every prestige — the design intent is that prestige upgrades make the next run's climb faster.
 - `winSeen` persists and survives prestige; only `wipeSaveAndRestart` clears it. So the screen fires once per save; later runs that re-cross $1T just turn the sidebar bar gold. `showWinScreen` is transient and excluded from the save snapshot so a reload mid-screen does not reopen it.
-- While `showWinScreen` is set, `useGameLoop` reschedules its RAF and returns before touching dots, and `useAutoPublisher` skips firing — the mesh freezes in place behind the overlay. dt is already clamped by `MAX_FRAME_DT_MS`, so dismissal resumes at normal pace.
+- While `showWinScreen` is set, `useGameLoop` reschedules its RAF and returns before touching dots (which also skips the auto-publisher poll, since it runs inside the loop) — the mesh freezes in place behind the overlay. dt is already clamped by `MAX_FRAME_DT_MS`, so dismissal resumes at normal pace.
 - `WinScreen.tsx`: z-index 80 (above tutorials at 60 and the intro at 70). Confetti is a hand-rolled canvas RAF: two corner cannons at mount + ~9s of rain, self-terminating when empty. Dave uses `PixelCharacter outfit="tux"` (top hat rows extend the SVG viewBox upward so bottom-anchored scaling still lines up) and `useTypewriter` from `hooks/useTypewriter.ts` (shared with the intro). "Start Over" reuses `wipeSaveAndRestart` after a confirm dialog cloned from the prestige tree's restart dialog.
 - `TutorialModal` renders Dave in the tux once `winSeen` is true.
-- The banner's "Lowest frame rate" stat comes from `getMinFps()` in `useGameLoop.ts`: the session-low of the smoothed FPS, ignoring the first 120 frames and any clamped frame (tab switch / hitch). Module-level, not saved, so it resets on reload.
+- The banner's "Lowest frame rate" stat comes from `getMinFps()` in `useGameLoop.ts`: the session-low of the smoothed FPS, ignoring the first 120 frames and any frame over 1 s (tab switch). Module-level, not saved, so it resets on reload.
+
+## Performance architecture (Nov 2026)
+
+Measured with `scripts/perf/` (headless prod build). Before: ~1,650 live dots ran at 18 fps; after: 57–80 fps at ~2,800 dots, with consumed/dropped/earned per second unchanged at scales where the frame clamp never engaged. What was done and why (each item was individually profiled):
+- **fps stat**: smoothed frame time, raw dt. The old EMA of `1000/clampedDt` could never read below 10 and over-read by 5–12 fps.
+- **Auto-publisher in sim time** (`useGameLoop.ts`): polled from the loop every 100 ms of clamped dt, one `fireEvents` commit per poll. The old wall-clock `setInterval` kept production at full speed while a slow sim moved dots in slow motion — dots piled up and fps spiraled (2,000→3,000 dots in 25 s at 10 fps; 15k dots at 0.8 fps when oversized).
+- **immer off the hot path**: `setAutoFreeze(false)` in `gameStore.ts`; `updateDots` and `fireEvents` commit with plain `set({...})`. Every immer commit used to deep-walk and `Object.freeze` every live dot and path (~13% of frame time).
+- **Game loop** (`useGameLoop.ts`): per-path `WeakMap` caches (`pathInfoCache`: nodes on the path + end subscriber; `routeValidityCache`: connection check per `originalNodeIds`; `getPathMetrics` in `pathUtils.ts`: segment lengths); pausing dots bucketed per subscriber for the arrival occupancy check; a per-frame `subTiming` index (pausing remaining + predicted arrivals per subscriber) replacing the rescan of every live dot per release candidate in `shouldReleaseTo`; broker relay timestamps trimmed in place. Subscribers are resolved by exact path-end position (every path ends on a node center) with the old `< 50px` scan as fallback.
+- **React**: queue/DMQ cards select `queuedSlotSignature` instead of `eventDots`; publisher/subscriber cooldown overlays are ref-driven (subscriber state comes from `getSubscriberConsume`); `ConnectionLine` is memoized and coin pops live in their own `CoinPops` component so `MeshCanvasInner` doesn't re-render per pop; Sidebar/PrestigePanel sample per-frame numbers at 10 Hz via `useThrottledGameStore`; `NodeModal` only follows balance while open. React commits at ~950 dots went from 89/s to 45/s and card renders from 876/s to 122/s.
+- **Canvas** (`EventCanvas.tsx`): one pre-rendered sprite per color (core + glow, one `drawImage` per dot), viewport culling, front canvas cleared only when it has or had pausing dots.
 - Testing: the Stats-click easter egg in `Sidebar.tsx` earns `WIN_THRESHOLD` ($1T) in one call, which trips the threshold immediately. Alternatively lower `WIN_THRESHOLD` temporarily.
 
 ## Prestige Tree

@@ -2,7 +2,7 @@ import { memo, useState, useRef, useEffect, useMemo, useSyncExternalStore } from
 import { motion } from 'framer-motion';
 import { type GameComponent, type EventDot, useGameStore, getPermanentQueueBufferBonus, getPermanentBrokerThroughputMult } from '../store/gameStore';
 import { interpolatePath } from '../utils/pathUtils';
-import { getBrokerUtilization } from '../hooks/useGameLoop';
+import { getBrokerUtilization, getSubscriberConsume } from '../hooks/useGameLoop';
 import {
   publisherUpgrades,
   webhookUpgrades,
@@ -50,6 +50,42 @@ type Props = {
 
 const NO_DOTS: EventDot[] = [];
 
+/** Oldest-first retry flags of the dots queued at a node: 'r' for a DMQ retry, 'n' otherwise.
+ *  Everything the slot rows render is derived from this string, so a card only re-renders when
+ *  the queue's contents actually change. */
+function queuedSlotSignature(dots: EventDot[], nodeId: string): string {
+  const queued: EventDot[] = [];
+  for (const d of dots) if (d.status === 'queued' && d.queuedAtNodeId === nodeId) queued.push(d);
+  if (queued.length === 0) return '';
+  queued.sort((a, b) => (a.pauseStartTime ?? 0) - (b.pauseStartTime ?? 0));
+  let sig = '';
+  for (const d of queued) sig += d.isRetry ? 'r' : 'n';
+  return sig;
+}
+
+/** Slot rows for a queue/DMQ card: `capacity` dots, empty ones first, then the queued dots
+ *  newest-first (so the newest arrival fills the first occupied slot), wrapped `perRow` per row. */
+function renderSlotRows(signature: string, capacity: number, perRow: number, colorFor: (flag: string) => string) {
+  const emptyCount = capacity - signature.length;
+  const slots = Array.from({ length: capacity }).map((_, i) => {
+    const flag = i < emptyCount ? null : signature[signature.length - 1 - (i - emptyCount)];
+    return (
+      <div
+        key={i}
+        className="w-1.5 h-1.5 rounded-full"
+        style={{ backgroundColor: flag ? colorFor(flag) : '#1e293b' }}
+      />
+    );
+  });
+  const rows: typeof slots[] = [];
+  for (let i = 0; i < slots.length; i += perRow) {
+    rows.push(slots.slice(i, i + perRow));
+  }
+  return rows.map((row, ri) => (
+    <div key={ri} className="flex gap-1.5">{row}</div>
+  ));
+}
+
 function NodeCardInner({ component }: Props) {
   const fireEvent = useGameStore(s => s.fireEvent);
   const selectNode = useGameStore(s => s.selectNode);
@@ -70,10 +106,13 @@ function NodeCardInner({ component }: Props) {
     return count;
   });
   const moveComponent = useGameStore(s => s.moveComponent);
-  // Only webhook (transit animation), queue and DMQ (slot dots) render anything from the
-  // live dot list; every other card would otherwise re-render on every frame for nothing.
-  const needsLiveDots = component.type === 'webhook' || component.type === 'queue' || component.type === 'dmq';
-  const eventDots = useGameStore(s => (needsLiveDots ? s.eventDots : NO_DOTS));
+  // Only the webhook (transit animation) renders from the live dot list itself. Queue and DMQ
+  // cards show slot dots, which depend only on the ordered retry flags of the dots queued here,
+  // so they select that small signature string instead — the dot array is a new reference
+  // every frame, and selecting it re-rendered every queue card every frame.
+  const eventDots = useGameStore(s => (component.type === 'webhook' ? s.eventDots : NO_DOTS));
+  const slotSignature = useGameStore(s =>
+    component.type === 'queue' || component.type === 'dmq' ? queuedSlotSignature(s.eventDots, component.id) : '');
   const draggingConnection = useGameStore(s => s.draggingConnection);
   const startDragConnection = useGameStore(s => s.startDragConnection);
   const setDraggingNodeId = useGameStore(s => s.setDraggingNodeId);
@@ -100,18 +139,22 @@ function NodeCardInner({ component }: Props) {
   const pendingMove = useRef({ x: 0, y: 0 });
   const moveRaf = useRef(0);
 
-  // Publisher cooldown overlay
+  // Publisher cooldown overlay — driven imperatively through a ref (like the webhook border
+  // below). Going through React state meant one re-render of this card per frame for as long
+  // as the cooldown ran, which for an auto-publisher is always.
   const lastFire = useGameStore(s => s.publisherCooldowns[component.id] ?? 0);
-  const [cooldownPct, setCooldownPct] = useState(0);
+  const cooldownOverlayRef = useRef<HTMLDivElement>(null);
   const cooldownRaf = useRef<number>(0);
 
   useEffect(() => {
     if (!isPublisher) return;
+    const el = cooldownOverlayRef.current;
+    if (!el) return;
     if (lastFire === 0) return;
 
     const publishSpeedLevel = component.upgrades['publishSpeed'] ?? 0;
     if (publishSpeedLevel >= 10) {
-      setCooldownPct(0);
+      el.style.display = 'none';
       return;
     }
     const publishBoostPct = publishSpeedLevel * (publishSpeedLevel + 9) / 2;
@@ -120,54 +163,55 @@ function NodeCardInner({ component }: Props) {
     const tick = () => {
       const elapsed = Date.now() - lastFire;
       const remaining = Math.max(0, 1 - elapsed / duration);
-      setCooldownPct(remaining);
       if (remaining > 0) {
+        el.style.display = 'block';
+        el.style.clipPath = `inset(${(1 - remaining) * 100}% 0 0 0)`;
         cooldownRaf.current = requestAnimationFrame(tick);
+      } else {
+        el.style.display = 'none';
       }
     };
     cooldownRaf.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(cooldownRaf.current);
   }, [isPublisher, lastFire, component.upgrades]);
 
-  // Subscriber consume cooldown overlay
-  const [subscriberCooldownPct, setSubscriberCooldownPct] = useState(0);
+  // Subscriber consume cooldown overlay — same imperative pattern. The game loop records when
+  // a dot starts consuming at each subscriber (getSubscriberConsume), so the card no longer
+  // scans every live dot each frame to find the one pausing near it.
+  const subscriberOverlayRef = useRef<HTMLDivElement>(null);
   const subscriberCooldownRaf = useRef<number>(0);
   const subscriberConsumeStart = useRef<number>(0);
   const subscriberConsumeDuration = useRef<number>(0);
 
   useEffect(() => {
     if (!isSubscriber) return;
+    const el = subscriberOverlayRef.current;
+    if (!el) return;
     const fasterConsumptionLevel = component.upgrades['fasterConsumption'] ?? 0;
     if (fasterConsumptionLevel >= 11) {
-      setSubscriberCooldownPct(0);
+      el.style.display = 'none';
       return;
     }
 
     const tick = () => {
       const now = Date.now();
-      const dots = useGameStore.getState().eventDots;
-      const pausingDot = dots.find(d =>
-        d.status === 'pausing' && d.pauseStartTime &&
-        Math.hypot(
-          (d.path[d.path.length - 1]?.x ?? 0) - component.x,
-          (d.path[d.path.length - 1]?.y ?? 0) - component.y
-        ) < 50
-      );
+      const consume = getSubscriberConsume(component.id);
 
       // Latch start time when a new consuming dot appears
-      if (pausingDot && pausingDot.pauseStartTime && subscriberConsumeStart.current !== pausingDot.pauseStartTime) {
-        subscriberConsumeStart.current = pausingDot.pauseStartTime;
-        const fasterConsumptionLevel = component.upgrades['fasterConsumption'] ?? 0;
-        const boostPct = Math.min(fasterConsumptionLevel * (fasterConsumptionLevel + 9) / 2, 100);
-        subscriberConsumeDuration.current = 1000 * (1 - boostPct / 100);
+      if (consume && subscriberConsumeStart.current !== consume.start) {
+        subscriberConsumeStart.current = consume.start;
+        subscriberConsumeDuration.current = consume.duration;
       }
 
       // Animate based on latched start/duration (continues even after dot is removed)
       if (subscriberConsumeStart.current > 0) {
         const elapsed = now - subscriberConsumeStart.current;
         const remaining = Math.max(0, 1 - elapsed / subscriberConsumeDuration.current);
-        setSubscriberCooldownPct(remaining);
-        if (remaining <= 0) {
+        if (remaining > 0) {
+          el.style.display = 'block';
+          el.style.clipPath = `inset(${(1 - remaining) * 100}% 0 0 0)`;
+        } else {
+          el.style.display = 'none';
           subscriberConsumeStart.current = 0;
         }
       }
@@ -177,7 +221,7 @@ function NodeCardInner({ component }: Props) {
 
     subscriberCooldownRaf.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(subscriberCooldownRaf.current);
-  }, [isSubscriber, component.x, component.y, component.upgrades]);
+  }, [isSubscriber, component.id, component.upgrades]);
 
 
   // Connection port visibility
@@ -554,24 +598,20 @@ function NodeCardInner({ component }: Props) {
             transition: 'border-color 0.15s, box-shadow 0.15s',
           }}
         >
-          {/* Cooldown overlay for publisher */}
-          {isPublisher && cooldownPct > 0 && (
+          {/* Cooldown overlay for publisher — always mounted, shown/clipped imperatively */}
+          {isPublisher && (
             <div
+              ref={cooldownOverlayRef}
               className="absolute inset-0 rounded-lg pointer-events-none"
-              style={{
-                background: 'rgba(0, 0, 0, 0.35)',
-                clipPath: `inset(${(1 - cooldownPct) * 100}% 0 0 0)`,
-              }}
+              style={{ background: 'rgba(0, 0, 0, 0.35)', display: 'none' }}
             />
           )}
-          {/* Cooldown overlay for subscriber (consuming) */}
-          {isSubscriber && subscriberCooldownPct > 0 && (
+          {/* Cooldown overlay for subscriber (consuming) — same */}
+          {isSubscriber && (
             <div
+              ref={subscriberOverlayRef}
               className="absolute inset-0 rounded-lg pointer-events-none"
-              style={{
-                background: 'rgba(0, 0, 0, 0.35)',
-                clipPath: `inset(${(1 - subscriberCooldownPct) * 100}% 0 0 0)`,
-              }}
+              style={{ background: 'rgba(0, 0, 0, 0.35)', display: 'none' }}
             />
           )}
           {/* Processing border animation for webhook/broker — RAF-driven, always mounted */}
@@ -622,65 +662,22 @@ function NodeCardInner({ component }: Props) {
           )}
           {isDmq && (
             <div className="flex flex-col gap-1 mt-1 items-center">
-              {(() => {
-                const capacity = 3 + (component.upgrades['dmqBufferSize'] ?? 0);
-                const queuedDots = eventDots
-                  .filter(d => d.status === 'queued' && d.queuedAtNodeId === component.id)
-                  .sort((a, b) => (a.pauseStartTime ?? 0) - (b.pauseStartTime ?? 0));
-                const emptyCount = capacity - queuedDots.length;
-                const slotsPerRow = getDmqSlotsPerRow(component.upgrades['dmqWidth'] ?? 0);
-                const slots = Array.from({ length: capacity }).map((_, i) => {
-                  const dot = i < emptyCount ? null : queuedDots[queuedDots.length - 1 - (i - emptyCount)];
-                  return (
-                    <div
-                      key={i}
-                      className="w-1.5 h-1.5 rounded-full"
-                      style={{
-                        backgroundColor: dot ? '#fb923c' : '#1e293b',
-                      }}
-                    />
-                  );
-                });
-                const rows: typeof slots[] = [];
-                for (let i = 0; i < slots.length; i += slotsPerRow) {
-                  rows.push(slots.slice(i, i + slotsPerRow));
-                }
-                return rows.map((row, ri) => (
-                  <div key={ri} className="flex gap-1.5">{row}</div>
-                ));
-              })()}
+              {renderSlotRows(
+                slotSignature,
+                3 + (component.upgrades['dmqBufferSize'] ?? 0),
+                getDmqSlotsPerRow(component.upgrades['dmqWidth'] ?? 0),
+                () => '#fb923c',
+              )}
             </div>
           )}
           {component.type === 'queue' && (
             <div className="flex flex-col gap-1 mt-1 items-center">
-              {(() => {
-                const prestige = useGameStore.getState().prestige;
-                const capacity = 3 + (component.upgrades['bufferSize'] ?? 0) + getPermanentQueueBufferBonus({ prestige });
-                const queuedDots = eventDots
-                  .filter(d => d.status === 'queued' && d.queuedAtNodeId === component.id)
-                  .sort((a, b) => (a.pauseStartTime ?? 0) - (b.pauseStartTime ?? 0));
-                const emptyCount = capacity - queuedDots.length;
-                const slots = Array.from({ length: capacity }).map((_, i) => {
-                  const dot = i < emptyCount ? null : queuedDots[queuedDots.length - 1 - (i - emptyCount)];
-                  return (
-                    <div
-                      key={i}
-                      className="w-1.5 h-1.5 rounded-full"
-                      style={{
-                        backgroundColor: dot ? (dot.isRetry ? '#fb923c' : '#66ffff') : '#1e293b',
-                      }}
-                    />
-                  );
-                });
-                // Wrap into rows of 10
-                const rows: typeof slots[] = [];
-                for (let i = 0; i < slots.length; i += 10) {
-                  rows.push(slots.slice(i, i + 10));
-                }
-                return rows.map((row, ri) => (
-                  <div key={ri} className="flex gap-1.5">{row}</div>
-                ));
-              })()}
+              {renderSlotRows(
+                slotSignature,
+                3 + (component.upgrades['bufferSize'] ?? 0) + getPermanentQueueBufferBonus({ prestige: useGameStore.getState().prestige }),
+                10, // Wrap into rows of 10
+                flag => (flag === 'r' ? '#fb923c' : '#66ffff'),
+              )}
             </div>
           )}
           {/* Output port for creating connections — Boomi-style arrow circle */}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { useGameStore, type Connection } from '../store/gameStore';
 import { buildOrthogonalSvgPath, buildVerticalFirstSvgPath, type NodeBounds } from '../utils/orthogonalPath';
 import { useViewport } from '../hooks/useViewport';
@@ -8,7 +8,10 @@ type Props = {
   conn: Connection;
 };
 
-export function ConnectionLine({ conn }: Props) {
+// Memoized: a `conn` keeps its reference until that connection changes (immer structural
+// sharing), and the line's own selectors (components, draggingConnection) are stable between
+// layout edits — so the parent re-rendering must not recompute every line's SVG path.
+export const ConnectionLine = memo(function ConnectionLine({ conn }: Props) {
   const components = useGameStore(s => s.components);
   const startDragConnection = useGameStore(s => s.startDragConnection);
   const draggingConnection = useGameStore(s => s.draggingConnection);
@@ -112,4 +115,4 @@ export function ConnectionLine({ conn }: Props) {
       />
     </g>
   );
-}
+});

@@ -1,5 +1,14 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { setAutoFreeze } from 'immer';
+
+// immer's auto-freeze deep-walks and Object.freeze()s every unfrozen object reachable from a
+// produced state. eventDots is replaced by a fresh, unfrozen array every frame (updateDots and
+// fireEvents commit it without immer), so every immer commit — consumeEvents once per frame,
+// any purchase — re-walked and re-froze every live dot and path: ~13% of frame time at ~1,600
+// dots. The freeze only guards against accidental in-place mutation, which this store never
+// relies on (the game loop rebuilds dots via spreads), so it is turned off.
+setAutoFreeze(false);
 import { canConnect } from '../utils/connectionRules';
 import { getNextTopic } from './topicPool';
 import { topicMatches, computeBroadenedTopic } from '../utils/topicMatching';
@@ -149,6 +158,7 @@ export type GameState = {
 
   // Actions
   fireEvent: (publisherId: string) => void;
+  fireEvents: (publisherIds: string[]) => void;
   consumeEvent: (dotId: string, value: number, subscriberId: string) => void;
   consumeEvents: (batch: { value: number; subscriberId: string }[]) => void;
   removeCoinPop: (id: string) => void;
@@ -197,17 +207,6 @@ function checkEarningMilestones(draft: GameState) {
   if (draft.totalEarned >= WIN_THRESHOLD && !draft.winSeen && !draft.showWinScreen) {
     draft.showWinScreen = true;
   }
-}
-
-// Records a publisher fire in the 5s "Published/sec" window (transient, sidebar stat only).
-// Counts events the publisher emitted (batch size), not broker fan-out copies.
-function recordPublish(draft: GameState, count: number) {
-  const now = Date.now();
-  const cutoff = now - 5000;
-  if (draft.recentPublishes.length > 0 && draft.recentPublishes[0].time < cutoff) {
-    draft.recentPublishes = draft.recentPublishes.filter(e => e.time > cutoff);
-  }
-  draft.recentPublishes.push({ time: now, count });
 }
 
 // Permanent prestige speed multiplier (count of purchased speed nodes)
@@ -397,6 +396,219 @@ function initCountersFromSaved(saved: Partial<GameState> | null) {
       if (m) connectionIdCounter = Math.max(connectionIdCounter, parseInt(m[1]));
     }
   }
+}
+
+
+/** Wall-clock milliseconds between fires for a publisher at its current publishSpeed level. */
+export function getPublisherCooldownMs(pub: { upgrades: Record<string, number> }, state: Pick<GameState, 'prestige'>): number {
+  const publishSpeedLevel = pub.upgrades['publishSpeed'] ?? 0;
+  const baseCooldown = 1000; // 1 second base cooldown
+  const publishBoostPct = publishSpeedLevel * (publishSpeedLevel + 9) / 2;
+  return baseCooldown * (1 - publishBoostPct / 100) / getPermanentPubRateMult(state);
+}
+
+// Builds the dots one publisher fire emits, without committing anything. Returns null when the
+// publisher can't fire at all (no outgoing connection, or no broker reachable to drop at), in
+// which case nothing happens and the cooldown is not consumed — same as before the auto-publisher
+// was batched. Shared by fireEvent (manual click) and fireEvents (per-poll batch).
+function buildPublishDots(state: GameState, publisherId: string): { dots: EventDot[]; fireCount: number } | null {
+  const pub = state.components.find(c => c.id === publisherId);
+  if (!pub) return null;
+  const fireCount = state.upgrades.batchFire > 0 ? state.upgrades.batchFire : 1;
+  const dots: EventDot[] = [];
+
+  const allPaths = state._getAllPathsWithNodes(publisherId);
+  const allValidPaths = allPaths.filter(p => p.waypoints.length >= 2);
+  if (allValidPaths.length === 0) {
+    // No valid paths — fire event to the first connected node and let it drop there
+    const directConn = state.connections.find(c => c.fromId === publisherId);
+    if (!directConn) return null;
+    const target = state.components.find(c => c.id === directConn.toId);
+    if (!target) return null;
+    // Build path using node centers, then expand orthogonally with bounds
+    const nodePath = [{ x: pub.x, y: pub.y }, { x: target.x, y: target.y }];
+    const truncatedWaypoints: { x: number; y: number }[] = [nodePath[0]];
+    if (Math.abs(nodePath[0].y - nodePath[1].y) >= 10) {
+      const { halfW: pubHalfW, halfH: pubHalfH } = getNodeHalfExtents(pub);
+      const { halfW: tgtHalfW, halfH: tgtHalfH } = getNodeHalfExtents(target);
+      const portStartX = pub.x + pubHalfW + 24;
+      const portEndX = target.x - tgtHalfW - 2;
+      const fromBounds = {
+        left: pub.x - pubHalfW,
+        right: pub.x + pubHalfW + 24,
+        top: pub.y - pubHalfH,
+        bottom: pub.y + pubHalfH,
+      };
+      const toBounds = {
+        left: target.x - tgtHalfW,
+        right: target.x + tgtHalfW,
+        top: target.y - tgtHalfH,
+        bottom: target.y + tgtHalfH,
+      };
+      const segWaypoints = computeOrthogonalWaypoints(portStartX, pub.y, portEndX, target.y, fromBounds, toBounds);
+      for (let w = 1; w < segWaypoints.length - 1; w++) {
+        truncatedWaypoints.push(segWaypoints[w]);
+      }
+    }
+    truncatedWaypoints.push(nodePath[1]);
+    const baseValue = state.getEventValue(publisherId);
+    const bridgeExitNodeId = firstBridgeExitNodeId([publisherId, target.id], state.components);
+    const queueMult = getQueueValueMultiplier([publisherId, target.id], state.components);
+    const value = (bridgeExitNodeId ? baseValue * BRIDGE_VALUE_MULT : baseValue) * queueMult;
+    const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state), truncatedWaypoints);
+    for (let batch = 0; batch < fireCount; batch++) {
+      dots.push({
+        id: nextDotId(),
+        path: truncatedWaypoints,
+        progress: batch * -0.04,
+        speed,
+        status: 'traveling',
+        color: '#22d3ee',
+        opacity: 1,
+        value,
+        originalValue: value,
+        originalNodeIds: [publisherId, target.id],
+        nextNodeId: findNextInteractableId([publisherId, target.id], state.components),
+        bridgeGoldAfterNodeId: bridgeExitNodeId,
+      });
+    }
+    return { dots, fireCount };
+  }
+
+  // Topic filtering: only keep paths where the queue's subscription matches the publisher's topic
+  const pubTopic = pub.topic;
+  const validPaths = pubTopic
+    ? allValidPaths.filter(p => {
+      const queueId = p.nodeIds.find(id =>
+        state.components.find(c => c.id === id)?.type === 'queue');
+      if (!queueId) return true; // no queue in path, allow
+      const queue = state.components.find(c => c.id === queueId);
+      return !queue?.subscriptionTopic || topicMatches(pubTopic, queue.subscriptionTopic);
+    })
+    : allValidPaths;
+  if (validPaths.length === 0) {
+    // No matching queues — create a dot that travels to the broker and drops there
+    // Find any path that reaches a broker
+    const anyPath = allValidPaths[0];
+    if (!anyPath) return null;
+    const brokerIdx = anyPath.nodeIds.findIndex(id =>
+      state.components.find(c => c.id === id)?.type === 'broker');
+    if (brokerIdx < 0) return null;
+    const broker = state.components.find(c => c.id === anyPath.nodeIds[brokerIdx])!;
+    // Build a truncated path: publisher → broker left edge
+    const brokerLeftEdge = { x: broker.x - 62, y: broker.y };
+    // Find the last waypoint before the broker and append the edge point
+    const truncatedWaypoints = [anyPath.waypoints[0]];
+    for (const wp of anyPath.waypoints.slice(1)) {
+      if (Math.abs(wp.x - broker.x) < 80 && Math.abs(wp.y - broker.y) < 40) break;
+      truncatedWaypoints.push(wp);
+    }
+    truncatedWaypoints.push(brokerLeftEdge);
+    const truncatedNodeIds = anyPath.nodeIds.slice(0, brokerIdx + 1);
+
+    const baseValue = state.getEventValue(publisherId);
+    const bridgeExitNodeId = firstBridgeExitNodeId(truncatedNodeIds, state.components);
+    const queueMult = getQueueValueMultiplier(truncatedNodeIds, state.components);
+    const value = (bridgeExitNodeId ? baseValue * BRIDGE_VALUE_MULT : baseValue) * queueMult;
+    const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state), truncatedWaypoints);
+    for (let batch = 0; batch < fireCount; batch++) {
+      dots.push({
+        id: nextDotId(),
+        path: truncatedWaypoints,
+        progress: batch * -0.04,
+        speed,
+        status: 'traveling',
+        color: '#22d3ee',
+        opacity: 1,
+        value,
+        originalValue: value,
+        originalNodeIds: truncatedNodeIds,
+        nextNodeId: findNextInteractableId(truncatedNodeIds, state.components),
+        bridgeGoldAfterNodeId: bridgeExitNodeId,
+      });
+    }
+    return { dots, fireCount };
+  }
+
+  // Broker fan-out: send to ALL matching queues (one path per unique queue per broker)
+  // Group paths by their broker (the node before the queue where paths diverge)
+  const selectedPaths: typeof validPaths = [];
+  const groupedByBroker = new Map<string, typeof validPaths>();
+
+  for (const p of validPaths) {
+    const queueNode = p.nodeIds.find(id => state.components.find(c => c.id === id)?.type === 'queue');
+    if (!queueNode) {
+      // No queue in path (e.g. direct broker→subscriber), always include
+      selectedPaths.push(p);
+      continue;
+    }
+    // Find the node before the queue (the broker) as the grouping key
+    const queueIdx = p.nodeIds.indexOf(queueNode);
+    const brokerId = queueIdx > 0 ? p.nodeIds[queueIdx - 1] : 'none';
+    if (!groupedByBroker.has(brokerId)) groupedByBroker.set(brokerId, []);
+    groupedByBroker.get(brokerId)!.push(p);
+  }
+
+  // Broker fans out to ALL matching queues (real EDA behavior).
+  // Deduplicate so we get one path per unique queue.
+  for (const [, group] of groupedByBroker) {
+    const seen = new Set<string>();
+    for (const p of group) {
+      const queueId = p.nodeIds.find(id => state.components.find(c => c.id === id)?.type === 'queue');
+      if (!queueId) { selectedPaths.push(p); continue; }
+      if (!seen.has(queueId)) {
+        seen.add(queueId);
+        selectedPaths.push(p);
+      }
+    }
+  }
+
+  const baseValue = state.getEventValue(publisherId);
+  const baseSpeed = 0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state);
+  const valueForPath = (nodeIds: string[]) => {
+    const bridgeMult = pathCrossesBridge(nodeIds, state.components) ? BRIDGE_VALUE_MULT : 1;
+    const queueMult = getQueueValueMultiplier(nodeIds, state.components);
+    return baseValue * bridgeMult * queueMult;
+  };
+  const colorForPath = (nodeIds: string[]) =>
+    pathCrossesBridge(nodeIds, state.components) ? BRIDGE_GOLD_COLOR : '#22d3ee';
+
+  // Group selected paths by their first broker so we create one dot per broker fork point
+  const forkGroups = new Map<string, typeof selectedPaths>();
+  for (const p of selectedPaths) {
+    // Find first broker in the path (index 1 is typically the broker after publisher)
+    const firstBrokerId = p.nodeIds.find(id =>
+      state.components.find(c => c.id === id)?.type === 'broker') ?? 'none';
+    if (!forkGroups.has(firstBrokerId)) forkGroups.set(firstBrokerId, []);
+    forkGroups.get(firstBrokerId)!.push(p);
+  }
+
+  for (let batch = 0; batch < fireCount; batch++) {
+    for (const [brokerId, group] of forkGroups) {
+      const primary = group[0];
+      const forks = group.length > 1
+        ? group.slice(1).map(f => ({ ...f, value: valueForPath(f.nodeIds), color: colorForPath(f.nodeIds) }))
+        : undefined;
+      const primaryValue = valueForPath(primary.nodeIds);
+      dots.push({
+        id: nextDotId(),
+        path: primary.waypoints,
+        progress: batch * -0.04,
+        speed: normalizedSpeed(baseSpeed, primary.waypoints),
+        status: 'traveling',
+        color: '#22d3ee',
+        opacity: 1,
+        value: primaryValue,
+        originalValue: primaryValue,
+        originalNodeIds: primary.nodeIds,
+        nextNodeId: findNextInteractableId(primary.nodeIds, state.components),
+        forkPaths: forks,
+        forkNodeId: brokerId !== 'none' ? brokerId : undefined,
+        bridgeGoldAfterNodeId: firstBridgeExitNodeId(primary.nodeIds, state.components),
+      });
+    }
+  }
+  return dots.length > 0 ? { dots, fireCount } : null;
 }
 
 function createInitialComponents(): GameComponent[] {
@@ -631,225 +843,40 @@ export const useGameStore = create<GameState>()(
         const state = get();
         const pub = state.components.find(c => c.id === publisherId);
         if (!pub) return;
-
-        // Check cooldown
+        // Manual clicks are gated on wall-clock cooldown. The auto-publisher gates on sim-time
+        // cooldown inside the game loop instead (see useGameLoop), so a slow frame rate slows
+        // publishing in step with everything else rather than flooding the mesh.
         const lastFireTime = state.publisherCooldowns[publisherId] ?? 0;
-        const publishSpeedLevel = pub.upgrades['publishSpeed'] ?? 0;
-        const baseCooldown = 1000; // 1 second base cooldown
-        const publishBoostPct = publishSpeedLevel * (publishSpeedLevel + 9) / 2;
-        const cooldownDuration = baseCooldown * (1 - publishBoostPct / 100) / getPermanentPubRateMult(state);
-        if (Date.now() - lastFireTime < cooldownDuration) return;
+        if (Date.now() - lastFireTime < getPublisherCooldownMs(pub, state)) return;
+        get().fireEvents([publisherId]);
+      },
 
-        const allPaths = state._getAllPathsWithNodes(publisherId);
-        const allValidPaths = allPaths.filter(p => p.waypoints.length >= 2);
-        if (allValidPaths.length === 0) {
-          // No valid paths — fire event to the first connected node and let it drop there
-          const directConn = state.connections.find(c => c.fromId === publisherId);
-          if (!directConn) return;
-          const target = state.components.find(c => c.id === directConn.toId);
-          if (!target) return;
-          // Build path using node centers, then expand orthogonally with bounds
-          const nodePath = [{ x: pub.x, y: pub.y }, { x: target.x, y: target.y }];
-          const truncatedWaypoints: { x: number; y: number }[] = [nodePath[0]];
-          if (Math.abs(nodePath[0].y - nodePath[1].y) >= 10) {
-            const { halfW: pubHalfW, halfH: pubHalfH } = getNodeHalfExtents(pub);
-            const { halfW: tgtHalfW, halfH: tgtHalfH } = getNodeHalfExtents(target);
-            const portStartX = pub.x + pubHalfW + 24;
-            const portEndX = target.x - tgtHalfW - 2;
-            const fromBounds = {
-              left: pub.x - pubHalfW,
-              right: pub.x + pubHalfW + 24,
-              top: pub.y - pubHalfH,
-              bottom: pub.y + pubHalfH,
-            };
-            const toBounds = {
-              left: target.x - tgtHalfW,
-              right: target.x + tgtHalfW,
-              top: target.y - tgtHalfH,
-              bottom: target.y + tgtHalfH,
-            };
-            const segWaypoints = computeOrthogonalWaypoints(portStartX, pub.y, portEndX, target.y, fromBounds, toBounds);
-            for (let w = 1; w < segWaypoints.length - 1; w++) {
-              truncatedWaypoints.push(segWaypoints[w]);
-            }
-          }
-          truncatedWaypoints.push(nodePath[1]);
-          const baseValue = state.getEventValue(publisherId);
-          const bridgeExitNodeId = firstBridgeExitNodeId([publisherId, target.id], state.components);
-          const queueMult = getQueueValueMultiplier([publisherId, target.id], state.components);
-          const value = (bridgeExitNodeId ? baseValue * BRIDGE_VALUE_MULT : baseValue) * queueMult;
-          const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state), truncatedWaypoints);
-          set(draft => {
-            draft.publisherCooldowns[publisherId] = Date.now();
-            const fireCount = state.upgrades.batchFire > 0 ? state.upgrades.batchFire : 1;
-            recordPublish(draft, fireCount);
-            for (let batch = 0; batch < fireCount; batch++) {
-              const dotId = `dot-${++dotIdCounter}`;
-              draft.eventDots.push({
-                id: dotId,
-                path: truncatedWaypoints,
-                progress: batch * -0.04,
-                speed,
-                status: 'traveling',
-                color: '#22d3ee',
-                opacity: 1,
-                value,
-                originalValue: value,
-                originalNodeIds: [publisherId, target.id],
-                nextNodeId: findNextInteractableId([publisherId, target.id], state.components),
-                bridgeGoldAfterNodeId: bridgeExitNodeId,
-              });
-            }
-          });
-          return;
+      // Fire several publishers in ONE store commit, bypassing immer (see updateDots for why:
+      // a draft of the live dot array is expensive to proxy and to finalize). Publishers that
+      // can't fire (no outgoing connection, no broker on any path) are skipped and keep their
+      // old cooldown timestamp, exactly as a failed fireEvent used to.
+      fireEvents: (publisherIds: string[]) => {
+        const state = get();
+        const now = Date.now();
+        const newDots: EventDot[] = [];
+        const cooldowns = { ...state.publisherCooldowns };
+        const publishes: { time: number; count: number }[] = [];
+        for (const id of publisherIds) {
+          const built = buildPublishDots(state, id);
+          if (!built) continue;
+          cooldowns[id] = now;
+          publishes.push({ time: now, count: built.fireCount });
+          for (const d of built.dots) newDots.push(d);
         }
-
-        // Topic filtering: only keep paths where the queue's subscription matches the publisher's topic
-        const pubTopic = pub.topic;
-        const validPaths = pubTopic
-          ? allValidPaths.filter(p => {
-            const queueId = p.nodeIds.find(id =>
-              state.components.find(c => c.id === id)?.type === 'queue');
-            if (!queueId) return true; // no queue in path, allow
-            const queue = state.components.find(c => c.id === queueId);
-            return !queue?.subscriptionTopic || topicMatches(pubTopic, queue.subscriptionTopic);
-          })
-          : allValidPaths;
-        if (validPaths.length === 0) {
-          // No matching queues — create a dot that travels to the broker and drops there
-          // Find any path that reaches a broker
-          const anyPath = allValidPaths[0];
-          if (anyPath) {
-            const brokerIdx = anyPath.nodeIds.findIndex(id =>
-              state.components.find(c => c.id === id)?.type === 'broker');
-            if (brokerIdx >= 0) {
-              const broker = state.components.find(c => c.id === anyPath.nodeIds[brokerIdx])!;
-              // Build a truncated path: publisher → broker left edge
-              const brokerLeftEdge = { x: broker.x - 62, y: broker.y };
-              // Find the last waypoint before the broker and append the edge point
-              const truncatedWaypoints = [anyPath.waypoints[0]];
-              for (const wp of anyPath.waypoints.slice(1)) {
-                if (Math.abs(wp.x - broker.x) < 80 && Math.abs(wp.y - broker.y) < 40) break;
-                truncatedWaypoints.push(wp);
-              }
-              truncatedWaypoints.push(brokerLeftEdge);
-              const truncatedNodeIds = anyPath.nodeIds.slice(0, brokerIdx + 1);
-
-              const baseValue = state.getEventValue(publisherId);
-              const bridgeExitNodeId = firstBridgeExitNodeId(truncatedNodeIds, state.components);
-              const queueMult = getQueueValueMultiplier(truncatedNodeIds, state.components);
-              const value = (bridgeExitNodeId ? baseValue * BRIDGE_VALUE_MULT : baseValue) * queueMult;
-              const speed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state), truncatedWaypoints);
-              set(draft => {
-                draft.publisherCooldowns[publisherId] = Date.now();
-                const fireCount = state.upgrades.batchFire > 0 ? state.upgrades.batchFire : 1;
-                recordPublish(draft, fireCount);
-                for (let batch = 0; batch < fireCount; batch++) {
-                  const dotId = `dot-${++dotIdCounter}`;
-                  draft.eventDots.push({
-                    id: dotId,
-                    path: truncatedWaypoints,
-                    progress: batch * -0.04,
-                    speed,
-                    status: 'traveling',
-                    color: '#22d3ee',
-                    opacity: 1,
-                    value,
-                    originalValue: value,
-                    originalNodeIds: truncatedNodeIds,
-                    nextNodeId: findNextInteractableId(truncatedNodeIds, state.components),
-                    bridgeGoldAfterNodeId: bridgeExitNodeId,
-                  });
-                }
-              });
-            }
-          }
-          return;
-        }
-
-        // Broker fan-out: send to ALL matching queues (one path per unique queue per broker)
-        // Group paths by their broker (the node before the queue where paths diverge)
-        const selectedPaths: typeof validPaths = [];
-        const groupedByBroker = new Map<string, typeof validPaths>();
-
-        for (const p of validPaths) {
-          const queueNode = p.nodeIds.find(id => state.components.find(c => c.id === id)?.type === 'queue');
-          if (!queueNode) {
-            // No queue in path (e.g. direct broker→subscriber), always include
-            selectedPaths.push(p);
-            continue;
-          }
-          // Find the node before the queue (the broker) as the grouping key
-          const queueIdx = p.nodeIds.indexOf(queueNode);
-          const brokerId = queueIdx > 0 ? p.nodeIds[queueIdx - 1] : 'none';
-          if (!groupedByBroker.has(brokerId)) groupedByBroker.set(brokerId, []);
-          groupedByBroker.get(brokerId)!.push(p);
-        }
-
-        // Broker fans out to ALL matching queues (real EDA behavior).
-        // Deduplicate so we get one path per unique queue.
-        for (const [, group] of groupedByBroker) {
-          const seen = new Set<string>();
-          for (const p of group) {
-            const queueId = p.nodeIds.find(id => state.components.find(c => c.id === id)?.type === 'queue');
-            if (!queueId) { selectedPaths.push(p); continue; }
-            if (!seen.has(queueId)) {
-              seen.add(queueId);
-              selectedPaths.push(p);
-            }
-          }
-        }
-
-        const baseValue = state.getEventValue(publisherId);
-        const baseSpeed = 0.0007 * state.upgrades.propagationSpeed * getPermanentSpeedMult(state);
-        const valueForPath = (nodeIds: string[]) => {
-          const bridgeMult = pathCrossesBridge(nodeIds, state.components) ? BRIDGE_VALUE_MULT : 1;
-          const queueMult = getQueueValueMultiplier(nodeIds, state.components);
-          return baseValue * bridgeMult * queueMult;
-        };
-        const colorForPath = (nodeIds: string[]) =>
-          pathCrossesBridge(nodeIds, state.components) ? BRIDGE_GOLD_COLOR : '#22d3ee';
-
-        // Group selected paths by their first broker so we create one dot per broker fork point
-        const forkGroups = new Map<string, typeof selectedPaths>();
-        for (const p of selectedPaths) {
-          // Find first broker in the path (index 1 is typically the broker after publisher)
-          const firstBrokerId = p.nodeIds.find(id =>
-            state.components.find(c => c.id === id)?.type === 'broker') ?? 'none';
-          if (!forkGroups.has(firstBrokerId)) forkGroups.set(firstBrokerId, []);
-          forkGroups.get(firstBrokerId)!.push(p);
-        }
-
-        set(draft => {
-          draft.publisherCooldowns[publisherId] = Date.now();
-          const fireCount = state.upgrades.batchFire > 0 ? state.upgrades.batchFire : 1;
-          recordPublish(draft, fireCount);
-          for (let batch = 0; batch < fireCount; batch++) {
-            for (const [brokerId, group] of forkGroups) {
-              const primary = group[0];
-              const forks = group.length > 1
-                ? group.slice(1).map(f => ({ ...f, value: valueForPath(f.nodeIds), color: colorForPath(f.nodeIds) }))
-                : undefined;
-              const primaryValue = valueForPath(primary.nodeIds);
-              const dotId = `dot-${++dotIdCounter}`;
-              draft.eventDots.push({
-                id: dotId,
-                path: primary.waypoints,
-                progress: batch * -0.04,
-                speed: normalizedSpeed(baseSpeed, primary.waypoints),
-                status: 'traveling',
-                color: '#22d3ee',
-                opacity: 1,
-                value: primaryValue,
-                originalValue: primaryValue,
-                originalNodeIds: primary.nodeIds,
-                nextNodeId: findNextInteractableId(primary.nodeIds, state.components),
-                forkPaths: forks,
-                forkNodeId: brokerId !== 'none' ? brokerId : undefined,
-                bridgeGoldAfterNodeId: firstBridgeExitNodeId(primary.nodeIds, state.components),
-              });
-            }
-          }
+        if (newDots.length === 0) return;
+        const cutoff = now - 5000;
+        const recent = state.recentPublishes.length > 0 && state.recentPublishes[0].time < cutoff
+          ? state.recentPublishes.filter(e => e.time > cutoff)
+          : state.recentPublishes;
+        set({
+          eventDots: state.eventDots.concat(newDots),
+          publisherCooldowns: cooldowns,
+          recentPublishes: recent.concat(publishes),
         });
       },
 

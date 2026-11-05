@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# perf harness output
+.perf-dist
+scripts/perf/.out

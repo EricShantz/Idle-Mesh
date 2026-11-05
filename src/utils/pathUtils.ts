@@ -33,16 +33,34 @@ export function getSegmentSpeedScale(path: Point[], progress: number): number {
   const segmentProgress = Math.max(0, Math.min(1, progress)) * numSegments;
   const segmentIndex = Math.min(Math.floor(segmentProgress), numSegments - 1);
 
-  const currentLen = segmentLength(path[segmentIndex], path[segmentIndex + 1]);
+  const { lengths, avgLen } = getPathMetrics(path);
+  const currentLen = lengths[segmentIndex];
   if (currentLen === 0) return 1;
 
-  let totalLen = 0;
-  for (let i = 0; i < numSegments; i++) {
-    totalLen += segmentLength(path[i], path[i + 1]);
-  }
-  const avgLen = totalLen / numSegments;
-
   return avgLen / currentLen;
+}
+
+type PathMetrics = { lengths: number[]; totalLen: number; avgLen: number };
+
+// Segment lengths are summed for every live dot every frame (speed scaling, arrival
+// prediction). Paths are immutable — every builder creates a new array and nothing appends to
+// one — so the metrics are cached on the array itself; entries die with their dot.
+const pathMetricsCache = new WeakMap<Point[], PathMetrics>();
+
+export function getPathMetrics(path: Point[]): PathMetrics {
+  let m = pathMetricsCache.get(path);
+  if (m) return m;
+  const n = Math.max(path.length - 1, 0);
+  const lengths: number[] = [];
+  let totalLen = 0;
+  for (let i = 0; i < n; i++) {
+    const len = segmentLength(path[i], path[i + 1]);
+    lengths.push(len);
+    totalLen += len;
+  }
+  m = { lengths, totalLen, avgLen: n > 0 ? totalLen / n : 0 };
+  pathMetricsCache.set(path, m);
+  return m;
 }
 
 /**
@@ -59,15 +77,7 @@ export function scaledTravelTime(
   if (baseActualSpeed <= 0 || path.length < 2) return Infinity;
   const n = path.length - 1;
 
-  // Precompute segment lengths and average
-  const lengths: number[] = [];
-  let totalLen = 0;
-  for (let i = 0; i < n; i++) {
-    const len = segmentLength(path[i], path[i + 1]);
-    lengths.push(len);
-    totalLen += len;
-  }
-  const avgLen = totalLen / n;
+  const { lengths, avgLen } = getPathMetrics(path);
   if (avgLen === 0) return Infinity;
 
   // Integrate time across each segment the dot will traverse

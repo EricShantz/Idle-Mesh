@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useGameStore, getPermanentShopDiscount } from '../store/gameStore';
 import { globalUpgrades, getUpgradeCost, WIN_THRESHOLD } from '../store/upgradeConfig';
 import { getSmoothedFps } from '../hooks/useGameLoop';
+import { useThrottledGameStore } from '../hooks/useThrottledStore';
 import { TOPIC_POOL } from '../store/topicPool';
 import { formatMoney } from '../utils/formatMoney';
 import { PrestigePanel } from './PrestigePanel';
@@ -54,12 +55,14 @@ function getGlobalUpgradeValueDisplay(key: string, level: number): string | null
 }
 
 export function Sidebar() {
-  const balance = useGameStore(s => s.balance);
-  const totalEarned = useGameStore(s => s.totalEarned);
-  const eventsConsumed = useGameStore(s => s.eventsConsumed);
-  const eventsDropped = useGameStore(s => s.eventsDropped);
-  const recentEarnings = useGameStore(s => s.recentEarnings);
-  const recentPublishes = useGameStore(s => s.recentPublishes);
+  // Values that change every frame are sampled at 10 Hz — the whole sidebar tree re-rendered
+  // on every store commit otherwise, just to redraw digits nobody can read at that rate.
+  const balance = useThrottledGameStore(s => s.balance);
+  const totalEarned = useThrottledGameStore(s => s.totalEarned);
+  const eventsConsumed = useThrottledGameStore(s => s.eventsConsumed);
+  const eventsDropped = useThrottledGameStore(s => s.eventsDropped);
+  const recentEarnings = useThrottledGameStore(s => s.recentEarnings);
+  const recentPublishes = useThrottledGameStore(s => s.recentPublishes);
   const components = useGameStore(s => s.components);
   const upgrades = useGameStore(s => s.upgrades);
   const prestige = useGameStore(s => s.prestige);

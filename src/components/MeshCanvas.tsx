@@ -32,8 +32,6 @@ function MeshCanvasInner({ viewport }: { viewport: ReturnType<typeof useViewport
   const components = useGameStore(s => s.components);
   const connections = useGameStore(s => s.connections);
   const selectNode = useGameStore(s => s.selectNode);
-  const coinPops = useGameStore(s => s.coinPops);
-  const removeCoinPop = useGameStore(s => s.removeCoinPop);
   const draggingConnection = useGameStore(s => s.draggingConnection);
   const meshError = useGameStore(s => s.meshError);
   const updateDragPosition = useGameStore(s => s.updateDragPosition);
@@ -288,35 +286,50 @@ function MeshCanvasInner({ viewport }: { viewport: ReturnType<typeof useViewport
       ))}
 
       {/* Coin pop animations */}
-      <AnimatePresence>
-        {coinPops.map(pop => {
-          const screen = viewport.worldToScreen(pop.x, pop.y);
-          return (
-            <motion.div
-              key={pop.id}
-              initial={{ opacity: 1, y: 0, scale: 0.5 * vp.zoom }}
-              animate={{ opacity: 0, y: -50 * vp.zoom, scale: vp.zoom }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 1, ease: 'easeOut' }}
-              onAnimationComplete={() => removeCoinPop(pop.id)}
-              className="absolute pointer-events-none font-mono font-bold text-sm"
-              style={{
-                left: screen.x - 30 * vp.zoom,
-                top: screen.y - 40 * vp.zoom,
-                zIndex: 40,
-                color: '#22c55e',
-                textShadow: '0 0 8px rgba(34,197,94,0.6)',
-                transformOrigin: 'top left',
-              }}
-            >
-              🪙 +{formatMoney(pop.amount)}
-            </motion.div>
-          );
-        })}
-      </AnimatePresence>
+      <CoinPops viewport={viewport} />
 
       {/* Upgrade modal */}
       <NodeModal />
     </div>
+  );
+}
+
+// Coin pops are added and removed many times a second at high throughput. Subscribing to them
+// here, rather than in MeshCanvasInner, keeps those commits from re-rendering the whole mesh
+// (every connection line and node card) each time one appears or finishes.
+function CoinPops({ viewport }: { viewport: ReturnType<typeof useViewportApi> }) {
+  const coinPops = useGameStore(s => s.coinPops);
+  const removeCoinPop = useGameStore(s => s.removeCoinPop);
+  const [, forceRender] = useState(0);
+  useEffect(() => viewport.subscribe(() => forceRender(c => c + 1)), [viewport]);
+  const vp = viewport.ref.current;
+
+  return (
+    <AnimatePresence>
+      {coinPops.map(pop => {
+        const screen = viewport.worldToScreen(pop.x, pop.y);
+        return (
+          <motion.div
+            key={pop.id}
+            initial={{ opacity: 1, y: 0, scale: 0.5 * vp.zoom }}
+            animate={{ opacity: 0, y: -50 * vp.zoom, scale: vp.zoom }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 1, ease: 'easeOut' }}
+            onAnimationComplete={() => removeCoinPop(pop.id)}
+            className="absolute pointer-events-none font-mono font-bold text-sm"
+            style={{
+              left: screen.x - 30 * vp.zoom,
+              top: screen.y - 40 * vp.zoom,
+              zIndex: 40,
+              color: '#22c55e',
+              textShadow: '0 0 8px rgba(34,197,94,0.6)',
+              transformOrigin: 'top left',
+            }}
+          >
+            🪙 +{formatMoney(pop.amount)}
+          </motion.div>
+        );
+      })}
+    </AnimatePresence>
   );
 }

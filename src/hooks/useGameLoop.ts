@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useGameStore, nextDotId, getPermanentQueueBufferBonus, findNextInteractableId, getPermanentBrokerThroughputMult, BRIDGE_GOLD_COLOR } from '../store/gameStore';
+import { useGameStore, nextDotId, getPermanentQueueBufferBonus, findNextInteractableId, getPermanentBrokerThroughputMult, getPublisherCooldownMs, BRIDGE_GOLD_COLOR, type EventDot, type GameComponent, type Connection } from '../store/gameStore';
 import { interpolatePath, normalizedSpeed, getSegmentSpeedScale, scaledTravelTime } from '../utils/pathUtils';
 import { computeOrthogonalWaypoints, computeVerticalFirstWaypoints } from '../utils/orthogonalPath';
 import { getClusterSlotCount, getNodeHalfExtents } from '../store/upgradeConfig';
@@ -52,24 +52,46 @@ export function getActiveDrops(): Array<{ nodeId: string; nodeLabel: string; rea
   return active;
 }
 
-/** Smoothed FPS for adaptive coin pop throttling */
-let _smoothedFps = 60;
-const FPS_SMOOTH = 0.05; // low-pass filter weight (lower = smoother)
-export function getSmoothedFps() { return _smoothedFps; }
+/** Smoothed FPS for the sidebar stat and adaptive coin pop throttling.
+ *  Smoothed in frame-time space (an EMA of the raw, unclamped frame delta, then inverted):
+ *  averaging instantaneous 1000/dt values over-reads badly when frames are uneven, and using
+ *  the clamped dt put a floor of 1000/MAX_FRAME_DT_MS under the number — it could never show
+ *  less than 10 even when the real rate was 1. Frames longer than FPS_PAUSE_MS are a tab
+ *  switch or a hitch, not rendering performance, and are skipped. */
+let _smoothedDt = 1000 / 60;
+const FPS_SMOOTH = 0.1; // low-pass weight on frame time (converges in ~20 frames)
+const FPS_PAUSE_MS = 1000;
+export function getSmoothedFps() { return 1000 / _smoothedDt; }
 
 /** Lowest smoothed FPS seen this session (shown on the end-game stats). Session-level, not saved. */
 let _minFps = Infinity;
 let _fpsFrameCount = 0;
 const MIN_FPS_WARMUP_FRAMES = 120; // skip startup frames so page load doesn't count as a dip
-export function getMinFps() { return _minFps === Infinity ? _smoothedFps : _minFps; }
+export function getMinFps() { return _minFps === Infinity ? getSmoothedFps() : _minFps; }
+
+/** The auto-publisher polls every AUTO_PUB_POLL_MS of *simulation* time (the same clamped dt
+ *  that moves the dots), not wall-clock time. When frames run long the sim advances less than
+ *  real time, so publishing slows down with consumption instead of outrunning it — the old
+ *  setInterval kept firing at full speed into a mesh that was moving in slow motion, and the
+ *  pile-up made every following frame slower still. */
+const AUTO_PUB_POLL_MS = 100;
+let autoPubAccumulator = 0;
+let simNow = 0;
+/** Sim-time timestamp of each publisher's last auto fire (wall-clock cooldowns live in the store). */
+const autoFireLastSim = new Map<string, number>();
 
 /** Try to relay an event through a broker. Returns true if under cap, false if over. */
 function tryBrokerRelay(brokerId: string, cap: number, now: number): boolean {
-  let ts = brokerRelayTimestamps.get(brokerId) ?? [];
-  ts = ts.filter(t => now - t < 1000);
-  if (ts.length >= cap) { brokerRelayTimestamps.set(brokerId, ts); return false; }
+  let ts = brokerRelayTimestamps.get(brokerId);
+  if (!ts) { ts = []; brokerRelayTimestamps.set(brokerId, ts); }
+  // Timestamps are appended in order, so expired ones are a prefix: trim it in place instead of
+  // filtering into a fresh array per relay (this runs once per broker crossing, thousands of
+  // times a second at full throughput).
+  let expired = 0;
+  while (expired < ts.length && now - ts[expired] >= 1000) expired++;
+  if (expired > 0) ts.splice(0, expired);
+  if (ts.length >= cap) return false;
   ts.push(now);
-  brokerRelayTimestamps.set(brokerId, ts);
   return true;
 }
 
@@ -273,6 +295,32 @@ function dedupeConsecutiveWaypoints(path: { x: number; y: number }[]): { x: numb
   return path.filter((p, i) => i === 0 || Math.abs(p.x - path[i - 1].x) >= 1 || Math.abs(p.y - path[i - 1].y) >= 1);
 }
 
+type Dot = EventDot;
+type PathComps = { comp: GameComponent; idx: number }[];
+type PathInfo = { componentsRef: GameComponent[]; comps: PathComps; endSubscriber: GameComponent | undefined };
+/** Layout-derived data per path array (see getPathInfo in the loop). Paths are never mutated
+ *  in place, so keying on the array is exact; entries are collected with their dot. */
+const pathInfoCache = new WeakMap<{ x: number; y: number }[], PathInfo>();
+type RouteValidity = { componentsRef: GameComponent[]; connectionsRef: Connection[]; invalid: boolean };
+/** Whether a route (a dot's originalNodeIds, shared by every dot of one fire) still has a
+ *  connection for each hop, cached until the component or connection list changes. */
+const routeValidityCache = new WeakMap<string[], RouteValidity>();
+
+/** Start time and duration of the most recent consume at each subscriber, recorded when a dot
+ *  starts pausing there. The subscriber card's cooldown overlay reads this instead of scanning
+ *  every live dot for one pausing near it. */
+const subscriberConsume = new Map<string, { start: number; duration: number }>();
+export function getSubscriberConsume(subscriberId: string): { start: number; duration: number } | undefined {
+  return subscriberConsume.get(subscriberId);
+}
+
+/** Consume duration (ms) for a subscriber at its fasterConsumption level; 1s when unknown. */
+function consumeDurationFor(sub: { upgrades: Record<string, number> } | undefined): number {
+  const level = sub?.upgrades['fasterConsumption'] ?? 0;
+  const boostPct = Math.min(level * (level + 9) / 2, 100);
+  return 1000 * (1 - boostPct / 100);
+}
+
 /** Check if a point (dot) touches the rectangular bounding box of a node */
 function dotTouchesNode(px: number, py: number, nodeX: number, nodeY: number): boolean {
   const left = nodeX - NODE_HALF_W;
@@ -305,15 +353,12 @@ export function useGameLoop() {
       const dt = Math.min(rawDt, MAX_FRAME_DT_MS);
       lastTimeRef.current = time;
 
-      // Update smoothed FPS for adaptive coin pop throttling
-      if (dt > 0) {
-        const instantFps = 1000 / dt;
-        _smoothedFps += FPS_SMOOTH * (instantFps - _smoothedFps);
-        // Track the session low, ignoring warm-up and clamped frames (a tab switch or a
-        // hitch is a pause, not rendering performance).
+      // Update smoothed frame time for the fps stat and adaptive coin pop throttling
+      if (rawDt > 0 && rawDt < FPS_PAUSE_MS) {
+        _smoothedDt += FPS_SMOOTH * (rawDt - _smoothedDt);
         _fpsFrameCount++;
-        if (_fpsFrameCount > MIN_FPS_WARMUP_FRAMES && rawDt <= MAX_FRAME_DT_MS) {
-          _minFps = Math.min(_minFps, _smoothedFps);
+        if (_fpsFrameCount > MIN_FPS_WARMUP_FRAMES) {
+          _minFps = Math.min(_minFps, getSmoothedFps());
         }
       }
 
@@ -330,7 +375,6 @@ export function useGameLoop() {
       let droppedCount = 0;
 
       state.updateDots(dots => {
-        type Dot = import('../store/gameStore').EventDot;
         // Use a mutable array so each dot sees the results of earlier dots in the same frame
         const updated: Dot[] = [];
         // Track queues whose dots were rebuilt in post-drag cleanup this frame
@@ -377,15 +421,67 @@ export function useGameLoop() {
         const connectionKeys = new Set<string>();
         for (const c of state.connections) connectionKeys.add(`${c.fromId}->${c.toId}`);
 
+        // Subscriber lookup by position. Every path that ends at a subscriber ends exactly on
+        // its center (all builders use node x/y), so an exact key resolves it; the linear
+        // `< 50px` scan is kept only as the fallback for an end point that isn't a center.
+        const subscribers = state.components.filter(c => c.type === 'subscriber');
+        const subscriberByPos = new Map<string, GameComponent>();
+        for (const s of subscribers) {
+          const k = posKey(s.x, s.y);
+          if (!subscriberByPos.has(k)) subscriberByPos.set(k, s);
+        }
+        const subscriberNear = (x: number, y: number): GameComponent | undefined =>
+          subscriberByPos.get(posKey(x, y)) ?? subscribers.find(s => Math.hypot(s.x - x, s.y - y) < 50);
+
+        // Per-path data derived from the component layout (the nodes sitting on the path, and
+        // the subscriber it ends at). Cached on the path array; rebuilt when the components
+        // array identity changes (any move/add/remove), which during a drag is every frame —
+        // exactly the old per-frame cost, but only then.
+        const getPathInfo = (path: { x: number; y: number }[]): PathInfo => {
+          let info = pathInfoCache.get(path);
+          if (info && info.componentsRef === state.components) return info;
+          const comps: PathComps = [];
+          for (let wp = 0; wp < path.length; wp++) {
+            const pt = path[wp];
+            const hit = componentByPos.get(posKey(pt.x, pt.y));
+            const comp = hit && Math.abs(hit.x - pt.x) < 1 && Math.abs(hit.y - pt.y) < 1 ? hit : undefined;
+            if (comp && (comps.length === 0 || comps[comps.length - 1].comp.id !== comp.id)) {
+              comps.push({ comp, idx: wp });
+            }
+          }
+          const end = path[path.length - 1];
+          info = { componentsRef: state.components, comps, endSubscriber: end ? subscriberNear(end.x, end.y) : undefined };
+          pathInfoCache.set(path, info);
+          return info;
+        };
+
+        // Pausing dots grouped by the subscriber they sit at. Seeded from the pre-frame state
+        // and extended as dots pause during Pass 1, so an arriving dot sees the same set the
+        // old full scan of `updated` + the unprocessed remainder saw: earlier dots in their
+        // updated form, later ones as they were. (A dot consumed this frame has
+        // elapsed ≥ its consume duration and so never passes the occupancy test anyway.)
+        const pausingBucketKey = (d: Dot) => {
+          const sub = getPathInfo(d.path).endSubscriber;
+          if (sub) return sub.id;
+          const end = d.path[d.path.length - 1];
+          return end ? `@${posKey(end.x, end.y)}` : '@';
+        };
+        const pausingBySub = new Map<string, Dot[]>();
+        const addPausing = (d: Dot) => {
+          const k = pausingBucketKey(d);
+          const bucket = pausingBySub.get(k);
+          if (bucket) bucket.push(d); else pausingBySub.set(k, [d]);
+        };
+        for (const d of dots) if (d.status === 'pausing' && d.path.length > 0) addPausing(d);
+
         for (let i = 0; i < dots.length; i++) {
           let dot = dots[i];
 
           // Helper: check if a component is occupied — sees already-processed + remaining dots
           const isComponentOccupied = (componentId: string) => {
-            const comp = state.components.find(c => c.id === componentId);
+            const comp = componentById.get(componentId);
             if (!comp) return false;
-            const allDots = [...updated, ...dots.slice(i + 1)];
-            return allDots.some(d => {
+            const occupiedBy = (d: Dot) => {
               if (d.id === dot.id) return false; // never block yourself
               if (d.status === 'pausing' || d.status === 'queued') {
                 const lastPos = d.path[d.path.length - 1];
@@ -397,7 +493,10 @@ export function useGameLoop() {
                 return dotTouchesNode(pos.x, pos.y, comp.x, comp.y);
               }
               return false;
-            });
+            };
+            for (const d of updated) if (occupiedBy(d)) return true;
+            for (let j = i + 1; j < dots.length; j++) if (occupiedBy(dots[j])) return true;
+            return false;
           };
 
           // Post-drag cleanup: if dot was rebuilt during drag (has nodeWpIndices) but drag ended,
@@ -493,16 +592,9 @@ export function useGameLoop() {
             const eventPos = interpolatePath(dot.path, dot.progress);
 
             // Drop dots whose path no longer matches the connection graph (connection was removed)
-            // Extract component nodes from the path (skip orthogonal midpoints)
-            const pathComps: { comp: typeof state.components[0]; idx: number }[] = [];
-            for (let wp = 0; wp < dot.path.length; wp++) {
-              const pt = dot.path[wp];
-              const hit = componentByPos.get(posKey(pt.x, pt.y));
-              const comp = hit && Math.abs(hit.x - pt.x) < 1 && Math.abs(hit.y - pt.y) < 1 ? hit : undefined;
-              if (comp && (pathComps.length === 0 || pathComps[pathComps.length - 1].comp.id !== comp.id)) {
-                pathComps.push({ comp, idx: wp });
-              }
-            }
+            // Component nodes on the path (orthogonal midpoints skipped) — cached per path
+            const pathInfo = getPathInfo(dot.path);
+            const pathComps = pathInfo.comps;
             // Check each consecutive component pair ahead of the dot has a connection
             // Skip validation while a node is being dragged — dragging moves positions
             // but doesn't disconnect cables, so the position-based matching would give false positives
@@ -511,21 +603,30 @@ export function useGameLoop() {
             // the geometric pathComps, which can include spurious nodes that happen to
             // sit on the path geometry.
             let pathInvalid = false;
-            const validationNodes = dot.originalNodeIds
-              ? dot.originalNodeIds.map(id => componentById.get(id)).filter(Boolean) as typeof state.components
-              : pathComps.map(pc => pc.comp);
             if (dot.originalNodeIds) {
-              // Validate using authoritative node IDs — no geometric ambiguity
-              for (let ni = 0; ni < validationNodes.length - 1 && !state.draggingNodeId; ni++) {
-                const a = validationNodes[ni];
-                const b = validationNodes[ni + 1];
-                const bothBrokers = a.type === 'broker' && b.type === 'broker';
-                const connExists = connectionKeys.has(`${a.id}->${b.id}`) ||
-                  (bothBrokers && connectionKeys.has(`${b.id}->${a.id}`));
-                if (!connExists) {
-                  pathInvalid = true;
-                  break;
+              // Validate using authoritative node IDs — no geometric ambiguity. The verdict only
+              // depends on the route and the current graph, so it is cached on the node-id array
+              // (shared by every dot of a fire) until components or connections change.
+              if (!state.draggingNodeId) {
+                let rv = routeValidityCache.get(dot.originalNodeIds);
+                if (!rv || rv.componentsRef !== state.components || rv.connectionsRef !== state.connections) {
+                  const validationNodes = dot.originalNodeIds.map(id => componentById.get(id)).filter(Boolean) as GameComponent[];
+                  let invalid = false;
+                  for (let ni = 0; ni < validationNodes.length - 1; ni++) {
+                    const a = validationNodes[ni];
+                    const b = validationNodes[ni + 1];
+                    const bothBrokers = a.type === 'broker' && b.type === 'broker';
+                    const connExists = connectionKeys.has(`${a.id}->${b.id}`) ||
+                      (bothBrokers && connectionKeys.has(`${b.id}->${a.id}`));
+                    if (!connExists) {
+                      invalid = true;
+                      break;
+                    }
+                  }
+                  rv = { componentsRef: state.components, connectionsRef: state.connections, invalid };
+                  routeValidityCache.set(dot.originalNodeIds, rv);
                 }
+                pathInvalid = rv.invalid;
               }
             } else {
               for (let pc = 0; pc < pathComps.length - 1 && !state.draggingNodeId; pc++) {
@@ -568,24 +669,17 @@ export function useGameLoop() {
               }
             }
 
-            let blocked = false;
-            for (const comp of state.components) {
-              if (comp.type === 'publisher' || comp.type === 'broker') continue;
-              if (comp.type === 'webhook') {
-                // Only block dots approaching from the left, just before the node's left edge
-                const leftEdge = comp.x - NODE_HALF_W - DOT_RADIUS;
-                if (eventPos.x >= leftEdge) continue; // already at or past the edge
-                if (eventPos.x < leftEdge - 20) continue; // too far away to block
-                if (isComponentOccupied(comp.id)) {
-                  droppedCount++;
-                  recordDrop(comp.id, 'webhook-occupied', comp.label);
-                  updated.push({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: dropColor } as Dot);
-                  blocked = true;
-                  break;
-                }
+            if (webhookComponent) {
+              // Only block dots approaching from the left, just before the node's left edge
+              const leftEdge = webhookComponent.x - NODE_HALF_W - DOT_RADIUS;
+              const approaching = eventPos.x < leftEdge && eventPos.x >= leftEdge - 20;
+              if (approaching && isComponentOccupied(webhookComponent.id)) {
+                droppedCount++;
+                recordDrop(webhookComponent.id, 'webhook-occupied', webhookComponent.label);
+                updated.push({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: dropColor } as Dot);
+                continue;
               }
             }
-            if (blocked) continue;
 
             const newProgress = Math.min(dot.progress + actualSpeed * dt, 1);
             const newPos = interpolatePath(dot.path, newProgress);
@@ -614,7 +708,7 @@ export function useGameLoop() {
 
             // Fork spawning: when dot with forkPaths passes its fork broker, spawn fork dots
             if (dot.forkPaths && dot.forkNodeId) {
-              const forkComp = state.components.find(c => c.id === dot.forkNodeId);
+              const forkComp = componentById.get(dot.forkNodeId);
               if (forkComp && dotTouchesNode(newPos.x, newPos.y, forkComp.x, forkComp.y)) {
                 for (const fork of dot.forkPaths) {
                   const forkDotId = nextDotId();
@@ -745,38 +839,33 @@ export function useGameLoop() {
             // Check collision with subscriber — only if subscriber is the next interactable node
             if (nextInteractable && nextInteractable.comp.type === 'subscriber') {
               const subscriber = nextInteractable.comp;
-              const lastPathPoint = dot.path[dot.path.length - 1];
 
               const subProgress = nextInteractable.idx / (dot.path.length - 1);
               const touchesSub = dot.nextNodeId
                 ? newProgress >= subProgress - 0.01
                 : dotTouchesNode(newPos.x, newPos.y, subscriber.x, subscriber.y);
               if (touchesSub) {
-                // Check updated array for accurate subscriber occupancy
-                // A subscriber is occupied only if the consuming dot still has time remaining
-                const subscriberForOccupancy = state.components.find(c =>
-                  c.type === 'subscriber' && Math.hypot(c.x - lastPathPoint.x, c.y - lastPathPoint.y) < 50
-                );
-                const occFcLevel = subscriberForOccupancy?.upgrades['fasterConsumption'] ?? 0;
-                const occBoostPct = Math.min(occFcLevel * (occFcLevel + 9) / 2, 100);
-                const occConsumeDuration = 1000 * (1 - occBoostPct / 100);
-                const isOccupyingThisSubscriber = (d: Dot) => {
-                  if (d.status !== 'pausing' || d.moneyAdded || d.path.length === 0) return false;
-                  if (Math.hypot(d.path[d.path.length - 1].x - lastPathPoint.x, d.path[d.path.length - 1].y - lastPathPoint.y) >= 50) return false;
-                  const elapsed = Date.now() - (d.pauseStartTime ?? Date.now());
-                  // Allow arrival within 50ms of consumption finishing to account for frame timing
-                  return elapsed < occConsumeDuration - 50;
-                };
-                // Scan already-processed dots, then the not-yet-processed remainder, without
-                // allocating a concatenated copy of both per arriving dot.
-                let isSubscriberOccupied = updated.some(isOccupyingThisSubscriber);
-                if (!isSubscriberOccupied) {
-                  for (let j = i + 1; j < dots.length; j++) {
-                    if (isOccupyingThisSubscriber(dots[j])) { isSubscriberOccupied = true; break; }
+                // A subscriber is occupied only if a dot consuming there still has time remaining.
+                // Only the dots pausing at this same subscriber can matter, so check that bucket
+                // instead of scanning every live dot per arrival.
+                const occConsumeDuration = consumeDurationFor(pathInfo.endSubscriber);
+                let isSubscriberOccupied = false;
+                const bucket = pausingBySub.get(pausingBucketKey(dot));
+                if (bucket) {
+                  for (const d of bucket) {
+                    if (d.id === dot.id || d.status !== 'pausing' || d.moneyAdded || d.path.length === 0) continue;
+                    const elapsed = Date.now() - (d.pauseStartTime ?? Date.now());
+                    // Allow arrival within 50ms of consumption finishing to account for frame timing
+                    if (elapsed < occConsumeDuration - 50) { isSubscriberOccupied = true; break; }
                   }
                 }
                 if (!isSubscriberOccupied) {
-                  updated.push({ ...dot, status: 'pausing', pauseStartTime: Date.now(), progress: newProgress } as Dot);
+                  const pausingDot = { ...dot, status: 'pausing', pauseStartTime: Date.now(), progress: newProgress } as Dot;
+                  updated.push(pausingDot);
+                  addPausing(pausingDot);
+                  if (pathInfo.endSubscriber) {
+                    subscriberConsume.set(pathInfo.endSubscriber.id, { start: pausingDot.pauseStartTime!, duration: occConsumeDuration });
+                  }
                 } else {
                   droppedCount++;
                   recordDrop(subscriber.id, 'subscriber-occupied', subscriber.label);
@@ -798,13 +887,8 @@ export function useGameLoop() {
             updated.push({ ...dot, progress: newProgress } as Dot);
           } else if (dot.status === 'pausing') {
             const elapsed = Date.now() - (dot.pauseStartTime ?? Date.now());
-            const lastComponent = dot.path[dot.path.length - 1];
-            const subscriber = state.components.find(c =>
-              c.type === 'subscriber' && Math.hypot(c.x - lastComponent.x, c.y - lastComponent.y) < 50
-            );
-            const fasterConsumptionLevel = subscriber?.upgrades['fasterConsumption'] ?? 0;
-            const boostPct = Math.min(fasterConsumptionLevel * (fasterConsumptionLevel + 9) / 2, 100);
-            const consumeDuration = 1000 * (1 - boostPct / 100);
+            const subscriber = getPathInfo(dot.path).endSubscriber;
+            const consumeDuration = consumeDurationFor(subscriber);
             if (elapsed >= consumeDuration && !dot.moneyAdded) {
               const consumptionValueLevel = subscriber?.upgrades['consumptionValue'] ?? 0;
               const subscriberMult = 1.0 + consumptionValueLevel * 0.08 + consumptionValueLevel * consumptionValueLevel * 0.02;
@@ -891,8 +975,55 @@ export function useGameLoop() {
         // throttle — one that scales with the subscriber's actual consumption speed.
         // Precomputed once per frame for the in-flight check inside shouldReleaseTo, which
         // otherwise rescanned every component per path waypoint per live dot per candidate.
-        const subscriberIds = new Set(state.components.filter(c => c.type === 'subscriber').map(c => c.id));
+        const subscriberIds = new Set(subscribers.map(c => c.id));
         const queuePositions = state.components.filter(c => c.type === 'queue').map(c => ({ x: c.x, y: c.y }));
+
+        // What every subscriber has coming, built once from the post-Pass-1 dots: the longest
+        // remaining consume among dots pausing there, and the predicted arrival time of every
+        // traveling dot heading there next. shouldReleaseTo used to rescan all live dots per
+        // candidate per queue to derive exactly this. Releases made below add their own dot's
+        // arrival to the index, which is what the old rescan would have picked up.
+        type SubTiming = { pausingRemaining: number | null; arrivals: number[] };
+        const subTiming = new Map<string, SubTiming>();
+        const timingFor = (subId: string): SubTiming => {
+          let t = subTiming.get(subId);
+          if (!t) { t = { pausingRemaining: null, arrivals: [] }; subTiming.set(subId, t); }
+          return t;
+        };
+        const predictedArrival = (d: Dot) => {
+          const actual = d.speed * state.upgrades.propagationSpeed;
+          const arrivalProg = getArrivalProgress(d.path);
+          return scaledTravelTime(d.path, d.progress, Math.max(arrivalProg, d.progress), actual);
+        };
+        for (const d of updated) {
+          if (d.path.length === 0) continue;
+          if (d.status !== 'pausing' && d.status !== 'traveling') continue;
+          const sub = getPathInfo(d.path).endSubscriber;
+          if (!sub) continue;
+          if (d.status === 'pausing') {
+            if (d.moneyAdded) continue;
+            // A pausing dot is already mid-consumption, so it finishes at `remaining`, not at
+            // `arrival + consumeDuration` like an incoming dot would.
+            const elapsed = Date.now() - (d.pauseStartTime ?? Date.now());
+            const remaining = Math.max(consumeDurationFor(sub) - elapsed, 0);
+            const t = timingFor(sub.id);
+            t.pausingRemaining = Math.max(t.pausingRemaining ?? 0, remaining);
+          } else {
+            // Only count dots actually heading to the subscriber next (past every queue).
+            // nextNodeId is authoritative when set — and unlike the progress-based scan it
+            // is unaffected by the negative start progress of a staggered release — with
+            // the path scan kept only as a fallback for dots that carry no nextNodeId.
+            const isPastAllQueues = d.nextNodeId
+              ? subscriberIds.has(d.nextNodeId)
+              : !d.path.some((wp, idx) => {
+                  if (idx >= d.path.length - 1) return false;
+                  if (!queuePositions.some(q => Math.abs(q.x - wp.x) < 1 && Math.abs(q.y - wp.y) < 1)) return false;
+                  return d.progress <= idx / (d.path.length - 1) + 0.01;
+                });
+            if (!isPastAllQueues) continue;
+            timingFor(sub.id).arrivals.push(predictedArrival(d));
+          }
+        }
 
         const queuedIndicesByQueue = new Map<string, number[]>();
         for (let qi = 0; qi < updated.length; qi++) {
@@ -919,12 +1050,12 @@ export function useGameLoop() {
 
           // Collect all connected subscribers (needed for busy check and release) — queue-level,
           // same for every dot in this queue, so computed once per queue rather than per dot.
-          const allConnectedSubs: { x: number; y: number }[] = [];
+          const allConnectedSubs: { x: number; y: number; comp: GameComponent }[] = [];
           if (queue) {
             const outConns = state.connections.filter(c => c.fromId === queueId);
             for (const conn of outConns) {
               const target = state.components.find(c => c.id === conn.toId && c.type === 'subscriber');
-              if (target) allConnectedSubs.push({ x: target.x, y: target.y });
+              if (target) allConnectedSubs.push({ x: target.x, y: target.y, comp: target });
             }
           }
 
@@ -943,7 +1074,7 @@ export function useGameLoop() {
             const bakedSubscriber = state.components.find(c =>
               c.type === 'subscriber' && Math.hypot(c.x - endPoint.x, c.y - endPoint.y) < 50
             );
-            subsForThisDot = bakedSubscriber ? [{ x: bakedSubscriber.x, y: bakedSubscriber.y }] : [];
+            subsForThisDot = bakedSubscriber ? [{ x: bakedSubscriber.x, y: bakedSubscriber.y, comp: bakedSubscriber }] : [];
           }
 
           const hasSubscriber = subsForThisDot.length > 0;
@@ -952,11 +1083,6 @@ export function useGameLoop() {
           // Pre-build release paths for all connected subscribers
           const buildReleasePath = (subTarget: { x: number; y: number }) => {
             if (!queue) return { path: dot.path, progress: dot.progress };
-            let bestDist = Infinity;
-            for (let pi = 0; pi < dot.path.length; pi++) {
-              const d = Math.hypot(dot.path[pi].x - queue.x, dot.path[pi].y - queue.y);
-              if (d < bestDist) { bestDist = d; }
-            }
             const queuePoint = { x: queue.x, y: queue.y };
             const extension: { x: number; y: number }[] = [];
             if (Math.abs(queue.y - subTarget.y) >= 5) {
@@ -999,56 +1125,20 @@ export function useGameLoop() {
           // Predictive release: release when the dot would arrive as the subscriber finishes consuming
           // Calculate the progress at which a dot enters a subscriber's collision box
           // (dotTouchesNode triggers before progress 1.0 due to the node's bounding rectangle)
-          const shouldReleaseTo = (sub: { x: number; y: number }, releasePath: { x: number; y: number }[], startProgress: number) => {
+          const shouldReleaseTo = (sub: { x: number; y: number; comp: GameComponent }, releasePath: { x: number; y: number }[], startProgress: number) => {
             const baseSpeed = normalizedSpeed(0.0007 * state.upgrades.propagationSpeed, releasePath);
             // During movement, dot.speed is multiplied by propagationSpeed again
             const actualSpeed = baseSpeed * state.upgrades.propagationSpeed;
             const arrivalProg = getArrivalProgress(releasePath);
             const travelTime = scaledTravelTime(releasePath, startProgress, Math.max(arrivalProg, startProgress), actualSpeed);
 
-            const subComp = state.components.find(c =>
-              c.type === 'subscriber' && Math.hypot(c.x - sub.x, c.y - sub.y) < 50
-            );
-            const fcLevel = subComp?.upgrades['fasterConsumption'] ?? 0;
-            const boostPct = Math.min(fcLevel * (fcLevel + 9) / 2, 100);
-            const consumeDuration = 1000 * (1 - boostPct / 100);
+            const consumeDuration = consumeDurationFor(sub.comp);
 
-            // Collect every other dot already pausing at or traveling toward this subscriber.
-            // A pausing dot is a special case — it's already mid-consumption, so it finishes
-            // at `remaining`, not at `arrival + consumeDuration` like an incoming dot would.
-            let pausingRemaining: number | null = null;
-            const arrivals: number[] = [];
-
-            for (const d of updated) {
-              if (d.id === dot.id || d.path.length === 0) continue;
-              const dEnd = d.path[d.path.length - 1];
-              if (Math.hypot(dEnd.x - sub.x, dEnd.y - sub.y) >= 50) continue;
-
-              if (d.status === 'pausing' && !d.moneyAdded) {
-                const elapsed = Date.now() - (d.pauseStartTime ?? Date.now());
-                const remaining = Math.max(consumeDuration - elapsed, 0);
-                pausingRemaining = Math.max(pausingRemaining ?? 0, remaining);
-              }
-
-              if (d.status === 'traveling') {
-                // Only count dots actually heading to the subscriber next (past every queue).
-                // nextNodeId is authoritative when set — and unlike the progress-based scan it
-                // is unaffected by the negative start progress of a staggered release — with
-                // the path scan kept only as a fallback for dots that carry no nextNodeId.
-                const isPastAllQueues = d.nextNodeId
-                  ? subscriberIds.has(d.nextNodeId)
-                  : !d.path.some((wp, idx) => {
-                      if (idx >= d.path.length - 1) return false;
-                      if (!queuePositions.some(q => Math.abs(q.x - wp.x) < 1 && Math.abs(q.y - wp.y) < 1)) return false;
-                      return d.progress <= idx / (d.path.length - 1) + 0.01;
-                    });
-                if (!isPastAllQueues) continue;
-                const inFlightActualSpeed = d.speed * state.upgrades.propagationSpeed;
-                const dArrivalProg = getArrivalProgress(d.path);
-                const arrivalTime = scaledTravelTime(d.path, d.progress, Math.max(dArrivalProg, d.progress), inFlightActualSpeed);
-                arrivals.push(arrivalTime);
-              }
-            }
+            // Every other dot already pausing at or traveling toward this subscriber, from the
+            // per-frame index (the candidate itself is queued, so it is never in there).
+            const timing = subTiming.get(sub.comp.id);
+            const pausingRemaining = timing?.pausingRemaining ?? null;
+            const arrivals = timing?.arrivals ?? [];
 
             // Simulate the subscriber's consumption queue in arrival order with the candidate
             // inserted at its own predicted arrival. Each dot can only start consuming once it
@@ -1077,7 +1167,7 @@ export function useGameLoop() {
           };
 
           // Without fan-out, determine round-robin target
-          let targets: { x: number; y: number }[];
+          let targets: { x: number; y: number; comp: GameComponent }[];
           if (hasFanOut) {
             targets = subsForThisDot;
           } else {
@@ -1139,10 +1229,12 @@ export function useGameLoop() {
               c.type === 'subscriber' && Math.hypot(c.x - releaseSub.x, c.y - releaseSub.y) < 1
             );
             const releaseNodeIds = [queueId, ...(releaseSubComp ? [releaseSubComp.id] : [])];
+            let released: Dot;
             if (ti === 0) {
-              updated[i] = { ...releaseDot, status: 'traveling', progress: releaseProgress - releaseStaggerFor(releasePath), speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined, originalNodeIds: releaseNodeIds, nextNodeId: releaseSubComp?.id, nodeWpIndices: undefined } as Dot;
+              released = { ...releaseDot, status: 'traveling', progress: releaseProgress - releaseStaggerFor(releasePath), speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined, originalNodeIds: releaseNodeIds, nextNodeId: releaseSubComp?.id, nodeWpIndices: undefined } as Dot;
+              updated[i] = released;
             } else {
-              updated.push({
+              released = {
                 ...releaseDot,
                 id: nextDotId(),
                 status: 'traveling',
@@ -1153,8 +1245,12 @@ export function useGameLoop() {
                 originalNodeIds: releaseNodeIds,
                 nextNodeId: releaseSubComp?.id,
                 nodeWpIndices: undefined,
-              } as Dot);
+              } as Dot;
+              updated.push(released);
             }
+            // Later candidates (this queue or another) must see this dot on its way, exactly as
+            // the old rescan of `updated` did. It carries nextNodeId, so it is "past all queues".
+            if (releaseSubComp) timingFor(releaseSubComp.id).arrivals.push(predictedArrival(released));
           }
           }
         }
@@ -1383,34 +1479,31 @@ export function useGameLoop() {
         useGameStore.getState().consumeEvents(toConsume);
       }
 
+      // Auto-publisher: one poll per AUTO_PUB_POLL_MS of sim time, all due publishers in a
+      // single commit. Runs after this frame's movement so a new dot is first moved on the
+      // next frame, like it was when the setInterval pushed it between frames. (dt is
+      // clamped to MAX_FRAME_DT_MS, so at most one poll is ever due per frame.)
+      simNow += dt;
+      autoPubAccumulator += dt;
+      if (autoPubAccumulator >= AUTO_PUB_POLL_MS) {
+        autoPubAccumulator -= AUTO_PUB_POLL_MS;
+        const fresh = useGameStore.getState();
+        const due: string[] = [];
+        for (const pub of fresh.components) {
+          if (pub.type !== 'publisher' || (pub.upgrades['autoPub'] ?? 0) < 1) continue;
+          const last = autoFireLastSim.get(pub.id);
+          if (last === undefined || simNow - last >= getPublisherCooldownMs(pub, fresh)) {
+            autoFireLastSim.set(pub.id, simNow);
+            due.push(pub.id);
+          }
+        }
+        if (due.length > 0) fresh.fireEvents(due);
+      }
+
       rafRef.current = requestAnimationFrame(loop);
     };
 
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
-  }, []);
-}
-
-export function useAutoPublisher() {
-  useEffect(() => {
-    // Poll every 100ms and attempt to fire for each auto-click publisher
-    // The cooldown check inside fireEvent naturally gates the rate
-    const timer = setInterval(() => {
-      // The frame loop is suspended while the tab is hidden, but this interval isn't (just
-      // throttled) — firing would pile up dots with nothing moving them, all of which would
-      // then flood the mesh the moment the tab comes back.
-      if (document.hidden) return;
-      const state = useGameStore.getState();
-      // Same reasoning while the win screen has the simulation frozen.
-      if (state.showWinScreen) return;
-      const publishers = state.components.filter(c => c.type === 'publisher');
-      for (const pub of publishers) {
-        if ((pub.upgrades['autoPub'] ?? 0) >= 1) {
-          state.fireEvent(pub.id);
-        }
-      }
-    }, 100);
-
-    return () => clearInterval(timer);
   }, []);
 }

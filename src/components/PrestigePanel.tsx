@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useGameStore } from '../store/gameStore';
+import { useThrottledGameStore } from '../hooks/useThrottledStore';
 import { formatMoney } from '../utils/formatMoney';
 import { getPrestigePointsFor, getPrestigeThreshold } from '../store/prestigeUpgradeConfig';
 
 export function PrestigePanel() {
-  const totalEarned = useGameStore(s => s.totalEarned);
+  // Changes every frame; sampled at 10 Hz like the sidebar it lives in
+  const totalEarned = useThrottledGameStore(s => s.totalEarned);
   const prestige = useGameStore(s => s.prestige);
   const performPrestige = useGameStore(s => s.performPrestige);
   const setShowPrestigeTree = useGameStore(s => s.setShowPrestigeTree);

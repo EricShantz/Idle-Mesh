@@ -6,12 +6,11 @@ import { HelpButton } from './components/HelpButton';
 import { PrestigeTreePage } from './components/PrestigeTreePage';
 import { IntroSequence } from './components/IntroSequence';
 import { WinScreen } from './components/WinScreen';
-import { useGameLoop, useAutoPublisher } from './hooks/useGameLoop';
+import { useGameLoop } from './hooks/useGameLoop';
 import { useGameStore } from './store/gameStore';
 
 function App() {
   useGameLoop();
-  useAutoPublisher();
 
   const introSeen = useGameStore(s => s.tutorialsSeen['introSequence']);
   const dismissTutorial = useGameStore(s => s.dismissTutorial);

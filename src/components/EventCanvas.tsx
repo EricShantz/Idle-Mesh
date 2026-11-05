@@ -14,13 +14,14 @@ const GLOW_EXTENT = GLOW_RADIUS + 2; // world units from dot center to the glow'
 // Sprites are rendered at this many pixels per world unit so they stay sharp when zoomed in.
 const SPRITE_PX_PER_UNIT = 8;
 
-// The glow was a createRadialGradient + gradient fill per dot per frame — the single most
-// expensive draw call available, run a few hundred times a frame at high throughput. The
-// gradient only depends on the dot's color, so render it once per color to an offscreen
-// canvas and drawImage it.
-const glowSprites = new Map<string, HTMLCanvasElement>();
-function getGlowSprite(color: string): HTMLCanvasElement {
-  const cached = glowSprites.get(color);
+// A live dot is a solid core with a radial-gradient glow over it. Both only depend on the
+// dot's color, so the whole thing is rendered once per color to an offscreen canvas (core
+// first, then the glow on top, in the order they used to be drawn on the main canvas) and
+// stamped with a single drawImage per dot. The gradient fill alone was the most expensive
+// call available; the per-dot beginPath/arc/fill for the core was the next one.
+const dotSprites = new Map<string, HTMLCanvasElement>();
+function getDotSprite(color: string): HTMLCanvasElement {
+  const cached = dotSprites.get(color);
   if (cached) return cached;
   const size = Math.ceil(GLOW_EXTENT * 2 * SPRITE_PX_PER_UNIT);
   const sprite = document.createElement('canvas');
@@ -28,6 +29,10 @@ function getGlowSprite(color: string): HTMLCanvasElement {
   sprite.height = size;
   const sctx = sprite.getContext('2d')!;
   const c = size / 2;
+  sctx.fillStyle = color;
+  sctx.beginPath();
+  sctx.arc(c, c, DOT_RADIUS * SPRITE_PX_PER_UNIT, 0, Math.PI * 2);
+  sctx.fill();
   const gradient = sctx.createRadialGradient(
     c, c, Math.max(1, (DOT_RADIUS / 2) * SPRITE_PX_PER_UNIT),
     c, c, GLOW_EXTENT * SPRITE_PX_PER_UNIT,
@@ -38,18 +43,20 @@ function getGlowSprite(color: string): HTMLCanvasElement {
   sctx.beginPath();
   sctx.arc(c, c, GLOW_RADIUS * SPRITE_PX_PER_UNIT, 0, Math.PI * 2);
   sctx.fill();
-  glowSprites.set(color, sprite);
+  dotSprites.set(color, sprite);
   return sprite;
 }
+
+/** World-space rectangle currently visible, padded by a glow radius; dots outside it are skipped. */
+type ViewRect = { left: number; top: number; right: number; bottom: number };
 
 function drawDot(
   ctx: CanvasRenderingContext2D,
   dot: Dot,
   componentById: Map<string, Component>,
-  subscribers: Component[],
+  subscriberByPos: Map<string, Component>,
+  view: ViewRect,
 ) {
-  ctx.globalAlpha = Math.max(0, dot.opacity);
-
   if (dot.status === 'traveling' || dot.status === 'pausing' || dot.status === 'queued') {
     let pos = interpolatePath(dot.path, Math.min(dot.progress, 1));
 
@@ -59,18 +66,19 @@ function drawDot(
       if (queue) pos = { x: queue.x, y: queue.y };
     }
 
+    if (pos.x < view.left || pos.x > view.right || pos.y < view.top || pos.y > view.bottom) return;
+
+    ctx.globalAlpha = Math.max(0, dot.opacity);
+
     // Calculate shrink scale for pausing dots
     let scale = 1;
     if (dot.status === 'pausing') {
       // Find the subscriber this dot is at and check fasterConsumption
       const subscriberPos = dot.path[dot.path.length - 1];
-      let fasterConsumptionLevel = 0;
-      for (const sub of subscribers) {
-        if (Math.hypot(sub.x - subscriberPos.x, sub.y - subscriberPos.y) < 1) {
-          fasterConsumptionLevel = sub.upgrades['fasterConsumption'] ?? 0;
-          break;
-        }
-      }
+      const sub = subscriberByPos.get(`${Math.round(subscriberPos.x)},${Math.round(subscriberPos.y)}`);
+      const fasterConsumptionLevel = sub && Math.hypot(sub.x - subscriberPos.x, sub.y - subscriberPos.y) < 1
+        ? (sub.upgrades['fasterConsumption'] ?? 0)
+        : 0;
       const effectiveConsumeDuration = CONSUME_DURATION * Math.pow(0.95, fasterConsumptionLevel);
 
       const elapsed = Date.now() - (dot.pauseStartTime ?? 0);
@@ -79,15 +87,11 @@ function drawDot(
       ctx.globalAlpha = Math.max(0, dot.opacity * shrinkProgress);
     }
 
-    ctx.beginPath();
-    ctx.arc(pos.x, pos.y, DOT_RADIUS * scale, 0, Math.PI * 2);
-    ctx.fillStyle = dot.color;
-    ctx.fill();
-
-    // Glow effect — globalAlpha already carries the dot's opacity/shrink fade
+    // Core + glow in one stamp — globalAlpha already carries the dot's opacity/shrink fade
     const extent = GLOW_EXTENT * scale;
-    ctx.drawImage(getGlowSprite(dot.color), pos.x - extent, pos.y - extent, extent * 2, extent * 2);
+    ctx.drawImage(getDotSprite(dot.color), pos.x - extent, pos.y - extent, extent * 2, extent * 2);
   } else if (dot.status === 'dropped') {
+    ctx.globalAlpha = Math.max(0, dot.opacity);
     const x = dot.dropX ?? dot.path[0].x;
     const y = dot.dropY ?? dot.path[0].y;
 
@@ -119,6 +123,9 @@ export function EventCanvas() {
     let sizedW = 0;
     let sizedH = 0;
     let sizedDpr = 0;
+    // The front canvas only ever holds pausing dots (a handful). Skip its full-screen clear
+    // on frames where it was empty and stays empty.
+    let frontHadContent = false;
 
     const render = () => {
       const width = backCanvas.clientWidth;
@@ -135,11 +142,18 @@ export function EventCanvas() {
         frontCanvas.height = height * dpr;
       }
 
+      const { eventDots: dots, components } = useGameStore.getState();
+      let hasPausing = false;
+      for (const dot of dots) if (dot.status === 'pausing') { hasPausing = true; break; }
+
       // Clear
       backCtx.setTransform(1, 0, 0, 1, 0, 0);
-      frontCtx.setTransform(1, 0, 0, 1, 0, 0);
       backCtx.clearRect(0, 0, backCanvas.width, backCanvas.height);
-      frontCtx.clearRect(0, 0, frontCanvas.width, frontCanvas.height);
+      if (frontHadContent || hasPausing) {
+        frontCtx.setTransform(1, 0, 0, 1, 0, 0);
+        frontCtx.clearRect(0, 0, frontCanvas.width, frontCanvas.height);
+      }
+      frontHadContent = hasPausing;
 
       // Apply viewport transform: DPR scaling + pan + zoom
       const vp = viewportApi.ref.current;
@@ -149,21 +163,30 @@ export function EventCanvas() {
       backCtx.setTransform(s, 0, 0, s, tx, ty);
       frontCtx.setTransform(s, 0, 0, s, tx, ty);
 
-      const { eventDots: dots, components } = useGameStore.getState();
+      // Visible world rect (padded by a glow radius) — dots panned/zoomed off screen are skipped
+      const view: ViewRect = {
+        left: -vp.panX / vp.zoom - GLOW_EXTENT,
+        top: -vp.panY / vp.zoom - GLOW_EXTENT,
+        right: (width - vp.panX) / vp.zoom + GLOW_EXTENT,
+        bottom: (height - vp.panY) / vp.zoom + GLOW_EXTENT,
+      };
 
       // Per-frame lookups so drawDot doesn't linearly search components per dot
       const componentById = new Map<string, Component>();
-      const subscribers: Component[] = [];
+      const subscriberByPos = new Map<string, Component>();
       for (const c of components) {
         componentById.set(c.id, c);
-        if (c.type === 'subscriber') subscribers.push(c);
+        if (c.type === 'subscriber') {
+          const k = `${Math.round(c.x)},${Math.round(c.y)}`;
+          if (!subscriberByPos.has(k)) subscriberByPos.set(k, c);
+        }
       }
 
       for (const dot of dots) {
         if (dot.status === 'pausing') {
-          drawDot(frontCtx, dot, componentById, subscribers);
+          drawDot(frontCtx, dot, componentById, subscriberByPos, view);
         } else {
-          drawDot(backCtx, dot, componentById, subscribers);
+          drawDot(backCtx, dot, componentById, subscriberByPos, view);
         }
       }
 
