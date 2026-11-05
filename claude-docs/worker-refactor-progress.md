@@ -7,100 +7,110 @@ short; the plan file holds the design, this file holds only state.
 
 ## Next
 
-Phase 3 (the worker: `sim.worker.ts`, bridge with message port + inline fallback, `useSimBridge`,
-sim ticks/s stat, harness `--worker` profile). Stop at Gate 3.
+Phase 4 (docs and cleanup): `CLAUDE.md` (file structure with `src/sim/*` and
+`src/hooks/useSimBridge.ts`, the performance rules, the save-exclusion list, the two rate stats),
+`claude-docs/dev-notes.md` → append "Round 4 — worker" with the Gate 3 numbers below,
+`claude-docs/event-dot-lifecycle.md` (the passes now live in `Sim.tick`), and remove the plan's
+"planned, not started" status line. No gate beyond `tsc` clean and the lint count unchanged; then
+write "Done" here.
 
 ## State of the tree
 
-- Phases 0, 1 and 2 are done and the tree is at a commit point (uncommitted; suggested message
-  from the plan: "sim: canvas draws from position buffer"). The user commits.
-- `src/sim/`: `types.ts`, `meshRules.ts`, `publish.ts`, `sim.ts`, `simBridge.ts`, `simStats.ts`
-  as after Phase 1, plus `positions.ts` (Phase 2): `FLOATS_PER_DOT` (8), the draw constants
-  `DOT_RADIUS`/`GLOW_RADIUS`/`GLOW_EXTENT`, the `glow` field values `GLOW_DROPPED` (0) /
-  `GLOW_LIVE` (1) / `GLOW_PAUSING` (2), and `fillPositions(dots, components, nowMs, buf)`: the
-  inline interpolation, queued-dot snap to its queue center, pausing-dot shrink and `parseColor`
-  moved verbatim out of `EventCanvas.renderGl`/`drawDot`. `Sim.fillPositions(buf)` delegates to it
-  with the sim's dots, `mesh.components` and `lastNowMs` (the clock of the last tick, recorded at
-  the top of `tick` before the frozen check). `buf` must hold `getDots().length * 8` floats.
-- `simBridge.ts` owns two `Float32Array`s (initial capacity 4096 dots, grown x1.5 when the dot
-  count outgrows the free one). `fillPositions()` (called by the loop right after `sim.tick`)
-  fills the free buffer and swaps; `getPositions()` returns the same `{ buf, count }` object
-  every call. It also exposes `window.__sim` in all builds: `liveDots()`, `byStatus()`, `dots()`
-  (the live array), `positions()`, `summary()`.
-- `EventCanvas.tsx` draws only from `getPositions()`: the WebGL path uploads the buffer as-is
-  (its layout is the vertex layout) and the vertex shader clips `glow > 1.5` (pausing) entries;
-  the 2D front canvas scans for `glow === 2` entries; the 2D fallback back canvas draws the rest.
-  Entries are in dot order, not grouped by glow. No store import, no `Dot` type.
-- `gameStore.ts`: `eventDots` is gone from `GameState`, the initial state, `performPrestige`, the
-  save exclusion destructure and `commitFrame`, which now takes only the `TickSummary`.
-  `useGameLoop.ts`: tick → `publishSummary` → `fillPositions()` → first-drop tutorial →
-  `commitFrame(summary)`.
-- Harness scripts read dots through `window.__sim`: `behavior.mjs` (`liveDots`/`byStatus`),
-  `prof.mjs`, `renders.mjs`, `trace.mjs` (counts) and `dragsmoke.mjs` (`dots()` for the off-path
-  and dangling-path checks). `scripts/perf/.out/manualcheck.mjs` (ignored dir) likewise.
-- Harness labels in `scripts/perf/.out/`: `wbase` (Phase 0 baseline), `p1` (Gate 1), `p2`
-  (Gate 2). Gate 3 compares to `wbase`. Extra Phase 2 checks in `.out/`: `canvascheck.mjs`
-  (`--disable-webgl` 2D fallback + buffer glow counts + canvas alpha-pixel probe) and
-  `pausecheck.mjs` (front canvas draws the shrinking pausing dot in the starter layout). Reuse both
-  for Gate 3.
-- Lint: 23 errors / 3 warnings (`npx eslint src`), down from 24 because the `eventDots: _` entry
-  of the save-exclusion destructure (one of the pre-existing no-unused-vars errors on that line)
-  was removed with the field. New and changed files lint clean. `npx tsc -b` clean.
+- Phases 0–3 are done and the tree is at a commit point (uncommitted; suggested message from the
+  plan: "sim: run the simulation in a Web Worker"). The user commits.
+- `src/sim/`: `types.ts`, `meshRules.ts`, `publish.ts`, `sim.ts`, `positions.ts`, `simStats.ts` as
+  after Phase 2, plus:
+  - `protocol.ts` (type-only): `MainToWorker` = `mesh` | `move` | `input` (with the transferred
+    position `ArrayBuffer`) | `reset` | `debug` (`dots` / `byStatus`, with an id);
+    `WorkerToMain` = `tick` (summary, buffer, count, `tickMs`) | `debug` (id, result).
+  - `sim.worker.ts`: one `Sim`; ticks every `input` as it arrives (no worker-side coalescing,
+    see Findings), grows the buffer it holds when the dot count outgrows it, fills it right
+    after the tick and transfers it back. `self` is typed through a local slice of
+    `DedicatedWorkerGlobalScope` because tsconfig uses the DOM lib.
+  - `simBridge.ts` (rewritten): a `Driver` interface with two implementations. The worker driver
+    posts messages, tracks one in-flight input, and fails over through `onFail` on construction
+    error, `worker.onerror`, or a 3 s stall (`WORKER_STALL_MS`, checked from `ready()`); the
+    inline driver is Phase 2's. `fallbackInline` disposes the worker, makes an inline `Sim`,
+    replays the last mesh snapshot and recreates the lost buffer. `?inlineSim` in the URL picks
+    inline from the start. Exports: `start(onSummary, onIdle)` (idempotent), `stop()`,
+    `setMesh`, `moveComponent`, `reset`, `canTick`, `tick(input, late)`, `noteBusyFrame`,
+    `getPositions`, `latestSummary`, `getSimTicksPerSec` (EMA of tick-arrival intervals),
+    `getMode`, `queueManualFire`/`takeManualFires`.
+- `src/hooks/useSimBridge.ts` (renamed from `useGameLoop.ts`, `git mv`): the RAF driver. Flow
+  control: at most one input in flight and at most one per frame; a frame that finds the worker
+  busy sends from the bridge's idle callback the moment the tick lands; if the next frame comes
+  first, the frame deltas accumulate into one input (the sim clamps it as it clamped a long frame).
+  The hook uses `useLayoutEffect` so its RAF registers before `EventCanvas`'s passive one (input
+  goes out at the top of the frame). Store subscription: `prestige.count` change → `reset`; a drag
+  frame where only the dragged card changed (`onlyMovedCard`, reference compare per index) →
+  `move`; any other change of the four mesh fields → full `mesh` snapshot. While `showWinScreen`
+  no input is sent and no frame time accumulates (as before). The fps stat
+  (`getSmoothedFps`/`getMinFps`) is unchanged and still lives here; imports in `gameStore.ts`,
+  `Sidebar.tsx`, `WinScreen.tsx`, `App.tsx` updated.
+- `Sidebar.tsx`: "Sim rate N ticks/s" row under "Frame rate" (gray ≥ 50, amber ≥ 10, red below,
+  tooltip says the sim dilates below 10). `WinScreen` keeps `getMinFps`.
+- `window.__sim` (all builds): `mode()`, `liveDots()` (latest summary), `byStatus()` and `dots()`
+  (**Promises**: a round trip to the worker), `positions()`, `summary()`, `ticksPerSec()`,
+  `stats()` (cumulative: ticks, tickMsTotal, roundTripMsTotal, framesSent, framesBusy,
+  inputsLate), `killWorker()` (terminates the worker behind the bridge's back; the watchdog must
+  fall back).
+- Harness: `behavior.mjs` reports `simTicksPerSec`, `tickMs`, `roundTripMs`, `lateInputPct`,
+  `mergedFramePct`, `simMode`; `dragsmoke.mjs` takes an optional URL and awaits `dots()`;
+  `trace.mjs` awaits `dots()`; `prof.mjs` has `--worker` (profiles the worker thread over a raw
+  CDP WebSocket on `--remote-debugging-port=9333`; Playwright's `CDPSession` cannot reach worker
+  targets), the `want` regex names `tick`/`fillPositions`/`onmessage`/`receiveTick`/`commitFrame`
+  by function name only, and the sample reports `simTicksPerSec`/`simMode`. README updated.
+  `scripts/perf/.out/manualcheck.mjs` awaits `dots()` and has a new section D (kill the worker →
+  inline fallback). `canvascheck.mjs`/`pausecheck.mjs` unchanged (they read `positions()`).
+- Build: Vite emits `assets/sim.worker-<hash>.js` (88 kB unminified; no React, zustand or store
+  code in it) next to the main bundle; verified in the preview build under `/Idle-Mesh/`. Not
+  verified on the deployed GitHub Pages site (user's check).
+- Harness labels in `scripts/perf/.out/`: `wbase` (Phase 0), `p1`, `p2`, `p3` (Gate 3, worker),
+  `p3inline` (U and W with `?inlineSim`). Scratch labels from the diagnosis (`p3diag*`, `p3late*`,
+  `p3lay*`, `p3b/c`) can be deleted. Profiles: `prof-U-worker.txt`, `prof-U-p3-main.txt`,
+  `profile-U-worker.cpuprofile`.
+- Lint: 23 errors / 3 warnings (`npx eslint src`), unchanged from Phase 2. `npx tsc -b` clean.
+  All changed files CRLF.
 
 ## Findings that affect later phases
 
-- Plan gap: two store actions touched dots that the "Store code that touches dots" list missed.
-  `removeComponent` filtered dots queued at the removed node (old `gameStore.ts` ~L1187) and
-  `performPrestige` cleared `eventDots` and reset the dot id counter (~L1648/L1673). Handled in
-  Phase 1 as: `Sim.setMesh` prunes dots whose `queuedAtNodeId` no longer exists whenever the
-  component list shrinks (same observable result, next frame); `Sim.reset()` clears dots and
-  restarts ids, driven by the loop's subscription on `prestige.count`. Phase 3 must post `reset`
-  on the same signal and keep the prune inside the worker's `setMesh`.
-- Plan said `fireEvents` had outside callers; it did not (only `fireEvent` → `fireEvents`). It
-  was removed with the dead actions. The summary's `publisherIds`/`publishes` are
-  auto-publishers only; manual fires are bookkept by the store at click time, so nothing in
-  `commitFrame` double-writes a cooldown.
-- The sim's clock is `input.nowMs` (`Date.now()` from the driver) everywhere, including the
-  broker relay window, drop timestamps and (Phase 2) the pausing shrink in `fillPositions`.
-  `simStats.getActiveDrops` re-filters by `Date.now()` at call time, so the 2 s window is unchanged.
-- Types moved to `src/sim/types.ts` (not in the plan, but required so `src/sim` imports nothing
-  from the store). `GameState['upgrades']`/`['prestige']` are `GlobalUpgrades`/`PrestigeState`.
-- Coin pop ids have their own counter in the store (they shared `dotIdCounter`); React keys only.
-- U-scale `consumedPerSec` went up ~2–5% over `wbase` in both p1 and p2 with fps 51.9 → 55–58:
-  fewer clamped (>100 ms) frames. The consumed-to-earned ratio is identical.
-- `behavior.mjs` `avgPausing` dropped wbase → p1 (M 27 → 22, U 363 → 265) and is flat p1 → p2
-  (M 22 → 22, U 265 → 293). At these scales `fasterConsumption` makes the consume duration ~0, so
-  the count is a one-frame population sampled every 500 ms: sampler-phase noise, with
-  consumed/sec identical. Not a regression of either phase.
-- `scripts/perf/prof.mjs` `want` regex still names `loop @ src/hooks/useGameLoop`; the frame is
-  now `tick @ src/sim/sim.ts`. Update it in Phase 3's harness step.
-- Broker utilization is read at `NodeCard` render time (as before), so the bar only refreshes
-  when the card re-renders; not a regression, but the headless check must force a re-render.
-- `sim.ts` was produced by moving the loop body verbatim (then dedented 2 spaces); the frame
-  function is still an IIFE inside `tick` over `this.dots`. `TickSummary.consumed` entries keep
-  the dot `id` field (unused by the store).
-- `Sim.moveComponent` exists per the interface but the inline driver relies on `setMesh` from
-  the subscription (the store replaces `components` every drag frame).
-- Phase 2, buffer protocol: pausing entries are not grouped; the GL vertex shader clips them and
-  the 2D paths test `glow`. Phase 3's worker fills the same layout right after its tick (same
-  `Sim` instance, so `lastNowMs` is that tick's clock) and must size the buffer it holds from its
-  own dot count before `fillPositions` (the bridge does this inline today).
-- Phase 2, visual-only differences, noted not fixed: (a) the pausing shrink formula moved
-  verbatim from the canvas (`2500 ms × 0.95^level`) and does not match the sim's actual consume
-  duration (`consumeDurationFor`: `1000 × (1 − min(level(level+9)/2, 100)/100)`); at high
-  `fasterConsumption` levels the shrink hits 0 within a frame, so pausing dots are invisible at
-  M/L/U exactly as before. (b) While the win screen is open the loop does not tick, so the buffer
-  is not refilled and pausing dots freeze behind the overlay instead of shrinking on wall clock.
-- Phase 3 harness risk: `dragsmoke.mjs` (off-path/dangling checks) and `manualcheck.mjs`
-  (prestige dot ids, queue-prune counts, win-screen progress snapshot) read dot objects
-  synchronously via `window.__sim.dots()`. Once the dots live in the worker that is impossible;
-  either run those scripts with `?inlineSim` or add a debug round-trip message that returns a dot
-  snapshot and make the scripts await it. Decide in Phase 3 step 6.
+- **Flow control deviates from the plan's worker-side coalescing.** The plan has the worker
+  coalesce queued inputs; with at most one input in flight that never happens, so the bridge
+  accumulates frame deltas instead and the worker ticks each input immediately. Equivalent
+  result (summed dt, clamped by the sim; manual fires drained into whichever input goes out).
+- **U in headless: ticks/s ≈ pre-worker fps, not above it.** Final: render 59.9 fps, 54.2 ticks/s
+  (wbase fps 51.9, p2 55). Worker tick 7–9.5 ms at 60 Hz (vs ~5 ms inline and ~5 ms in the
+  uncapped profile: per-tick work grows with dt — publishes and node crossings per tick — not GC,
+  which is 1.8%), round trip ~9 ms; ~16% of frames send late and ~9% merge into the next because
+  the reply is handled only after the main thread's own frame work. Run-to-run variance of
+  ticks/s is about ±3 (49.1–55 across seven U runs). The plan's "ticks/s ≥ 55 at U" is therefore
+  met only sometimes in headless; on a real GPU browser the main thread has far less to do per
+  frame. Possible later step (not done, would be a cadence change): decouple ticks from frames.
+- **Consumed/sec at U tracks ticks/s even above 10 ticks/s** (~+250 consumed/s per tick/s across
+  wbase/p1/p2/p3 and the U re-runs: 49.9 ticks → 13.0k, 54 → 14.0k, 57.8 → 14.4k). Some rule is
+  per-tick rather than per-sim-second (queue releases are gated per tick). Pre-existing, not
+  changed; it means the U gate is really "ticks/s within noise of the baseline fps".
+- **Inline re-entry bug caught by `dragsmoke.mjs` with `?inlineSim`** (fixed): inline,
+  `bridge.tick` runs the tick and the idle callback synchronously, so the frame's "waiting" flag
+  must be cleared before the call. Run dragsmoke in both modes after any driver change.
+- `SimInput.frozen` is never sent `true`: the driver skips the tick entirely while the win screen
+  is open (Phase 2 behavior, no commits while frozen); pausing dots still freeze behind the overlay
+  (Phase 2 visual finding (b) unchanged). Phase 4 may document it or leave it as interface.
+- The `move` message is used only for pure drag frames; a structured-clone `mesh` snapshot goes
+  out for everything else (175 components + 169 connections at U; not measurable in the numbers).
+- `Sim.moveComponent` and `setMesh` run inside the worker, so the queue-prune on removal and the
+  prestige reset (`prestige.count` → `reset`) work as in Phase 1.
 - `scripts/perf/.out/` still holds older scratch scripts (`dragsmoke.mjs` copy, `forkcheck.mjs`,
-  `overlap.mjs`) that read `s.eventDots`; they are not the gate's scripts and were left alone.
+  `overlap.mjs`) that read `s.eventDots`; not the gate's scripts, left alone.
+- The frame-rate row in the Sidebar never had a tooltip (the plan assumed one); the Sim rate row
+  has one.
+- Typing: transferring buffers needs `Float32Array<ArrayBuffer>` (TS 5.7+ generic typed arrays);
+  `new Float32Array(n)` and `new Float32Array(arrayBuffer)` give that, bare `Float32Array` does not.
+- `prof.mjs`'s profile keys are `fn @ assets/index-<hash>.js:line` in the perf build, so the old
+  `src/...` regex entries never matched; they are kept for dev-mode runs.
 - Docs for Phase 4: `CLAUDE.md`'s save-exclusion list and file structure still name `eventDots`
-  and describe `EventCanvas` as reading the store; `dev-notes.md` → Performance architecture and
-  `event-dot-lifecycle.md` likewise.
+  and `useGameLoop.ts`; `dev-notes.md` → Performance architecture and `event-dot-lifecycle.md`
+  likewise; `sim.ts`'s header comment already names `useSimBridge.ts`.
 
 ## History
 
@@ -116,6 +126,19 @@ sim ticks/s stat, harness `--worker` profile). Stop at Gate 3.
   0 off-path, 0 dangling, no errors. tsc clean, lint 23/3 (see State). Headless manual checks all
   pass; M screenshots look identical; 2D fallback (`--disable-webgl`) draws from the buffer with
   no errors; starter-layout pausing dot shrinks on the front canvas (extent 6.5 → 4.0 over the pause).
+- 2026-11-05: Phase 3 done. Gate 3 (`wbase` → `p3`, worker mode): S 8.2/175.88/3244.6 →
+  8.2/175.34/3251.3 (fps 59.7 → 60, 59.8 ticks/s); M 1440.3/0/745474 → 1440/0/745266 (60 fps,
+  59.9 ticks/s); L 4323.4/0/3.104M → 4316.9/0/3.099M (fps 58.8 → 60, 60.1 ticks/s); U
+  13682/0/9.82M → 14198/0/10.19M (fps 51.9 → 59.9, 54.2 ticks/s, tick 7.7 ms, round trip 9.3 ms,
+  15.9% late, 8.7% merged); W 1/9.06/29.97 → 1/9.07/30 (60 fps, 59.8 ticks/s). `?inlineSim` U:
+  56.1 fps, 55.4 ticks/s, 14350/0/10.30M, tick 5.0 ms (Phase-2 numbers). dragsmoke M worker: 906
+  traveling, 0 off-path, 0 dangling, no errors; inline: 908, 0, 0, no errors. Manual checks A–D
+  pass in worker mode (click-to-fire, webhook border, win freeze/resume, prestige reset + post-
+  prestige run consumes, drop reasons, broker bar, queue prune 19 → 0, `killWorker()` → inline
+  after 3.03 s with consumption resuming, no reload). 2D fallback M/W no errors; starter pausing
+  dot 6.5 → 4.04. Worker profile (uncapped RAF): worker 62% busy at ~120 ticks/s, GC 1.8%; main
+  thread: browser internals 67%, JS 26.5% (EventCanvas render 6.3%, message handling 1.5%,
+  commitFrame + applyConsumes 0.7%). tsc clean, lint 23/3.
 
 ## How to hand off (do this at the end of every session, before reporting to the user)
 

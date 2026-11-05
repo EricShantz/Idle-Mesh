@@ -5,10 +5,10 @@ import { WIN_THRESHOLD } from '../store/upgradeConfig';
 import { formatMoney } from '../utils/formatMoney';
 import { PixelCharacter } from './IntroSequence';
 import { useTypewriter } from '../hooks/useTypewriter';
-import { getMinFps } from '../hooks/useGameLoop';
+import { getMinFps } from '../hooks/useSimBridge';
 
 // End-game overlay. Shown once per save when a single run's earnings reach WIN_THRESHOLD.
-// The game loop and auto-publisher freeze while `showWinScreen` is set (see useGameLoop).
+// The game loop and auto-publisher freeze while `showWinScreen` is set (see useSimBridge).
 
 const SPEECH_LINES = [
   'Wow, event driven architecture really turned my business around!',

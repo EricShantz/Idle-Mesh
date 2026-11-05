@@ -1,5 +1,5 @@
 // The dot simulation as a plain module: no store, no React, no DOM. Everything here was moved
-// out of src/hooks/useGameLoop.ts (which is now a thin requestAnimationFrame driver around
+// out of the old src/hooks/useGameLoop.ts (now src/hooks/useSimBridge.ts, a thin requestAnimationFrame driver around
 // `Sim`) so it can run on either thread. `tick` is the loop's old frame function plus the
 // auto-publisher poll and the publish-dot building; the dot array and every cache live here.
 // Nothing in this file may import from gameStore.ts, react, or touch window/document/localStorage.

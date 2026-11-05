@@ -12,7 +12,7 @@ setAutoFreeze(false);
 import { canConnect } from '../utils/connectionRules';
 import { getNextTopic } from './topicPool';
 import { computeBroadenedTopic } from '../utils/topicMatching';
-import { getSmoothedFps } from '../hooks/useGameLoop';
+import { getSmoothedFps } from '../hooks/useSimBridge';
 import { WIN_THRESHOLD } from './upgradeConfig';
 import { getPermanentSubPayoutMult, getPublisherCooldownMs, getEventValue as computeEventValue, getAllPathsWithNodes } from '../sim/meshRules';
 import { getPublishPlan } from '../sim/publish';

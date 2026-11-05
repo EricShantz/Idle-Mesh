@@ -1,10 +1,12 @@
-// usage: node scripts/perf/dragsmoke.mjs [scale=M]   (server on :5198 as for behavior.mjs)
+// usage: node scripts/perf/dragsmoke.mjs [scale=M] [url]   (server on :5198 as for behavior.mjs; append ?inlineSim to the url for the main-thread sim)
 // Drag smoke test: simulate dragging a queue and a broker through the store (same code path the
 // mouse handlers use), then check dots keep flowing, no page errors, and the moved nodes' dots
-// follow the new cables (no dot is left far from any cable).
+// follow the new cables (no dot is left far from any cable). The dot objects are fetched from the
+// sim (a round trip to the worker) with window.__sim.dots().
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 const SCALE = process.argv[2] ?? 'M';
+const PAGE_URL = process.argv[3] ?? 'http://localhost:5198/Idle-Mesh/';
 const src = fs.readFileSync('scripts/perf/prof.mjs', 'utf8');
 const saveBuilder = src.slice(src.indexOf('const CFG ='), src.indexOf('const save = buildSave'));
 const save = new Function('SCALE', 'process', saveBuilder + '\nreturn buildSave(CFG);')(SCALE, process);
@@ -14,7 +16,7 @@ const errors = [];
 page.on('pageerror', e => errors.push(String(e)));
 page.on('console', m => { if (m.type() === 'error' && !/attribute .* Expected length/.test(m.text())) errors.push(m.text()); });
 await page.addInitScript(s => localStorage.setItem('idle-mesh-save', s), JSON.stringify(save));
-await page.goto('http://localhost:5198/Idle-Mesh/');
+await page.goto(PAGE_URL);
 await page.waitForTimeout(1500);
 await page.evaluate(() => { const s = window.useGameStore.getState(); if (s.activeTutorial) s.dismissTutorial(s.activeTutorial); });
 await page.waitForTimeout(4000);
@@ -38,10 +40,11 @@ const r = await page.evaluate(async () => {
   await new Promise(res => setTimeout(res, 4000));
   const el = (performance.now() - t0) / 1000;
   const s = S();
+  const dots = await window.__sim.dots();
   // every traveling dot must sit on its own path (interpolate and compare to the nearest segment)
   const interp = (path, p) => { const n = path.length - 1; if (p <= 0) return path[0]; const q = Math.min(p, 1) * n; const i = Math.min(Math.floor(q), n - 1); const t = q - i; return { x: path[i].x + (path[i + 1].x - path[i].x) * t, y: path[i].y + (path[i + 1].y - path[i].y) * t }; };
   let offPath = 0, traveling = 0;
-  for (const d of window.__sim.dots()) {
+  for (const d of dots) {
     if (d.status !== 'traveling') continue; traveling++;
     const pos = interp(d.path, d.progress);
     // distance from pos to the polyline
@@ -51,8 +54,8 @@ const r = await page.evaluate(async () => {
   }
   // and every path's last point must be a current subscriber or queue center
   let danglingPaths = 0;
-  for (const d of window.__sim.dots()) { if (d.status !== 'traveling') continue; const e = d.path[d.path.length - 1]; if (!s.components.some(c => Math.abs(c.x - e.x) < 1 && Math.abs(c.y - e.y) < 1)) danglingPaths++; }
-  return { consumedPerSecDuringAndAfter: Math.round((s.eventsConsumed - consumedBefore) / el), traveling, offPath, danglingPaths, dropped: s.eventsDropped, liveDots: window.__sim.liveDots() };
+  for (const d of dots) { if (d.status !== 'traveling') continue; const e = d.path[d.path.length - 1]; if (!s.components.some(c => Math.abs(c.x - e.x) < 1 && Math.abs(c.y - e.y) < 1)) danglingPaths++; }
+  return { simMode: window.__sim.mode(), consumedPerSecDuringAndAfter: Math.round((s.eventsConsumed - consumedBefore) / el), traveling, offPath, danglingPaths, dropped: s.eventsDropped, liveDots: window.__sim.liveDots() };
 });
 console.log(SCALE, JSON.stringify(r), errors.length ? 'ERRORS: ' + errors.slice(0, 3).join(' | ') : 'no errors');
 await browser.close();
