@@ -45,6 +45,9 @@ const r = await page.evaluate((ms) => new Promise(res => {
   const dotSamples = []; const queuedSamples = []; const pausingSamples = []; const tickRateSamples = [];
   // Events (a bundle dot stands for `count` events) next to dots: liveEvents / <status>Events
   const eventSamples = []; const queuedEventSamples = []; const pausingEventSamples = [];
+  // Relays per broker in the trailing second (the summary's brokerRelayCounts) and the events
+  // published in the trailing second (the store's recentPublishes), for relays per published event
+  const relaySamples = {}; let relaySampleCount = 0; const publishSamples = [];
   // byStatus is a round trip to the sim worker (the dots live there); liveDots is the latest summary's count
   const sampler = setInterval(async () => {
     const by = await window.__sim.byStatus();
@@ -55,6 +58,10 @@ const r = await page.evaluate((ms) => new Promise(res => {
     queuedEventSamples.push(by.queuedEvents ?? by.queued ?? 0);
     pausingEventSamples.push(by.pausingEvents ?? by.pausing ?? 0);
     tickRateSamples.push(window.__sim.ticksPerSec());
+    for (const [id, n] of Object.entries(window.__sim.summary()?.brokerRelayCounts ?? {})) relaySamples[id] = (relaySamples[id] ?? 0) + n;
+    relaySampleCount++;
+    const tNow = Date.now();
+    publishSamples.push(window.useGameStore.getState().recentPublishes.reduce((acc, e) => acc + (tNow - e.time <= 1000 ? e.count : 0), 0));
   }, 500);
   let frames = 0;
   const tick = (t) => { frames++; if (t - start.t < ms) requestAnimationFrame(tick); else finish(t); };
@@ -94,6 +101,9 @@ const r = await page.evaluate((ms) => new Promise(res => {
       avgQueued: avg(queuedSamples), avgPausing: avg(pausingSamples),
       avgLiveEvents: avg(eventSamples), maxLiveEvents: Math.max(...eventSamples),
       avgQueuedEvents: avg(queuedEventSamples), avgPausingEvents: avg(pausingEventSamples),
+      publishedEventsPerSec: avg(publishSamples),
+      brokerRelaysPerSec: Object.fromEntries(Object.entries(relaySamples).map(([id, n]) => [id, +(n / Math.max(1, relaySampleCount)).toFixed(0)])),
+      relaysPerPublishedEvent: Object.fromEntries(Object.entries(relaySamples).map(([id, n]) => [id, +(n / Math.max(1, relaySampleCount) / Math.max(1, avg(publishSamples))).toFixed(2)])),
       coinPopsNow: s.coinPops.length,
       renderer: window.__eventCanvasRenderer, simMode: window.__sim.mode(), cards: s.components.length, connections: s.connections.length,
     });

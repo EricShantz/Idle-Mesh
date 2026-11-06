@@ -23,7 +23,9 @@ over broker cap, `H` deliberately oversized and flooding, `U` the player-like he
 consumed/sec, ~9.5k live dots, no drops; zoomed out via wheel events so the whole mesh is drawn),
 `F` the player's late-game "TIE fighter" (`FPUBS=<n>` publishers, default 20, through one DMR
 Cluster bridged to two, into 4 shared queues fanning out to 20 shared subscribers; `FTHROUGHPUT=300`
-lifts the broker caps the way prestige throughput does, which is what makes the full fan-out flow).
+lifts the broker caps the way prestige throughput does, which is what makes the full fan-out flow;
+the ingestion cluster relays one copy per bridge and each bridged cluster one per queue, which
+`behavior.mjs` reports per broker as `brokerRelaysPerSec` and `relaysPerPublishedEvent`, 2 / 4 / 4 here).
 `W` is the early game: one publisher through a real webhook to a level-0 subscriber (exercises the
 webhook slow zone and the occupied-webhook drop). The simulation runs in a Web Worker; every script
 takes an optional page URL, and `http://localhost:5198/Idle-Mesh/?inlineSim` runs it on the main

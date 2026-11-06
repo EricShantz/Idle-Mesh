@@ -24,6 +24,15 @@ export type Connection = {
   topicLabel?: string;
 };
 
+/** A route a fork dot follows: the full route from the publisher (sliced at the broker it is
+ *  spawned at, see forkSpawnFor in sim.ts), its own value/color (bridge-aware) and, where its own
+ *  routes diverge further on, the head of its fork-step list. */
+export type ForkPath = { waypoints: { x: number; y: number }[]; nodeIds: string[]; value?: number; color?: string; steps?: ForkStep };
+/** One fork point on a route: on reaching the broker `nodeId` the dot spawns `forks` (each one
+ *  charged to that broker's relay cap, a copy sent down another link) and continues with `next`.
+ *  Plan data (forkTree.ts), shared by every dot of a fire and never mutated. */
+export type ForkStep = { nodeId: string; forks: ForkPath[]; next?: ForkStep };
+
 export type EventDot = {
   id: string;
   path: { x: number; y: number }[];
@@ -58,8 +67,9 @@ export type EventDot = {
   originalNodeIds?: string[];
   nodeWpIndices?: number[];
   originalValue?: number;
-  forkPaths?: { waypoints: { x: number; y: number }[]; nodeIds: string[]; value?: number; color?: string }[];
-  forkNodeId?: string;
+  /** Head of this dot's fork-step list: where along its route it spawns copies for the routes
+   *  that diverge from its own. Undefined once every step is done or when nothing forks. */
+  forkStep?: ForkStep;
   nextNodeId?: string;
   /** Broker node this dot must pass before switching to the bridge-crossing gold color. */
   bridgeGoldAfterNodeId?: string;

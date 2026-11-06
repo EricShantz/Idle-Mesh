@@ -14,5 +14,11 @@ for (const s of scales) {
     const d = a[k] === 0 ? (b[k] === 0 ? 0 : Infinity) : (b[k] - a[k]) / Math.abs(a[k]) * 100;
     console.log(`${k.padEnd(16)} ${String(a[k]).padStart(12)} -> ${String(b[k]).padStart(12)}   ${d === Infinity ? '  new' : (d >= 0 ? '+' : '') + d.toFixed(1) + '%'}`);
   }
+  // Relays per published event per broker (labels recorded since scale-plan Phase F)
+  const ids = [...new Set([...Object.keys(a.relaysPerPublishedEvent ?? {}), ...Object.keys(b.relaysPerPublishedEvent ?? {})])];
+  for (const id of ids) {
+    const ra = a.relaysPerPublishedEvent?.[id], rb = b.relaysPerPublishedEvent?.[id];
+    console.log(`relays/event ${id.padEnd(14)} ${String(ra ?? '-').padStart(8)} -> ${String(rb ?? '-').padStart(8)}   (${a.brokerRelaysPerSec?.[id] ?? '-'} -> ${b.brokerRelaysPerSec?.[id] ?? '-'} relays/s of ${a.publishedEventsPerSec ?? '-'} -> ${b.publishedEventsPerSec ?? '-'} published/s)`);
+  }
   if (b.errors?.length) console.log('errors:', b.errors);
 }

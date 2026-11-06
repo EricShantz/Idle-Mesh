@@ -8,7 +8,8 @@ import {
   findNextInteractableId, firstBridgeExitNodeId, pathCrossesBridge, getQueueValueMultiplier,
   getPermanentSpeedMult, getEventValue, getAllPathsWithNodes, consumeDurationFor, BRIDGE_GOLD_COLOR, BRIDGE_VALUE_MULT,
 } from './meshRules';
-import type { EventDot, GameComponent, Connection, GlobalUpgrades, PrestigeState, Mesh } from './types';
+import { planForkTree, type ForkRoute } from './forkTree';
+import type { EventDot, GameComponent, Connection, GlobalUpgrades, PrestigeState, Mesh, ForkPath, ForkStep } from './types';
 
 let dotIdCounter = 0;
 export function nextDotId() { return `dot-${++dotIdCounter}`; }
@@ -18,7 +19,7 @@ export function resetDotIds() { dotIdCounter = 0; }
 // What one publisher emits per fire, minus the per-dot identity: shared by every dot of a batch
 // and by every fire until the mesh changes. Computing this used to walk the whole connection
 // graph and do several components.find scans per path on every single fire (10/s per publisher).
-export type PlannedDot = Pick<EventDot, 'path' | 'speed' | 'color' | 'value' | 'originalNodeIds' | 'nextNodeId' | 'bridgeGoldAfterNodeId' | 'forkPaths' | 'forkNodeId'>;
+export type PlannedDot = Pick<EventDot, 'path' | 'speed' | 'color' | 'value' | 'originalNodeIds' | 'nextNodeId' | 'bridgeGoldAfterNodeId' | 'forkStep'>;
 /** `bundle`: the fire's dots carry count = fireCount (one dot per entry) instead of fireCount
  *  dots per entry; see routesBundleExact for when that is exact. */
 export type PublishPlan = { fireCount: number; bundle: boolean; entries: PlannedDot[] };
@@ -69,8 +70,7 @@ export function buildPublishDots(mesh: Mesh, publisherId: string): { dots: Event
     originalValue: e.value,
     originalNodeIds: e.originalNodeIds,
     nextNodeId: e.nextNodeId,
-    forkPaths: e.forkPaths,
-    forkNodeId: e.forkNodeId,
+    forkStep: e.forkStep,
     bridgeGoldAfterNodeId: e.bridgeGoldAfterNodeId,
   });
   if (plan.bundle) {
@@ -116,9 +116,14 @@ function routesBundleExact(mesh: Mesh, entries: PlannedDot[]): boolean {
     }
     return true;
   };
+  const stepsExact = (step: ForkStep | undefined): boolean => {
+    for (let st = step; st; st = st.next) {
+      for (const f of st.forks) if (!routeExact(f.nodeIds) || !stepsExact(f.steps)) return false;
+    }
+    return true;
+  };
   for (const e of entries) {
-    if (!routeExact(e.originalNodeIds)) return false;
-    if (e.forkPaths) for (const f of e.forkPaths) if (!routeExact(f.nodeIds)) return false;
+    if (!routeExact(e.originalNodeIds) || !stepsExact(e.forkStep)) return false;
   }
   return true;
 }
@@ -281,21 +286,27 @@ function computePublishEntries(mesh: Mesh, publisherId: string): { fireCount: nu
     forkGroups.get(firstBrokerId)!.push(p);
   }
 
+  // One dot per group. Where the group's routes diverge along it, the dot (and each copy it
+  // spawns) carries fork steps (forkTree.ts): one copy per other next hop at each broker, so a
+  // bridged cluster relays one copy per link and the far cluster fans out by itself. A group
+  // with no broker on its routes has nowhere to fork: its first route travels alone, as before.
+  const byId = new Map<string, GameComponent>();
+  for (const c of mesh.components) byId.set(c.id, c);
+  const isBroker = (id: string) => byId.get(id)?.type === 'broker';
+  const forkFor = (r: ForkRoute, steps: ForkStep | undefined): ForkPath =>
+    ({ waypoints: r.waypoints, nodeIds: r.nodeIds, value: valueForPath(r.nodeIds), color: colorForPath(r.nodeIds), steps });
   for (const [brokerId, group] of forkGroups) {
-    const primary = group[0];
-    const forks = group.length > 1
-      ? group.slice(1).map(f => ({ ...f, value: valueForPath(f.nodeIds), color: colorForPath(f.nodeIds) }))
-      : undefined;
-    const primaryValue = valueForPath(primary.nodeIds);
+    const { primary, step } = brokerId !== 'none'
+      ? planForkTree(group, group[0].nodeIds.indexOf(brokerId), isBroker, forkFor)
+      : { primary: group[0], step: undefined };
     entries.push({
       path: primary.waypoints,
       speed: normalizedSpeed(baseSpeed, primary.waypoints),
       color: '#22d3ee',
-      value: primaryValue,
+      value: valueForPath(primary.nodeIds),
       originalNodeIds: primary.nodeIds,
       nextNodeId: findNextInteractableId(primary.nodeIds, mesh.components),
-      forkPaths: forks,
-      forkNodeId: brokerId !== 'none' ? brokerId : undefined,
+      forkStep: step,
       bridgeGoldAfterNodeId: firstBridgeExitNodeId(primary.nodeIds, mesh.components),
     });
   }

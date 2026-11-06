@@ -6,133 +6,144 @@ its gate, rewrite this file.
 
 ## Next
 
-**Phase F: fork where routes diverge (real DMR relay accounting)**, exactly as in the plan, with
-`CLUSTER_THROUGHPUT_MULTIPLIER` 1.25 → 1.4 in the same commit and balance decision 3 below decided
-with it (ask the user before changing the capped-primary fork rule; with bundles it reads: a bundle
-whose events were all refused at `centerP` skips its forks, a partly admitted one spawns forks with
-the admitted count). Gate F per the plan: S, M, L, U, W consumed/dropped/earned per second unchanged
-vs `d2` (no cap binds there; no bridges at U/L/M); F at default caps shows DMR1 recording 2 relays
-per event and each bridged cluster 4 (add `brokerRelayCounts` to the `behavior.mjs` output); F with
-`FTHROUGHPUT=300` within noise of `d2` on consumed/s (`d2`, `d2-10`, `d2-2`); dragsmoke both modes;
-`manualcheck.mjs` (section D is the known flake, see Findings); the headless manual check shows one
-dot per cable leaving each cluster after a click; tsc; lint 23/3. Commit: "sim: fork events where
-routes diverge (DMR relay accounting)". Phase E (flow mode) stays unscheduled: F 20 runs at 58.9
-ticks/s with 6.0 ms ticks, within 0.2% of production.
+**The scale plan is complete**: Phases A, A2, B, C, D and F are done and gated (Phase E, flow
+mode, stays unscheduled: F 20 runs at 59.5 ticks/s with 5.6 ms ticks, 100% of production). Nothing
+in `scale-plan.md` is left to execute. What remains, in order of usefulness:
 
-Phase D's deviations from the plan's letter (11 floats instead of 10; the sim writes two
-canvas-only fields per advanced dot) are listed under Findings; nothing there needs a decision.
-The bridge watchdog gap is fixed (user decision 2026-11-05, "use your lean": the post-ack
-timeout); it is its own commit, see State of the tree.
+1. `worker-refactor-plan.md` **Phase 4 (docs and cleanup)**, still pending in
+   `worker-refactor-progress.md` and the scale plan said it should land first: `CLAUDE.md` file
+   structure (`src/sim/*` incl. `forkTree.ts`, `releaseIndex.ts`, `positions.ts`,
+   `src/hooks/useSimBridge.ts`; the store never sees dots; a dot carries `count`; per-dot fields
+   are set at creation; the fork tree), the save-exclusion list (no `eventDots`), the two rate
+   stats; `dev-notes.md` "Round 4 — worker"; `event-dot-lifecycle.md` passes in `Sim.tick`;
+   remove the worker plan's "planned, not started" line. Gate: tsc clean, lint 23/3.
+2. The **open balance decisions** below need the user (3 is the one Phase F left open; see its
+   lean).
+3. The user's future option (render bundles as their `count` distinct dots again, plan end of
+   Phase C; render-side only), not scheduled.
 
 ## State of the tree
 
-- Phase D committed as `a2e6bef` ("extrapolate dots between ticks", on top of `ba2b4ae`; Phase C is
-  `6309fbf`). Uncommitted on top of it: the bridge watchdog fix, `src/sim/simBridge.ts` only
-  (`WORKER_ACKED_STALL_MS` 10 s; `ready()` also fails over when the in-flight input was acked but
-  no tick has landed for max(10 s, 3 × the previous tick's `tickMs`); the fallback message says
-  which timeout tripped), plus this file. Suggested message: "bridge: fall back when an
-  acknowledged tick never returns". The user commits.
-- Position buffer (`positions.ts`): `FLOATS_PER_DOT` 8 → **11**: `[x, y, extent, r, g, b, a,
-  glow, vx, vy, tmax]`. `vx, vy` is the dot's velocity in world units per ms along its current
-  segment; `tmax` is for how many ms that velocity holds. `fillPositions` derives them from two
-  fields the sim writes on every traveling dot it advances in place (`EventDot.progressPerMs`,
-  `EventDot.speedUntilP`, required fields, set `0`/`1` at every creation site so dot objects keep
-  one shape) plus the path geometry: `pathPos` now also yields the segment direction, the progress
-  at the next real corner (walking through collinear waypoints, where the segment scale keeps the
-  pixel speed constant) and the world distance to it. `tmax = min(distance to the corner, distance
-  to speedUntilP) / |v|`. Queued, pausing, dropped entries and dots before their path start carry
-  zeros.
-- `sim.ts` Pass 1, at the in-place advance (`dot.progress = newProgress`): computes the speed the
-  **next** tick will use from the new progress (segment scale, slow/fast zone multipliers; the same
-  expressions as the speed block) and `speedUntilP` = the first slow/fast zone edge after it
-  (`nextZoneEdge`, new helper) or, if sooner, the capture point of `nextInteractable` (`centerP −
-  0.01` with `nextNodeId`, else `touchStart`). Nothing in the sim reads either field; no rule
-  changed (gate numbers below).
-- `simBridge.ts`: `getTickTiming()` → `{ arrivedAt, intervalMs }` (performance.now() of the latest
-  tick's arrival and the interval before it, capped at `MAX_FRAME_DT_MS`); `window.__sim` gains
-  `floatsPerDot` and `tickTiming()`.
-- `EventCanvas.tsx`: `lead = min(now − arrivedAt, intervalMs)` per frame (0 before the first tick),
-  published as `window.__eventCanvasLeadMs`; the vertex shader has `a_vel`, `a_tmax`, `u_lead` and
-  places the point at `a_pos + a_vel · min(u_lead, a_tmax)`; the 2D fallback does the same per
-  entry. Both canvases get the lead (pausing entries have zero velocity anyway).
-- Harness: `.out/interpcheck.mjs` (new; gitignored scratch like the other checks): starter layout,
-  `setMaxTicksPerSec(--ticks, default 15)`, one `fireEvent`, then per frame the tick counter, the
-  buffer's first live entry (x, vx), the canvas lead and the x-centroid of the back canvas's
-  pixels; reports same-tick frame pairs that moved, tick-boundary jumps, backward jumps (worst)
-  and PASS/FAIL (`--ticks=0` is uncapped and reports n/a). `canvascheck.mjs`, `pausecheck.mjs`,
-  `pausediag.mjs` read the stride from `window.__sim.floatsPerDot`. README updated.
-- Labels in `.out/`: `d0` (same-session pre-D baseline: S, M, L, U, W, F 20 / `d0-10` / `d0-2`,
-  F at `FTHROUGHPUT=300`), `d1` (first D build, superseded), `d2` (final: same set). Earlier:
-  `c0`, `c1`, `c1cap`, `b2`, `wbase`… (see git history of this file).
-- Lint 23/3, tsc clean, `node --test src/sim/__tests__/release.test.ts` 4/4, all touched tracked
-  files CRLF. Preview server stopped.
+- Phase F is **uncommitted** on top of `9af77b7` ("update progress", which holds the bridge
+  watchdog fix; Phase D is `a2e6bef`). Suggested message: "sim: fork events where routes diverge
+  (DMR relay accounting)". The user commits. Changed: `src/sim/types.ts`, `src/sim/publish.ts`,
+  `src/sim/sim.ts`, `src/store/upgradeConfig.ts`, `scripts/perf/behavior.mjs`,
+  `scripts/perf/compare.mjs`, `scripts/perf/prof.mjs`, `scripts/perf/README.md`,
+  `claude-docs/upgrades.md`, `claude-docs/event-dot-lifecycle.md`, `claude-docs/dev-notes.md`,
+  `claude-docs/scale-plan.md` (status line), this file. New: `src/sim/forkTree.ts`,
+  `src/sim/__tests__/forkTree.test.ts`. Gitignored: `scripts/perf/.out/manualcheck.mjs` (section
+  E added).
+- `types.ts`: `ForkPath` (`waypoints`, `nodeIds`, `value?`, `color?`, `steps?: ForkStep`) and
+  `ForkStep` (`nodeId`, `forks: ForkPath[]`, `next?: ForkStep`); `EventDot.forkStep?: ForkStep`
+  replaces `forkPaths`/`forkNodeId` (the plan's "head of the list" is a linked list: advancing a
+  step is a pointer move, the step data is per-fire plan data shared by every dot and never
+  mutated).
+- `forkTree.ts` (new, pure): `planForkTree(routes, i, isBroker, forkFor)` — routes share
+  `nodeIds[0..i]` (a broker); partition by `nodeIds[i+1]` in order of first appearance; the first
+  partition is the dot's own (recursing at `i+1` if that hop is a broker, else its extra routes
+  fork here); every other partition contributes one fork: its own subtree's primary with that
+  subtree's steps if the hop is a broker, else each of its routes. Returns `{ primary, step }`.
+  Without bridges the hops after the first broker are queues/subscribers, one route each, so the
+  result is one step at the first broker with `group.slice(1)` as forks: the old list exactly.
+- `publish.ts`: `PlannedDot` carries `forkStep`; the `forkGroups` loop calls `planForkTree` with
+  the first broker's index (`'none'` groups get no step, as their forks never spawned before);
+  `routesBundleExact` walks every step and nested step.
+- `sim.ts`: fork spawn is a `while (step)` over the head step and its successors (`break` at the
+  first step whose broker/mark is missing or whose `touchStart` the dot has not reached), each
+  spawned fork dot carries `forkStep: fork.steps`, and the dot's `forkStep` is advanced in place
+  (no new object; the old code spread a copy to clear two fields). `rebuildForkSteps(step,
+  onlyNodeId, components, connections)` (module level) rebuilds fork routes through nested steps
+  for the drag frame (only routes through the dragged node, degenerate or not, as before) and the
+  post-drag Y-snap (all routes, degenerate rebuilds keep the old waypoints, as before). Relay
+  accounting needed no new code, as the plan said: a fork dot starts at progress 0 at its spawn
+  broker (no crossing charge there), each spawn charges the spawn broker, each crossing charges
+  the broker crossed.
+- `upgradeConfig.ts`: `CLUSTER_THROUGHPUT_MULTIPLIER` 1.25 → **1.4** (comment updated with the
+  new level targets: ingestion cluster ~31, bridged clusters ~45, ~$98B total; was ~$3B at 1.25
+  and ~$130B before Phase F when the ingestion cluster needed ~65).
+- Harness: `behavior.mjs` samples the summary's `brokerRelayCounts` and the store's
+  `recentPublishes` every 500 ms and reports `publishedEventsPerSec`, `brokerRelaysPerSec` and
+  `relaysPerPublishedEvent` per broker; `compare.mjs` prints the relay lines; `prof.mjs` F comment
+  and the README state the 2 / 4 / 4 accounting. `manualcheck.mjs` section E: F layout with
+  `FPUBS=2 FTHROUGHPUT=300`, auto-fire off, one click on pub-1; records the traveling dots per
+  route (fork routes only), the distinct dots per cable leaving each broker, the max trailing-
+  second relay count per broker, and the consumed/dropped totals 4 s later.
+- Unit tests (`npx tsc -b && node --test src/sim/__tests__/*.test.ts`): `forkTree.test.ts` 6
+  (single route; no bridges = old list in order; TIE fighter tree and relay counts 2/4/4 with all 8
+  routes delivered once; mixed queue+bridge in both orders; bridge chain; 300 random meshes with
+  the game's one-route-per-queue-per-broker dedup: every route delivered once and each broker's
+  relays = its distinct next hops) + `release.test.ts` 4 = 10/10.
+- Labels in `.out/`: `f1` (S, M, L, U, W, F 20 at `FTHROUGHPUT=300`, `f1-10`, `f1-2`), `f1cap`
+  (F 20 at default caps; its predecessor is `c1cap`), `manualcheck-f1.json`. Earlier: `d0`, `d2`,
+  `c1`, `c1cap`, `wbase`…
+- Line endings: every changed file CRLF except `src/store/upgradeConfig.ts`,
+  `claude-docs/upgrades.md` and `claude-docs/event-dot-lifecycle.md`, which were LF at HEAD and
+  were left LF (git's autocrlf warns it will normalize them when it next touches them; the CRLF
+  check in the kickoff prompt lists these three by design).
+- Lint 23/3, tsc clean, preview server stopped.
 
-## Measured — Gate D (headless, worker mode, 15 s windows, per **sim** second; `d0` → `d2`)
+## Measured — Gate F (headless, worker mode, 15 s windows, per **sim** second; `d2` → `f1`)
 
-`lost` was 0 (no clamped inputs) in every run of both labels. Production: U 14,400/s; F 20 pubs
-192,000, 10 pubs 96,000, 2 pubs 19,200.
+`inputsClamped` was 0 in every run of both labels. Relays per published event (new column) are
+`f1` only; by construction `d2` charged the ingestion cluster 8 per event (7 forks + 1 crossing)
+and the bridged clusters 4.
 
-| scale | fps | ticks/s | ms/tick | consumed | dropped | earned | dots | pausing dots |
-|---|---|---|---|---|---|---|---|---|
-| S | 60.1 → 59.9 | 59.7 → 58.7 | 2.46 → 2.96 | 8.2 → 8.2 | 174.3 → 175.6 | 3,239 → 3,339 | 445 → 444 | 3 → 3 |
-| M | 60 → 60.1 | 60.2 → 60.1 | 0.38 → 0.45 | 1,438.7 → 1,442.1 | 0 | 744.5k → 746.4k | 463 → 461 | 14 → 12 |
-| L | 60 → 60 | 60.3 → 59.4 | 0.69 → 0.82 | 4,318.8 → 4,316.4 | 0 | 3.1005M → 3.0987M | 922 → 920 | 26 → 23 |
-| U | 60 → 60 | 60.3 → 60.1 | 1.03 → 1.26 | 14,394 → 14,406 | 0 | 10.333M → 10.342M | 1,780 → 1,820 | 59 → 46 |
-| W | 60 → 60 | 60.1 → 60.1 | 0.42 → 0.48 | 1 → 1 | 9.0 → 9.0 | 30 → 30 | 33 → 33 | 1 → 1 |
-| F 20 | 60.1 → 60.1 | 59.8 → 58.9 | 5.16 → 5.96 | 192,299 → 191,950 | 0 | 187.82M → 187.47M | 18,367 → 18,359 | 599 → 546 |
-| F 10 | 60 → 60 | 60.5 → 60.1 | 2.88 → 3.40 | 95,969 → 95,984 | 0 | 69.70M → 69.71M | 9,154 → 9,066 | 298 → 243 |
-| F 2 | 60 → 60 | 60.4 → 60.2 | 0.75 → 0.90 | 19,208 → 19,215 | 0 | 10.10M → 10.11M | 1,802 → 1,775 | 62 → 30 |
+| scale | fps | ticks/s | ms/tick | consumed | dropped | earned | dots | pausing | relays/event |
+|---|---|---|---|---|---|---|---|---|---|
+| S | 59.9 → 60 | 58.7 → 59.5 | 2.96 → 2.53 | 8.2 → 8.2 | 175.6 → 175.6 | 3,339 → 3,255 | 444 → 445 | 3 → 3 | 1.66 (1 broker, drops) |
+| M | 60.1 → 60 | 60.1 → 59.8 | 0.45 → 0.51 | 1,442.1 → 1,440.0 | 0 | 746.4k → 745.3k | 461 → 462 | 12 → 13 | 3.01 / 3.01 |
+| L | 60 → 60 | 59.4 → 59.9 | 0.82 → 0.80 | 4,316.4 → 4,318.8 | 0 | 3.0987M → 3.1006M | 920 → 923 | 23 → 23 | 2.01 ×3 |
+| U | 60 → 60 | 60.1 → 60.4 | 1.26 → 1.41 | 14,406 → 14,396 | 0 | 10.342M → 10.335M | 1,820 → 1,809 | 46 → 51 | 2.01 ×6 |
+| W | 60 → 60 | 60.1 → 59.8 | 0.48 → 0.56 | 1 → 1 | 9.0 → 9.0 | 30 → 30 | 33 → 32 | 1 → 1 | — |
+| F 20 (300) | 60.1 → 60 | 58.9 → 59.5 | 5.96 → 5.61 | 191,950 → 191,941 | 0 | 187.47M → 187.46M | 18,359 → 18,028 | 546 → 553 | **2.01 / 4.03 / 4.03** |
+| F 10 (300) | 60 → 60 | 60.1 → 60.3 | 3.40 → 3.51 | 95,984 → 95,987 | 0 | 69.71M → 69.71M | 9,066 → 8,899 | 243 → 238 | 2.01 / 4.00 / 4.03 |
+| F 2 (300) | 60 → 60 | 60.2 → 60.4 | 0.90 → 0.85 | 19,215 → 19,206 | 0 | 10.11M → 10.10M | 1,775 → 1,826 | 30 → 67 | 2.00 / 4.02 / 4.02 |
+| F 20 caps (`c1cap` → `f1cap`) | 60.1 → 60 | 60.3 → 60.1 | 2.02 → 2.19 | 8,180 → **15,623** | 9,187 → **2,866** | 7.19M → **14.09M** | 4,726 → 2,430 | 13 → 27 | 0.34 / 0.32 / 0.33 (412 / 395 / 387 relays/s, every cluster at its 412 cap) |
 
-Against `wbase` (per wall second): S 8.2/175.88/3,244.6 → 8.2/175.7/3,340.9 (earned ±3% is this
-scale's run noise, as in every earlier gate); M 1,440.3/0/745,474 → 1,442.3/0/746,472; L
-4,323.4/0/3.104M → 4,318.1/0/3.100M; U 13,682/0/9.82M → 14,413/0/10.35M (the clamp loss `wbase`
-had); W 1/9.06/29.97 → 1/8.99/29.98. Against `c1`: F 20 191,986 → 191,950 (−0.0%). Events per
-scale unchanged (U 8,980 → …, F 20 110,199 → 110,152).
+Against `wbase` (per wall second): S 8.2/175.88/3,244.6 → 8.2/175.66/3,255.6; M
+1,440.3/0/745,474 → 1,440.6/0/745,633; L 4,323.4/0/3.104M → 4,316/0/3.099M; U 13,682/0/9.82M →
+14,401.5/0/10.34M (the clamp loss `wbase` had, as in every gate since Phase 3); W 1/9.06/29.97 →
+1/8.99/29.98. S earned −2.5% vs `d2` is this scale's known ±3% run noise (`d2` was itself +3% over
+`d0`); events per scale unchanged (U 9,101 → 9,043, F 20 110,152 → 108,170: the DMR3 subtree's
+copies now spawn at DMR3 instead of DMR1, so each lives a shorter path, hence 1.8% fewer live
+dots at the same consume rate).
 
-Tick cost of the velocity floats (the one thing that moved): ms/tick +15–22% at every scale. At
-F 20 the sections are setup 0.67 → 0.56, pass1 2.51 → 2.76 (+0.25 ms over 18.4k dots: the
-next-speed block at the advance, ~14 ns per dot), index/pass2/pass3/sigs unchanged, and the fill
-(ms/tick minus the sections) 1.18 → 1.83 ms (+0.65 ms, ~35 ns per dot: the collinear walk, two
-square roots and the point at `speedUntilP`). Ticks/s stayed 58.9–60.1 everywhere; nothing is
-frame-bound by it on this machine. `d1` (the first D build, where the two fields were added to
-dot objects after creation) had U pass1 0.36 → 0.80 ms and fps 56–57 at S/M/L/U; setting the
-fields at creation (one object shape) brought pass1 back to 0.50 and fps to 60.
+Sections at F 20 (ms per tick): setup 0.56 → 0.53, pass1 2.76 → 2.60, index 0.02, pass2 0.45 →
+0.48, pass3 0.21, sigs 0.12 → 0.11, fill (ms/tick minus sections) 1.83 → 1.66. The M/U/W
+ms/tick +0.06–0.15 ms are against the previous session's `d2` numbers and were not re-measured
+same-session; the sub-ms ticks moved by as much between the D-gate's `d0` and `d2` (U 1.03 → 1.26
+for a change measured at +0.25 ms pass1 at F), the per-dot work the fork step adds is the same one
+`forkStep` null check as before, and ticks/s stayed 59.5–60.4 everywhere.
 
-interpcheck (starter layout, one dot, `--ticks=15`, final build): worker/WebGL 62 same-tick frame
-pairs, 60 moved (97%), mean +5.5 px per frame, tick-boundary jumps mean +9.3 px, backward jumps 0
-(worst 0.00 px), max lead 69.5 ms; inline/WebGL 65 pairs, 63 moved (97%), 0 backward; worker/2D
-62 pairs, 61 moved (98%), 0 backward; `--ticks=30` 41/41 moved, 0 backward; `--ticks=0` n/a (a
-fresh tick every frame, lead ≤ 15.4 ms). The frames that did not move are the dot waiting at a
-real corner (the starter route's vertical jog at x ≈ 383.5) for the rest of the tick, by design
-(see Findings). Before the per-entry cap the same check showed one backward jump of −10.7 px at the
-webhook's slow-zone edge; before the velocity was evaluated at the post-move progress, the dot
-froze for a whole tick at that edge instead.
-
-dragsmoke M: worker 444 traveling, 0 off-path, 0 dangling, 1,442 consumed/s; inline 448, 0/0,
-1,444; no errors. `manualcheck.mjs`: A (click-to-fire 1 dot `count` 1, 2 fires, webhook border
-animates, win freeze/resume, prestige reset + post-prestige consume), A2 (bundle 1 dot `count` 3
-and per-dot 3 × 1, 9 consumed each), B ("!" button, subscriber-busy reason, 45 drops), C (broker
-bar 100%, prune 19 → 0) pass with no errors; D (kill the worker → inline): before the watchdog
-fix it did **not** fall back in any of three suite runs on the D build (mode stayed `worker` for
-8 s) while the pre-D build fell back 2/2 in the suite (3.05 s) and `dcheck.mjs 10` on the D build
-10/10, `dcheck2.mjs` 4/7 — the pre-existing watchdog gap, see Findings. After the fix: manualcheck
-D falls back at 10.05 s ("tick acknowledged but not returned for 10017 ms") and consumes 15 in the
-3 s after; dcheck2 7/7 (3 × 3.0 s for kills that landed before the ack, 4 × 10.0 s for kills that
-landed between `busy` and `tick`); dragsmoke both modes clean on the fixed build (worker 444
-traveling, 0/0, 1,443/s; inline 444, 0/0, 1,442/s). manualcheck's and dcheck2's poll limits were
-raised from 8 / 6 s to 14 s so they outlast the 10 s timeout. canvascheck: GL M/W and 2D
-M/W draw from the 11-float buffer with no errors (W front canvas 74 / 50 pixels; M 0 is the known
-layout quirk). pausecheck: the pausing dot shrinks 6.5 → 3.96 extent with front pixels 90 → 36
-(WebGL) and 6.5 → 3.92, 68 → 26 (2D); no errors. tsc clean, lint 23/3, release test 4/4.
+dragsmoke M: worker 462 traveling, 0 off-path, 0 dangling, 1,441 consumed/s; inline 450, 0/0,
+1,442; no errors. `manualcheck.mjs` (worker mode): A (click 1 dot `count` 1, 2 fires, webhook
+border, win freeze/resume, prestige reset + post-prestige consume), A2 (bundle 1 dot `count` 3 /
+per-dot 3 × 1, 9 consumed each), B (45 drops, subscriber-busy reason), C (broker bar 100%, prune
+20 → 0), D (kill → inline at 10.06 s via the post-ack timeout, 15 consumed in the 3 s after) pass
+with no errors; **E**: after one click 8 traveling fork-route dots of `count` 6
+(pub→DMR1→DMR2→Q1, DMR1→DMR3→Q1, DMR2→Q2..4, DMR3→Q2..4), exactly one dot on each of the 10
+cables leaving the three clusters (DMR1→DMR2, DMR1→DMR3, DMR2→Q1..4, DMR3→Q1..4), max trailing-
+second relays DMR1 12 / DMR2 24 / DMR3 24 (2 / 4 / 4 per event), 960 consumed (6 × 8 × 20), 0
+dropped, 0 live dots after 4 s, no errors. tsc clean, lint 23/3, tests 10/10.
 
 ## Open balance decisions (from Phase B; user decision 2026-11-05 unless stated)
 
 1. **Auto-publisher poll** — done as (i) in Phase B2 (10/s cap stays). Option (ii) remains open.
 2. **Timed-subscriber release quantization** — deferred (known, small): S 8.2 → 7.5 → 7.4
    consumed per sim second at 60 / 15 / 10 ticks/s. Flat form: release early by `slack`.
-3. **Capped primary skips its forks** — decide with Phase F. With bundles the rule is: a bundle
-   whose events were all refused at `centerP` skips its forks (as before); a partly admitted one
-   spawns forks with the admitted count.
+3. **Capped primary skips its forks** — **still open after Phase F; unchanged.** The rule: a dot
+   refused at a broker's cap at `centerP` is dropped (`count` events counted) and the fork step at
+   that broker never runs, so its forks are lost **uncounted**; a partly admitted bundle spawns
+   forks with the admitted count. Under the fork tree its reach grew: at the ingestion cluster the
+   skipped fork is the copy for the other bridge, i.e. a refused primary at DMR1 loses the whole
+   fire (DMR3's 4 queues included), while a refused fork copy loses only its own subtree (the
+   plan's "one drop counted, as a lost link copy would be"). Visible only where a cap binds
+   (`f1cap`: 2,866 drops/s counted while 9,600 − 781 = 8,819 copies/s are lost). Lean: decouple —
+   every link copy is its own relay attempt (spawn each fork with the dot's original count and
+   its own `tryBrokerRelay`, whatever the primary got), so a capped broker fills its window
+   link by link instead of fire by fire; under a binding cap total deliveries stay at the cap,
+   only their spread over fires changes, and skipped forks stop vanishing uncounted. S/M/L/U/W and
+   F at `FTHROUGHPUT=300` would not move (no cap binds). Needs the user.
 4. **Cap arbitration is array order within a tick** — deferred. Phase C adds to it: under a
    binding cap a bundle takes its slots at one instant instead of over the batch's 0.04-progress
    stagger (~200 ms), so which publishers' events fill the window differs; at F 20 default caps
@@ -141,84 +152,60 @@ layout quirk). pausecheck: the pausing dot shrinks 6.5 → 3.96 extent with fron
    by crossing time inside the tick.
 5. **Dropped-dot fall was per tick** — done in Phase B2.
 6. **Bundle gate (Phase C)** — **decided 2026-11-05: keep.** Bundles are emitted only where exact
-   (routes without a webhook, ending at 0 ms subscribers). Lifting the gate would make a batch at
-   a timed subscriber consume `count` events per consume duration and pass a webhook as one event;
-   both are mid-game balance changes, so the gate stands until the user decides otherwise.
+   (routes without a webhook, ending at 0 ms subscribers).
 7. **Partial broker relay (Phase C)** — **decided 2026-11-05: keep.** Partial admits exactly the
-   events the per-dot compare admitted (head passes, tail drops); whole-bundle drop would under-fill
-   the cap window by up to `count − 1` per crossing.
+   events the per-dot compare admitted (head passes, tail drops).
 
 ## Findings
 
-- **Phase D deviates from the plan's letter in two ways, both render-side, neither a rule
-  change.** (1) The plan says "`FLOATS_PER_DOT` 8 → 10" and a cap "at one tick interval"; the
-  build has 11 floats with a per-entry cap `tmax`. Measured reason: with velocity alone, a dot
-  whose speed changes inside the lead (entering the webhook's slow zone, ×0.4) was drawn 10.7 px
-  past where the next tick put it and jumped back (interpcheck, first build); the same happens at
-  every corner (orthogonal routes turn every hop) and at every queue/subscriber arrival, by up to
-  `v · lead` (7 px at 60 ticks/s for the starter dot, 28 px at 15). With `tmax` the extrapolation
-  stops where the sim will change the motion and the dot waits there until the tick lands: a stall
-  of at most one tick at corners and edges, never a backward jump (0 in every interpcheck run).
-  (2) The plan says "nothing in the sim changes"; the sim now writes two canvas-only fields per
-  advanced dot (`progressPerMs`, `speedUntilP`) because the zone multipliers and the capture point
-  live in the route profile (`PathInfo`), which `positions.ts` cannot see without a dependency on
-  `sim.ts` (which imports `positions.ts`). Recomputing zones render-side would duplicate the
-  profile. The fields are evaluated at the dot's **new** progress (what the next tick starts from):
-  the pre-move speed was stale by a tick at every corner and zone edge (the dot froze for a tick at
-  the webhook edge with the right cap but the wrong velocity). Cost: +15–22% ms/tick (table).
-- **Dot objects must keep one shape.** Adding the two fields after creation (first build) made
-  pass1 2.2× slower at U (0.36 → 0.80 ms) and cost 3 fps at S/M/L/U: every `dot.x` access in the
-  hot loop went polymorphic (dots with and without the fields). Every creation site now sets them
-  (`publish.ts` `dotFor`, fork spawn and its dropped remainder, both queue-release spreads, the DMQ
-  retry); the type makes them required so tsc flags a new site. Any future per-dot field must do
-  the same.
-- **The lead cap is the last tick interval, not the next.** `intervalMs` is the gap between the
-  two latest arrivals; an irregular tick (a merged input followed by a short one) caps the lead
-  short and the dot waits. Visible in interpcheck as an occasional +1.5 px frame. A stalled sim
-  (tab hidden, worker wedged, win screen) stops the dots after one interval; while the win screen
-  is open they sit up to one frame ahead of their sim position, invisible.
-- **Headless lead values are an artefact of the probe.** In interpcheck the lead at the tick's
-  frame reads 0.2–1 ms because the probe's `getImageData` on a 1600×900 canvas keeps the main
-  thread busy until just before the next frame, so the worker's reply is handled right before the
-  canvas draws. In a real browser at 60 ticks/s the lead is ~16 ms minus the round trip (7–15 ms),
-  which is exactly what the extrapolation is for; at 15 ticks/s the probe and the browser agree
-  (lead up to ~70 ms, dots advancing ~5.5 px per frame between ticks).
-- **manualcheck D (kill the worker → inline) failed 3/3 on the D build and passed 2/2 on the
-  pre-D build in the same session.** It is the watchdog gap below, not a Phase D bug: the new
-  `.out/dcheck2.mjs` (manualcheck's exact timing plus the bridge counters at the kill) shows the
-  wedge signature on every failure — `framesSentAfterKill` 0 and `framesBusyAfterKill` = every
-  frame — i.e. the kill landed after the worker's `busy` ack and before its `tick`, where
-  `ready()` never trips; every success shows 1–4 frames sent unacked and the fallback at 3.05 s.
-  On the D build dcheck2 wedged 1/4 at WAIT=3000 and 2/3 at WAIT=1000 while `dcheck.mjs 10` (no
-  tutorial dismissal, 2.5 s) fell back 10/10. The outcome depends on where the kill task lands in
-  the frame cycle, which for a fixed delay after load is nearly phase-locked per build (same work
-  per frame), so one build reads 0/3 and another 2/2 by accident; the exposed window is the
-  worker's tick + reply time per frame (~3–4 ms of 16.7 at S, ~20%). Nothing in the bridge's flow
-  control changed in Phase D. Fixed the same day, see the next item.
-- **Bridge watchdog gap — fixed 2026-11-05 (user: "use your lean")**: `ready()` in
-  `src/sim/simBridge.ts` tripped the 3 s stall watchdog only while the in-flight input was
-  unacknowledged, so a worker that died after `busy` and before `tick` wedged the sim. Now an
-  acked input with no tick for max(`WORKER_ACKED_STALL_MS` = 10 s, 3 × the previous tick's
-  `tickMs`) also fails over. The heartbeat alternative was not viable: a tick is one synchronous
-  call, the worker cannot post anything while it runs. The 10 s floor is far above any tick seen
-  since Phase A (F 20 is 6 ms); a legitimately longer tick scales it by 3× its predecessor. One
-  observation from dcheck2: kills that land right after an input went out are still acked (the
-  terminate is not instant), so the 10 s path is what catches them.
-- **Future option, user request 2026-11-05: render bundles as distinct dots again** (plan, end of
-  Phase C). Render-side only; Phase D's velocity floats apply per entry unchanged. Not scheduled.
-- Earlier findings that still hold: Phase C's plan gap (bundles gated to routes where they are
-  exact; the occupied-webhook rule and the timed consume are per dot), partial relay vs the plan's
-  whole-bundle drop (decision 7), DMQ catch `min(free, count)` / release one event, dot ids no
-  longer unique per event, signature cap display-identical, B2's `autoPubPollSimTime`, F 10 at
-  100% of production, compare per sim second against a same-session baseline (`d0` here), S at
-  `--ticks=10` reports a few `inputsClamped` by design, machine load corrupts capped runs silently
-  (`inputsClamped` was 0 in every `d0`/`d2` run; `d1` had 1 at U and 56–57 fps, partly the shape
-  issue above), WebGL contexts cannot share a buffer, `canvascheck` M reports 0 front pixels,
-  same-tick releases do not always ascend, `avgQueued` 6–8 at W, `CLAUDE.md` does not list
-  `src/sim/*` yet (worker-refactor Phase 4 pending; it should also say the store never sees dots,
-  that a dot carries `count`, and that per-dot fields are set at creation), harness scripts in
+- **The plan's Gate F wording is off in one place**: "`F` with the default caps shows DMR1
+  recording 2 relays per event and each bridged cluster 4" cannot be read at default caps, where
+  all three clusters sit at their 412/s cap (0.34 / 0.32 / 0.33 relays per *published* event;
+  `f1cap`). The ratio is observable only where no cap binds: F at `FTHROUGHPUT=300` reads 2.01 /
+  4.03 / 4.03 (20, 10 and 2 publishers), and manualcheck E reads exactly 12 / 24 / 24 for one
+  6-event bundle. Both are recorded above; the default-caps run is where the **rule change**
+  shows instead: `c1cap` → `f1cap` consumed 8,180 → 15,623/s (+91%), dropped 9,187 → 2,866/s
+  (−69%), earned 7.19M → 14.09M/s, because the ingestion cluster now passes ~206 events/s (2
+  relays each) instead of ~51 (8 each) and the two bridged clusters' caps bind instead (395 and
+  387 of 412 relays/s). Intended (the plan's non-goal exception).
+- **Everything else the plan said about the code held**: `forkSpawnFor` slices from the fork
+  broker and caches per (waypoints, broker), so nested forks reuse it unchanged; relay accounting
+  needed no new code; meshes without bridges produce the identical one-step list (unit-tested and
+  the S/M/L/U/W numbers). One representation choice: the step list is a linked list (`next`)
+  rather than an array with an index, so the dot stores one pointer and advancing allocates
+  nothing; the plan's "`forkNodeId`/`forkPaths` become the head of that list" is satisfied.
+- **Two-step ticks**: a tick long enough to carry a dot past two fork brokers spawns both steps in
+  that tick (the loop continues while the next step's `touchStart` is reached). With one step this
+  is byte-identical to before; with two it is the "late instead of never" rule the route profile
+  already applies to crossings.
+- **The DMQ retry copies `forkStep`** (it spread `...dot`, which carried `forkPaths` before): a
+  primary refused at a broker cap, caught by the DMQ and re-released, re-forks when it crosses
+  that broker again. Pre-existing, unchanged, now written down.
+- **Relay ratios read 2.01 / 4.03, not 2 / 4**, because `brokerRelaysPerSec` (the summary's
+  trailing-second relay count) and `publishedEventsPerSec` (the store's `recentPublishes` over
+  the trailing second) are sampled at slightly different instants; 0.5–1.5% is the sampling skew,
+  not extra relays (manualcheck E, a single bundle, reads exactly 2 / 4 / 4).
+- **Fuzz-testing the tree needed the game's dedup**: two routes reaching one queue over different
+  last brokers would each be relayed at that queue's broker (two copies arrive on two links), so
+  "one relay per distinct next hop" holds only after `publish.ts`'s one-route-per-queue-per-broker
+  dedup, which the test now mirrors. Also routes never revisit a node (the path walk's visited
+  set), which the generator respects.
+- Earlier findings that still hold: Phase D's two deviations (11 floats, two canvas-only fields per
+  advanced dot), dot objects must keep one shape (every creation site sets `progressPerMs`/
+  `speedUntilP`; `forkStep` is optional like `forkPaths` was and the fork spawn sets it), the lead
+  cap is the last tick interval, headless lead values are a probe artefact, the bridge watchdog
+  fix (10 s post-ack timeout; manualcheck D is no longer a flake: 10.06 s this session), Phase C's
+  plan gap (bundles gated to routes where they are exact), partial relay vs whole-bundle drop
+  (decision 7), DMQ catch `min(free, count)` / release one event, dot ids not unique per event,
+  B2's `autoPubPollSimTime`, F 10 at 100% of production, compare per sim second against a
+  same-session baseline when the change touches the tick (`d2` here is the previous session's;
+  the gate numbers are consumed/dropped/earned, which do not drift), S at `--ticks=10` reports a
+  few `inputsClamped` by design, machine load corrupts capped runs silently (`inputsClamped` 0
+  in every run here), WebGL contexts cannot share a buffer, `canvascheck` M reports 0 front
+  pixels, same-tick releases do not always ascend, `avgQueued` 6–8 at W, `CLAUDE.md` does not
+  list `src/sim/*` yet (worker-refactor Phase 4, see Next), harness scripts in
   `scripts/perf/.out/` cannot live in the session scratchpad, the Bash tool cuts commands over
-  ~8 KB (edit with a CRLF-preserving Node script).
+  ~8 KB (edit with a CRLF-preserving Node script; `unix2dos` new files).
 
 ## History
 
@@ -254,3 +241,11 @@ layout quirk). pausecheck: the pausing dot shrinks 6.5 → 3.96 extent with fron
   canvascheck/pausecheck both renderers pass; release test 4/4; tsc; lint 23/3.
 - 2026-11-05: bridge watchdog gap fixed (user decision, post-ack timeout 10 s / 3× tick):
   manualcheck D falls back at 10.05 s, dcheck2 7/7, dragsmoke both modes clean; tsc; lint 23/3.
+- 2026-11-05: Phase F done (fork tree: one copy per link at each broker, the far cluster fans out
+  itself; `CLUSTER_THROUGHPUT_MULTIPLIER` 1.25 → 1.4; decision 3 left open with a lean): F 20 at
+  `FTHROUGHPUT=300` relays 2.01 / 4.03 / 4.03 per event (was 8 / 4 / 4 by construction) with
+  191,950 → 191,941 consumed per sim second, F 10 / F 2 flat, 59.5 ticks/s at 5.6 ms; F at
+  default caps 8,180 → 15,623 consumed/s and 9,187 → 2,866 dropped/s (the rule change, every
+  cluster at its cap); S/M/L/U/W vs `d2` and `wbase` within noise; dragsmoke both modes clean;
+  manual checks A–D + new E (one dot per cable, 12/24/24 relays, 960 consumed) pass; forkTree test
+  6/6 + release 4/4; tsc; lint 23/3.

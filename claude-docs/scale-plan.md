@@ -1,7 +1,7 @@
 # Plan: smooth late game at 20 publishers of fan-out
 
-Status: in progress, see `scale-progress.md` (Phases A, A2, B, C and D done on 2026-11-05; F is next; the
-open balance decisions, including two from C, are listed there). Written
+Status: in progress, see `scale-progress.md` (Phases A, A2, B, C, D and F done on 2026-11-05; E stays
+unscheduled; the open balance decisions, including two from C, are listed there). Written
 2026-11-05 after Phase 3 of `worker-refactor-plan.md` (the sim runs in a Web Worker). Execute the
 phases in order; each ends at a verified, committable state. `worker-refactor-plan.md` Phase 4
 (docs) should land first; it is independent of this plan.

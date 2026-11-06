@@ -6,7 +6,7 @@
 import { nextDotId, resetDotIds, buildPublishDots } from './publish';
 import { fillPositions } from './positions';
 import { getPermanentQueueBufferBonus, findNextInteractableId, getPermanentBrokerThroughputMult, getPublisherCooldownMs, consumeDurationFor, BRIDGE_GOLD_COLOR } from './meshRules';
-import type { EventDot, GameComponent, Connection, Mesh } from './types';
+import type { EventDot, GameComponent, Connection, Mesh, ForkStep } from './types';
 import { interpolatePath, normalizedSpeed, getSegmentSpeedScale, scaledTravelTime, getPathMetrics } from '../utils/pathUtils';
 import { computeOrthogonalWaypoints, computeVerticalFirstWaypoints } from '../utils/orthogonalPath';
 import { createArrivalIndex, finalizeArrivalIndex, insertArrival, canAcceptArrival } from './releaseIndex';
@@ -386,6 +386,24 @@ type ForkSpawn = {
   nextNodeId: string | undefined;
 };
 const forkSpawnCache = new WeakMap<{ x: number; y: number }[], Map<string, ForkSpawn>>();
+
+/** A dot's fork steps with their routes rebuilt from the current component positions, through the
+ *  forks' own steps too (step data is shared plan data, so this copies instead of mutating). With
+ *  `onlyNodeId` (a drag frame) only the routes through that node are rebuilt, degenerate or not,
+ *  as the drag rebuild always did; after the drag every route is rebuilt and a degenerate rebuild
+ *  keeps the old waypoints. */
+function rebuildForkSteps(step: ForkStep, onlyNodeId: string | null, components: GameComponent[], connections: Connection[]): ForkStep {
+  const forks = step.forks.map(fork => {
+    let f = fork;
+    if (onlyNodeId === null || fork.nodeIds.includes(onlyNodeId)) {
+      const { path } = rebuildPathFromNodeIds(fork.nodeIds, components, connections);
+      if (onlyNodeId !== null || path.length >= 2) f = { ...fork, waypoints: path };
+    }
+    if (fork.steps) f = { ...f, steps: rebuildForkSteps(fork.steps, onlyNodeId, components, connections) };
+    return f;
+  });
+  return { nodeId: step.nodeId, forks, next: step.next ? rebuildForkSteps(step.next, onlyNodeId, components, connections) : undefined };
+}
 
 /** Queue→subscriber release path per (queue, subscriber position), rebuilt when components move. */
 type ReleasePath = { componentsRef: GameComponent[]; path: { x: number; y: number }[]; progress: number; nodeIds: string[] };
@@ -895,13 +913,9 @@ export class Sim {
           } else {
             dot = { ...dot, nodeWpIndices: undefined } as typeof dot;
           }
-          // Also rebuild forkPaths one final time for Y-snap
-          if (dot.forkPaths) {
-            const updatedForks = dot.forkPaths.map(fork => {
-              const { path: newForkPath } = rebuildPathFromNodeIds(fork.nodeIds, mesh.components, mesh.connections);
-              return newForkPath.length >= 2 ? { ...fork, waypoints: newForkPath } : fork;
-            });
-            dot = { ...dot, forkPaths: updatedForks } as typeof dot;
+          // Also rebuild the fork routes one final time for Y-snap
+          if (dot.forkStep) {
+            dot = { ...dot, forkStep: rebuildForkSteps(dot.forkStep, null, mesh.components, mesh.connections) } as typeof dot;
           }
         }
 
@@ -941,16 +955,9 @@ export class Sim {
               dot = { ...dot, path: newPath, progress: newProgress, speed: newSpeed, nodeWpIndices: newNodeWpIndices } as typeof dot;
             }
           }
-          // Also rebuild forkPaths so fork dots don't follow stale waypoints
-          if (dot.forkPaths) {
-            const updatedForks = dot.forkPaths.map(fork => {
-              if (fork.nodeIds.includes(input.draggingNodeId!)) {
-                const { path: newForkPath } = rebuildPathFromNodeIds(fork.nodeIds, mesh.components, mesh.connections);
-                return { ...fork, waypoints: newForkPath };
-              }
-              return fork;
-            });
-            dot = { ...dot, forkPaths: updatedForks } as typeof dot;
+          // Also rebuild the fork routes so fork dots don't follow stale waypoints
+          if (dot.forkStep) {
+            dot = { ...dot, forkStep: rebuildForkSteps(dot.forkStep, input.draggingNodeId, mesh.components, mesh.connections) } as typeof dot;
           }
         }
 
@@ -1078,24 +1085,28 @@ export class Sim {
           }
           if (brokerCapped) continue;
 
-          // Fork spawning: when dot with forkPaths passes its fork broker, spawn fork dots
-          if (dot.forkPaths && dot.forkNodeId) {
-            const forkComp = componentById.get(dot.forkNodeId);
-            // Fires once the dot's progress reaches the point where it enters the broker's touch
-            // box (the profile's touchStart): the same frame the old per-frame pixel test fired,
-            // but a long frame can't skip it — inside a DMR Cluster the dot moves at 2.5x and
-            // used to jump clean over the box, so the forks never spawned and all but one of the
-            // fan-out events silently vanished (~30% of throughput at ~20 fps).
-            const forkMark = pathInfo.markById.get(dot.forkNodeId);
-            if (forkComp && forkMark && newProgress >= forkMark.touchStart) {
-              for (const fork of dot.forkPaths) {
+          // Fork spawning: when the dot reaches the broker of its head fork step, spawn that
+          // step's forks (each charged to this broker's cap: a copy relayed down another link)
+          // and move on to the next step. Fires once the dot's progress reaches the point where
+          // it enters the broker's touch box (the profile's touchStart): the same frame the old
+          // per-frame pixel test fired, but a long frame can't skip it — inside a DMR Cluster the
+          // dot moves at 2.5x and used to jump clean over the box, so the forks never spawned and
+          // all but one of the fan-out events silently vanished (~30% of throughput at ~20 fps).
+          // A tick long enough to carry the dot past two fork brokers spawns both steps.
+          if (dot.forkStep) {
+            let step: ForkStep | undefined = dot.forkStep;
+            while (step) {
+              const forkComp = componentById.get(step.nodeId);
+              const forkMark = pathInfo.markById.get(step.nodeId);
+              if (!forkComp || !forkMark || newProgress < forkMark.touchStart) break;
+              for (const fork of step.forks) {
                 const forkDotId = nextDotId();
                 // Path and route from the broker onward, shared by every dot spawned from this
                 // fork (see forkSpawnFor) so they also share one cached route profile.
                 const { waypoints: forkWaypoints, nodeIds: forkStartNodeIds, nextNodeId: forkNextNodeId } = forkSpawnFor(fork, forkComp);
                 if (forkWaypoints.length >= 2) {
-                  // Fork dots spawn at the publisher's first broker (ingestion point),
-                  // so they count against that broker's throughput cap
+                  // A fork is a copy this broker relays down another of its links, so it
+                  // counts against this broker's throughput cap
                   const forkCap = getBrokerCap(forkComp, getPermanentBrokerThroughputMult(mesh));
                   // Each fork carries the bundle's count and takes that many slots; what does not
                   // fit drops here and the rest travels (see tryBrokerRelay).
@@ -1138,13 +1149,14 @@ export class Sim {
                       originalValue: fork.value ?? dot.originalValue,
                       originalNodeIds: forkStartNodeIds,
                       nextNodeId: forkNextNodeId,
+                      forkStep: fork.steps,
                     });
                   }
                 }
               }
-              // Clear fork data from this dot
-              dot = { ...dot, forkPaths: undefined, forkNodeId: undefined };
+              step = step.next;
             }
+            if (step !== dot.forkStep) dot.forkStep = step;
           }
 
           // Bridge color switch: once the dot's progress passes the broker it exits before
