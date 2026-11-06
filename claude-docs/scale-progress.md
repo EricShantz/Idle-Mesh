@@ -12,8 +12,8 @@ production). `worker-refactor-plan.md`: Phase 4 (docs and cleanup) was done on 2
 nothing in either plan is left to execute. A session started with the kickoff prompt should say so
 and stop. What remains needs the user:
 
-1. The **open balance decisions** below (1 (ii), 2 and 4 remain; 3 was decided and done on
-   2026-11-05).
+1. Nothing: every balance decision below is closed (1 (ii), 2 and 4 were closed as "leave" on
+   2026-11-05, "use your lean").
 2. The user's future option (render bundles as their `count` distinct dots again, plan end of
    Phase C; render-side only), not scheduled.
 
@@ -148,9 +148,14 @@ the ack; E one dot per cable, 12/24/24, 960/0). tsc clean, lint 23/3, tests 10/1
 
 ## Open balance decisions (from Phase B; user decision 2026-11-05 unless stated)
 
-1. **Auto-publisher poll** — done as (i) in Phase B2 (10/s cap stays). Option (ii) remains open.
-2. **Timed-subscriber release quantization** — deferred (known, small): S 8.2 → 7.5 → 7.4
-   consumed per sim second at 60 / 15 / 10 ticks/s. Flat form: release early by `slack`.
+1. **Auto-publisher poll** — done as (i) in Phase B2 (10/s cap stays). Option (ii) (per-tick
+   cooldown with catch-up, so `publishSpeed` level 10 fires 20/s) **closed 2026-11-05 ("use your
+   lean"): leave.** It would double auto income at level 10 and want a spawn stagger; a balance
+   change, not a scaling one.
+2. **Timed-subscriber release quantization** — **closed 2026-11-05 ("use your lean"): leave.**
+   Known, small: S 8.2 → 7.5 → 7.4 consumed per sim second at 60 / 15 / 10 ticks/s, and
+   production runs at 59–60 ticks/s at every scale. Flat form, if ever wanted: release early by
+   `slack`.
 3. **Capped primary skips its forks** — **decided 2026-11-05 ("use your lean"): decoupled, done.**
    Every link copy is its own relay attempt: the forks a dot spawns at a broker carry the count
    it arrived there with and take their own slots, whatever that broker's cap did to the dot;
@@ -160,7 +165,8 @@ the ack; E one dot per cable, 12/24/24, 960/0). tsc clean, lint 23/3, tests 10/1
    was the whole fire at the ingestion cluster) and a partly admitted one spawned forks with the
    admitted count. Effect only where a cap binds (`f1cap` → `f2cap` above); S/M/L/U/W and F at
    `FTHROUGHPUT=300` within noise.
-4. **Cap arbitration is array order within a tick** — deferred. Phase C adds to it: under a
+4. **Cap arbitration is array order within a tick** — **closed 2026-11-05 ("use your lean"):
+   leave.** Invisible wherever no cap binds. Phase C adds to it: under a
    binding cap a bundle takes its slots at one instant instead of over the batch's 0.04-progress
    stagger (~200 ms), so which publishers' events fill the window differs; at F 20 default caps
    the value per consumed event moved 913 → 879 (−3.8%) with consumed flat at the cap. Invisible
@@ -279,3 +285,6 @@ the ack; E one dot per cable, 12/24/24, 960/0). tsc clean, lint 23/3, tests 10/1
   `dev-notes.md` stale references fixed and Rounds 4–5 appended, `event-dot-lifecycle.md`
   rewritten around `Sim.tick`, `component-types.md`/`roadmap.md` references fixed, the worker
   plan marked done; no code; tsc clean, lint 23/3.
+- 2026-11-05: closing session: nothing left in either plan (Phase E's trigger not met at 59.5
+  ticks/s); balance decisions 1 (ii), 2 and 4 closed as "leave" (user: "use your lean");
+  `scale-plan.md` status line set to done. Docs only; no code, harness not rerun.
