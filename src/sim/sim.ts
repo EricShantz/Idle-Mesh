@@ -466,6 +466,10 @@ export class Sim {
   /** Drop reason tracking for the warning "!" button */
   private readonly nodeDropTracker = new Map<string, { reason: DropReason; lastDropTime: number; nodeLabel: string }>();
   private autoPubAccumulator = 0;
+  /** Nominal sim time of the latest auto-publisher poll: simNow − autoPubAccumulator, kept as an
+   *  exact multiple of AUTO_PUB_POLL_MS so consecutive polls are exactly one interval apart
+   *  whatever the tick pattern (the cooldown compare must not fail on floating point). */
+  private autoPubPollSimTime = 0;
   private simNow = 0;
   /** Sim-time timestamp of each publisher's last auto fire (wall-clock cooldowns live in the store). */
   private readonly autoFireLastSim = new Map<string, number>();
@@ -1251,8 +1255,11 @@ export class Sim {
             updated.push(dot);
           }
         } else if (dot.status === 'dropped') {
-          const newVY = (dot.dropVY ?? 0) + 0.3 * dt / 16;
-          const newDropY = (dot.dropY ?? 0) + newVY;
+          // Fall in px/ms units, integrated over dt, so the distance fallen during the fade is the
+          // same at any tick rate (the old per-tick form, vy += 0.3·dt/16; y += vy, fell ∝ 1/dt).
+          // Identical to it at 60 Hz: 0.001125·16.67 = 0.01875 px/ms per tick = 0.3125 px/tick.
+          const newVY = (dot.dropVY ?? 0) + 0.001125 * dt;
+          const newDropY = (dot.dropY ?? 0) + newVY * dt;
           const newOpacity = dot.opacity - dt / 2500;
 
           // DMQ catch: check if dropping dot lands on the DMQ
@@ -1872,11 +1879,18 @@ export class Sim {
     const publishes: { count: number }[] = [];
     if (this.autoPubAccumulator >= AUTO_PUB_POLL_MS) {
       this.autoPubAccumulator -= AUTO_PUB_POLL_MS;
+      // The cooldown is checked and stamped at the poll's nominal sim time, not at simNow: polls
+      // are then exactly AUTO_PUB_POLL_MS apart, so a poll that lands one short tick after the
+      // previous one (a merged input followed by a short frame) no longer rejects every publisher
+      // whose cooldown is longer than that tick. Cooldowns over the poll interval still fire
+      // every ceil(cooldown / AUTO_PUB_POLL_MS) polls.
+      this.autoPubPollSimTime += AUTO_PUB_POLL_MS;
+      const pollTime = this.autoPubPollSimTime;
       for (const pub of mesh.components) {
         if (pub.type !== 'publisher' || (pub.upgrades['autoPub'] ?? 0) < 1) continue;
         const last = this.autoFireLastSim.get(pub.id);
-        if (last === undefined || this.simNow - last >= getPublisherCooldownMs(pub, mesh)) {
-          this.autoFireLastSim.set(pub.id, this.simNow);
+        if (last === undefined || pollTime - last >= getPublisherCooldownMs(pub, mesh)) {
+          this.autoFireLastSim.set(pub.id, pollTime);
           // Publishers that can't fire (no outgoing connection, no broker on any path) are
           // skipped and keep their old cooldown, exactly as buildPublishBatch skipped them.
           const built = buildPublishDots(mesh, pub.id);

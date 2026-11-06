@@ -34,6 +34,7 @@ export type EventDot = {
   queuedAtNodeId?: string;
   dropX?: number;
   dropY?: number;
+  /** Fall velocity in px per ms of sim time (world units). */
   dropVY?: number;
   color: string;
   opacity: number;
