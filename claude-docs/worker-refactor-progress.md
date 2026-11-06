@@ -7,20 +7,20 @@ short; the plan file holds the design, this file holds only state.
 
 ## Next
 
-Phase 4 (docs and cleanup): `CLAUDE.md` (file structure with `src/sim/*` and
-`src/hooks/useSimBridge.ts`, the performance rules, the save-exclusion list, the two rate stats),
-`claude-docs/dev-notes.md` → append "Round 4 — worker" with the Gate 3 numbers below,
-`claude-docs/event-dot-lifecycle.md` (the passes now live in `Sim.tick`), and remove the plan's
-"planned, not started" status line. No gate beyond `tsc` clean and the lint count unchanged; then
-write "Done" here.
+**Done.** Phases 0–4 are complete (2026-11-05). Nothing in `worker-refactor-plan.md` is left to
+execute; later work on the simulation (the late-game scaling plan) is tracked in `scale-progress.md`.
 
 ## State of the tree
 
-- Phases 0–3 are done and the tree is at a commit point (uncommitted; suggested message from the
-  plan: "sim: run the simulation in a Web Worker"). The user commits. Later the same day the
-  working tree also received the post-gate changes listed in `scale-progress.md` → State of the
-  tree (stats UI, worker ack watchdog, two sim fast paths with section timers, the `F` harness
-  scale); that file suggests a commit split.
+- Phases 0–3 were committed by the user (`6d35c8d` canvas draws from position buffer, `ea078c2` /
+  `40fd51c` run the simulation in a Web Worker); the scale plan's phases followed on top. Phase 4
+  (docs, 2026-11-05, no code): `CLAUDE.md` (file structure with `src/sim/*` and `useSimBridge.ts`,
+  the save-exclusion list without `eventDots`, a "Simulation architecture" convention, the two
+  rate stats, the gate commands), `dev-notes.md` (stale `useGameLoop.ts` / `getMinFps` /
+  `fireEvent` references fixed; "Round 4 — worker" and "Round 5 — the late game" appended),
+  `event-dot-lifecycle.md` (rewritten around `Sim.tick` and the dot's `count`),
+  `component-types.md`, `roadmap.md`, the plan's status line and this file. Uncommitted; the
+  user commits (see `scale-progress.md` → State of the tree).
 - `src/sim/`: `types.ts`, `meshRules.ts`, `publish.ts`, `sim.ts`, `positions.ts`, `simStats.ts` as
   after Phase 2, plus:
   - `protocol.ts` (type-only): `MainToWorker` = `mesh` | `move` | `input` (with the transferred
@@ -121,9 +121,10 @@ write "Done" here.
   `new Float32Array(n)` and `new Float32Array(arrayBuffer)` give that, bare `Float32Array` does not.
 - `prof.mjs`'s profile keys are `fn @ assets/index-<hash>.js:line` in the perf build, so the old
   `src/...` regex entries never matched; they are kept for dev-mode runs.
-- Docs for Phase 4: `CLAUDE.md`'s save-exclusion list and file structure still name `eventDots`
-  and `useGameLoop.ts`; `dev-notes.md` → Performance architecture and `event-dot-lifecycle.md`
-  likewise; `sim.ts`'s header comment already names `useSimBridge.ts`.
+- Phase 4 resolved the stale docs (`eventDots` / `useGameLoop.ts` / `getMinFps` no longer appear
+  outside the two plan files and the Round 1–3 history, where they are marked "then … now").
+  `SimInput.frozen` stays as interface and is documented as never sent `true` (`dev-notes.md` →
+  End Game).
 
 ## History
 
@@ -152,6 +153,9 @@ write "Done" here.
   dot 6.5 → 4.04. Worker profile (uncapped RAF): worker 62% busy at ~120 ticks/s, GC 1.8%; main
   thread: browser internals 67%, JS 26.5% (EventCanvas render 6.3%, message handling 1.5%,
   commitFrame + applyConsumes 0.7%). tsc clean, lint 23/3.
+- 2026-11-05: Phase 4 done (docs only): `CLAUDE.md`, `dev-notes.md` (Rounds 4–5), `event-dot-lifecycle.md`,
+  `component-types.md`, `roadmap.md`, the plan's status line, this file, `scale-progress.md`. No
+  `src/` change, so no harness run; tsc clean, lint 23/3.
 
 ## How to hand off (do this at the end of every session, before reporting to the user)
 

@@ -1,8 +1,12 @@
 # Plan: move the simulation to a Web Worker
 
-Status: planned, not started. Written 2026-11-05 after three rounds of main-thread optimization
-(see `dev-notes.md` → "Performance architecture"). Execute the phases in order; each one ends at a
-verified, committable state. Do not start a phase until the previous phase's gate passes.
+Status: **done** (Phases 0–4, 2026-11-05; the gate numbers and the deviations from this plan are in
+`worker-refactor-progress.md`, the architecture summary in `dev-notes.md` → "Round 4 — worker").
+Written 2026-11-05 after three rounds of main-thread optimization. "Current architecture" below
+describes the code as it was before the refactor; "Target architecture" is what exists now, except
+where the progress file records a deviation (the bridge accumulates frame deltas instead of the
+worker coalescing inputs; the stall watchdog waits for a `busy` ack plus a post-ack timeout;
+`getMinFps` became the lowest sim rate).
 
 ## Why
 

@@ -6,28 +6,25 @@ its gate, rewrite this file.
 
 ## Next
 
-**The scale plan is complete**: Phases A, A2, B, C, D and F are done and gated (Phase E, flow
-mode, stays unscheduled: F 20 runs at 59.5 ticks/s with 5.6 ms ticks, 100% of production). Nothing
-in `scale-plan.md` is left to execute. What remains, in order of usefulness:
+**Both plans are complete.** `scale-plan.md`: Phases A, A2, B, C, D and F are done and gated
+(Phase E, flow mode, stays unscheduled: F 20 runs at 59.5 ticks/s with 5.6 ms ticks, 100% of
+production). `worker-refactor-plan.md`: Phase 4 (docs and cleanup) was done on 2026-11-05, so
+nothing in either plan is left to execute. A session started with the kickoff prompt should say so
+and stop. What remains needs the user:
 
-1. `worker-refactor-plan.md` **Phase 4 (docs and cleanup)**, still pending in
-   `worker-refactor-progress.md` and the scale plan said it should land first: `CLAUDE.md` file
-   structure (`src/sim/*` incl. `forkTree.ts`, `releaseIndex.ts`, `positions.ts`,
-   `src/hooks/useSimBridge.ts`; the store never sees dots; a dot carries `count`; per-dot fields
-   are set at creation; the fork tree), the save-exclusion list (no `eventDots`), the two rate
-   stats; `dev-notes.md` "Round 4 — worker"; `event-dot-lifecycle.md` passes in `Sim.tick`;
-   remove the worker plan's "planned, not started" line. Gate: tsc clean, lint 23/3.
-2. The **open balance decisions** below need the user (1 (ii), 2 and 4 remain; 3 was decided and
-   done on 2026-11-05).
-3. The user's future option (render bundles as their `count` distinct dots again, plan end of
+1. The **open balance decisions** below (1 (ii), 2 and 4 remain; 3 was decided and done on
+   2026-11-05).
+2. The user's future option (render bundles as their `count` distinct dots again, plan end of
    Phase C; render-side only), not scheduled.
 
 ## State of the tree
 
-- Phase F is committed as `dfbe31d` ("fork events where routes diverge (DMR relay accounting)", on
-  top of `9af77b7`; Phase D is `a2e6bef`). **Uncommitted on top of it: balance decision 3**
-  (`src/sim/sim.ts`, `claude-docs/upgrades.md`, this file; suggested message: "sim: each link copy
-  is its own relay attempt"). The user commits. Phase F changed: `src/sim/types.ts`, `src/sim/publish.ts`,
+- Decision 3 is committed as `494a942` ("each link copy is its own relay attempt") on top of Phase
+  F `dfbe31d` (Phase D is `a2e6bef`). **Uncommitted on top of it: worker-refactor Phase 4, docs
+  only** — `CLAUDE.md`, `claude-docs/dev-notes.md`, `claude-docs/event-dot-lifecycle.md`,
+  `claude-docs/component-types.md`, `claude-docs/roadmap.md`, `claude-docs/worker-refactor-plan.md`,
+  `claude-docs/worker-refactor-progress.md`, this file; no `src/` change (suggested message:
+  "docs: simulation module, worker and scale rounds"). The user commits. Phase F changed: `src/sim/types.ts`, `src/sim/publish.ts`,
   `src/sim/sim.ts`, `src/store/upgradeConfig.ts`, `scripts/perf/behavior.mjs`,
   `scripts/perf/compare.mjs`, `scripts/perf/prof.mjs`, `scripts/perf/README.md`,
   `claude-docs/upgrades.md`, `claude-docs/event-dot-lifecycle.md`, `claude-docs/dev-notes.md`,
@@ -86,10 +83,11 @@ in `scale-plan.md` is left to execute. What remains, in order of usefulness:
   `f1cap` (F 20 at default caps; its predecessor is `c1cap`), `f2`/`f2-10`/`f2-2`/`f2cap` (the
   same set on the decision-3 build), `manualcheck-f1.json`, `manualcheck-f2.json`. Earlier: `d0`,
   `d2`, `c1`, `c1cap`, `wbase`…
-- Line endings: every changed file CRLF except `src/store/upgradeConfig.ts`,
-  `claude-docs/upgrades.md` and `claude-docs/event-dot-lifecycle.md`, which were LF at HEAD and
-  were left LF (git's autocrlf warns it will normalize them when it next touches them; the CRLF
-  check in the kickoff prompt lists these three by design).
+- Line endings: each doc keeps the style it had in the worktree. CRLF: `CLAUDE.md`, `dev-notes.md`,
+  `scale-plan.md`, this file, `worker-refactor-plan.md`, `worker-refactor-progress.md`. LF (as at
+  HEAD, like `upgrades.md` and `src/store/upgradeConfig.ts` before): `event-dot-lifecycle.md`,
+  `component-types.md`, `roadmap.md`. git's index is LF for all of them under `autocrlf=true`, so
+  the kickoff prompt's CRLF check lists the LF ones by design.
 - Lint 23/3, tsc clean, preview server stopped.
 
 ## Measured — Gate F (headless, worker mode, 15 s windows, per **sim** second; `d2` → `f1`)
@@ -220,10 +218,14 @@ the ack; E one dot per cable, 12/24/24, 960/0). tsc clean, lint 23/3, tests 10/1
   the gate numbers are consumed/dropped/earned, which do not drift), S at `--ticks=10` reports a
   few `inputsClamped` by design, machine load corrupts capped runs silently (`inputsClamped` 0
   in every run here), WebGL contexts cannot share a buffer, `canvascheck` M reports 0 front
-  pixels, same-tick releases do not always ascend, `avgQueued` 6–8 at W, `CLAUDE.md` does not
-  list `src/sim/*` yet (worker-refactor Phase 4, see Next), harness scripts in
+  pixels, same-tick releases do not always ascend, `avgQueued` 6–8 at W, harness scripts in
   `scripts/perf/.out/` cannot live in the session scratchpad, the Bash tool cuts commands over
   ~8 KB (edit with a CRLF-preserving Node script; `unix2dos` new files).
+- **Worker-refactor Phase 4 was docs only** (2026-11-05): no `src/` change, so the harness was not
+  rerun; the table above (`f2` build) is HEAD. Its gate per `worker-refactor-progress.md` was tsc
+  clean and lint 23/3, both met. The plan's wording held; one thing the docs now state that neither
+  plan did: `SimInput.frozen` is never sent `true` (the driver skips the input while the win
+  screen is open), kept as interface.
 
 ## History
 
@@ -272,3 +274,8 @@ the ack; E one dot per cable, 12/24/24, 960/0). tsc clean, lint 23/3, tests 10/1
   cluster at its cap); S/M/L/U/W vs `d2` and `wbase` within noise; dragsmoke both modes clean;
   manual checks A–D + new E (one dot per cable, 12/24/24 relays, 960 consumed) pass; forkTree test
   6/6 + release 4/4; tsc; lint 23/3.
+- 2026-11-05: worker-refactor Phase 4 (docs) done: `CLAUDE.md` rewritten around `src/sim/*` (file
+  structure, save exclusions, simulation architecture + performance conventions, gate commands),
+  `dev-notes.md` stale references fixed and Rounds 4–5 appended, `event-dot-lifecycle.md`
+  rewritten around `Sim.tick`, `component-types.md`/`roadmap.md` references fixed, the worker
+  plan marked done; no code; tsc clean, lint 23/3.
