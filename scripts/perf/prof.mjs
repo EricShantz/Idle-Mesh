@@ -50,10 +50,13 @@ const CFG = {
   // bridged cluster one per queue (4 per event); behavior.mjs reports it as relaysPerPublishedEvent.
   // FPUBS=2 (env) reproduces the "works with 2 publishers" case; default 20.
   // FTHROUGHPUT=<level> (env) raises the broker caps beyond the upgrade max, standing in for prestige throughput multipliers.
+  // QBUF=<level> (env, every scale) sets the queues' bufferSize upgrade level (default 17 = 20 slots); QBUF=0 is
+  // a 3-slot queue under a 6-event batch (the queue-full regression of 2026-11-06).
   F: { fanout: true, pubs: Number(process.env.FPUBS ?? 20), batchFireLevel: 5, throughputLevel: Number(process.env.FTHROUGHPUT ?? 10), queuesPerBridge: 4, subsPerQueue: 20, subSpeed: 11, zoomOutSteps: 6 },
 }[SCALE];
 if (process.env.SUBSPEED) CFG.subSpeed = Number(process.env.SUBSPEED);
 CFG.pubSpeed = process.env.PUBSPEED ? Number(process.env.PUBSPEED) : 10;
+CFG.queueBufferLevel = process.env.QBUF !== undefined ? Number(process.env.QBUF) : 17;
 
 const TOPICS = [
   'acme/orders/created/na/electronics/SKU001','acme/orders/created/na/electronics/SKU002','acme/orders/created/na/clothing/SKU003',
@@ -96,7 +99,7 @@ function buildFanoutSave(c) {
   const subsH = c.subsPerQueue * 60;
   for (let k = 0; k < c.queuesPerBridge; k++) {
     const qid = `queue-${k + 1}`;
-    components.push({ id: qid, type: 'queue', x: 1500, y: groupH - (c.queuesPerBridge * 80) / 2 + k * 80 + 40, label: 'Queue', tags: {}, upgrades: { bufferSize: 17, addSubscriberSlot: c.subsPerQueue, fanOut: 1 } });
+    components.push({ id: qid, type: 'queue', x: 1500, y: groupH - (c.queuesPerBridge * 80) / 2 + k * 80 + 40, label: 'Queue', tags: {}, upgrades: { bufferSize: c.queueBufferLevel, addSubscriberSlot: c.subsPerQueue, fanOut: 1 } });
     conn('broker-2', qid);
     conn('broker-3', qid);
   }
@@ -167,7 +170,7 @@ function buildSave(c) {
       const qid = `queue-${q}`;
       const sid = q === 1 ? 'sub-1' : `sub-${q}`;
       const y = 80 + b * gap + k * (c.queueGap ?? 80);
-      components.push({ id: qid, type: 'queue', x: 1200, y, label: 'Queue', tags: {}, upgrades: { bufferSize: 17, addSubscriberSlot: 1 } });
+      components.push({ id: qid, type: 'queue', x: 1200, y, label: 'Queue', tags: {}, upgrades: { bufferSize: c.queueBufferLevel, addSubscriberSlot: 1 } });
       components.push({ id: sid, type: 'subscriber', x: 1650, y, label: 'Subscriber', tags: {}, upgrades: { fasterConsumption: c.subSpeed, consumptionValue: 20 } });
       conn(brokerIds[b], qid);
       conn(qid, sid);

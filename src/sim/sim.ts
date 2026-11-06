@@ -1224,8 +1224,12 @@ export class Sim {
               // (see queueBacklogCounts above for why).
               const queuedCount = queueBacklogCounts.get(queue.id) ?? 0;
 
-              // In events: a bundle needs `count` free slots (one event, one slot, as before).
-              if (queuedCount + dot.count <= bufferSize) {
+              // A bundle is admitted whole whenever the backlog is below the buffer: exactly what
+              // its events got as separate dots, which all checked this same last-frame backlog in
+              // the one tick they arrived. Requiring `count` free slots instead (scale-plan.md
+              // Phase C as written) made a batch larger than a small queue drop every time while
+              // the queue sat empty.
+              if (queuedCount < bufferSize) {
                 // A queue always sits downstream of any bridge hop (bridges are broker-to-
                 // broker only), so reaching one means the bridge-exit broker was already
                 // passed. If bridgeGoldAfterNodeId is still set, the per-frame touch-box

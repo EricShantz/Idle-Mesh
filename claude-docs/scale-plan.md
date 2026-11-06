@@ -160,7 +160,9 @@ legs after a queue (20 per release) stay one dot per subscriber, each carrying t
 2. Rules by count: broker relay takes `count` slots (`tryBrokerRelay(…, count)` with the cap check
    `ts.length + count > cap` → drop the whole bundle, same as today's per-dot ordering would drop
    the tail; note the difference in Findings if a partial relay is preferred), queue buffer
-   gate `queuedCount + count ≤ bufferSize`, DMQ buffer likewise, consume pushes `count` entries'
+   gate `queuedCount + count ≤ bufferSize` (**wrong, corrected 2026-11-06**: the per-dot rule was
+   `queuedCount < bufferSize` for every dot of the tick, so the bundle is admitted whole on that
+   test; as written, a batch larger than a small queue dropped every time), DMQ buffer likewise, consume pushes `count` entries'
    worth (`applyConsumes` gets `{ value, subscriberId, count }` and adds `count` to
    `eventsConsumed`/`recentEarnings`), drop counting adds `count`, the slot signature repeats its
    character `count` times, `liveDots`/`byStatus` report events (sum of counts) and dots.
