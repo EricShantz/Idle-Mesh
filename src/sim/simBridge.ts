@@ -27,8 +27,13 @@ export type SimMode = 'worker' | 'inline';
 
 /** A worker that has not even acknowledged an input for this long is dead or wedged: fall back
  *  inline. The ack is posted before the tick runs, so a tick that takes seconds (an overloaded
- *  mesh) is slow, not dead, and is left alone. */
+ *  mesh) is slow, not dead, and is left alone — until WORKER_ACKED_STALL_MS (or three times the
+ *  previous tick's duration, whichever is longer) has passed without the tick: a worker that dies
+ *  between its ack and its reply used to wedge the sim forever (the kill test, manualcheck D,
+ *  landed in that window). A tick cannot post a heartbeat while it runs (it is one synchronous
+ *  call), so a timeout is the only signal there is. */
 const WORKER_STALL_MS = 3000;
+const WORKER_ACKED_STALL_MS = 10000;
 const INITIAL_CAPACITY = 4096; // dots
 
 // ---- what the UI and the store share with the sim, whichever driver runs it ----
@@ -183,6 +188,7 @@ function createWorkerDriver(onFail: (reason: string) => void): Driver | null {
   }
   let inFlightSince = 0; // performance.now() when the current input was posted; 0 when none
   let acked = false;     // the worker has picked up the in-flight input (it may still be ticking)
+  let lastTickMs = 0;    // duration of the previous tick on the worker (scales the acked timeout)
   let debugId = 0;
   const debugWaiting = new Map<number, (result: DebugResult) => void>();
   let failed = false;
@@ -198,6 +204,7 @@ function createWorkerDriver(onFail: (reason: string) => void): Driver | null {
     } else if (msg.type === 'tick') {
       stats.ticks++;
       stats.tickMsTotal += msg.tickMs;
+      lastTickMs = msg.tickMs;
       stats.sections = msg.sections;
       stats.roundTripMsTotal += performance.now() - inFlightSince;
       inFlightSince = 0;
@@ -216,7 +223,12 @@ function createWorkerDriver(onFail: (reason: string) => void): Driver | null {
     reset: () => post({ type: 'reset' }),
     ready() {
       if (inFlightSince === 0) return true;
-      if (!acked && performance.now() - inFlightSince > WORKER_STALL_MS) fail(`no answer for ${WORKER_STALL_MS} ms`);
+      const waited = performance.now() - inFlightSince;
+      if (!acked) {
+        if (waited > WORKER_STALL_MS) fail(`no answer for ${WORKER_STALL_MS} ms`);
+      } else if (waited > Math.max(WORKER_ACKED_STALL_MS, 3 * lastTickMs)) {
+        fail(`tick acknowledged but not returned for ${Math.round(waited)} ms`);
+      }
       return false;
     },
     tick(input) {

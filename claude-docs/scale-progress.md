@@ -21,17 +21,17 @@ ticks/s with 6.0 ms ticks, within 0.2% of production.
 
 Phase D's deviations from the plan's letter (11 floats instead of 10; the sim writes two
 canvas-only fields per advanced dot) are listed under Findings; nothing there needs a decision.
-Before Phase F, the user should pick a fix for the bridge watchdog gap (Findings): manualcheck D
-now fails deterministically on this build's timing, so the suite cannot be read as passing until
-it is fixed or the section is re-timed.
+The bridge watchdog gap is fixed (user decision 2026-11-05, "use your lean": the post-ack
+timeout); it is its own commit, see State of the tree.
 
 ## State of the tree
 
-- Phase D done, uncommitted, on top of commit `ba2b4ae` ("update plans"; Phase C is `6309fbf`).
-  One commit, message from the plan: "canvas: extrapolate dots between ticks". Files:
-  `src/sim/types.ts`, `src/sim/sim.ts`, `src/sim/publish.ts`, `src/sim/positions.ts`,
-  `src/sim/simBridge.ts`, `src/components/EventCanvas.tsx`, `scripts/perf/README.md`, `CLAUDE.md`
-  (the `EventCanvas.tsx` line), the plan's status line, this file. The user commits.
+- Phase D committed as `a2e6bef` ("extrapolate dots between ticks", on top of `ba2b4ae`; Phase C is
+  `6309fbf`). Uncommitted on top of it: the bridge watchdog fix, `src/sim/simBridge.ts` only
+  (`WORKER_ACKED_STALL_MS` 10 s; `ready()` also fails over when the in-flight input was acked but
+  no tick has landed for max(10 s, 3 × the previous tick's `tickMs`); the fallback message says
+  which timeout tripped), plus this file. Suggested message: "bridge: fall back when an
+  acknowledged tick never returns". The user commits.
 - Position buffer (`positions.ts`): `FLOATS_PER_DOT` 8 → **11**: `[x, y, extent, r, g, b, a,
   glow, vx, vy, tmax]`. `vx, vy` is the dot's velocity in world units per ms along its current
   segment; `tmax` is for how many ms that velocity holds. `fillPositions` derives them from two
@@ -112,10 +112,15 @@ dragsmoke M: worker 444 traveling, 0 off-path, 0 dangling, 1,442 consumed/s; inl
 1,444; no errors. `manualcheck.mjs`: A (click-to-fire 1 dot `count` 1, 2 fires, webhook border
 animates, win freeze/resume, prestige reset + post-prestige consume), A2 (bundle 1 dot `count` 3
 and per-dot 3 × 1, 9 consumed each), B ("!" button, subscriber-busy reason, 45 drops), C (broker
-bar 100%, prune 19 → 0) pass with no errors; D (kill the worker → inline) did **not** fall back in
-any of the three suite runs on the D build (mode stayed `worker` for 8 s) and fell back 2/2 in the
-suite on the pre-D build (same session, 3.05 s); `dcheck.mjs 10` on the D build fell back 10/10 and
-`dcheck2.mjs` (manualcheck's timing) 4/7 — the pre-existing watchdog gap, see Findings. canvascheck: GL M/W and 2D
+bar 100%, prune 19 → 0) pass with no errors; D (kill the worker → inline): before the watchdog
+fix it did **not** fall back in any of three suite runs on the D build (mode stayed `worker` for
+8 s) while the pre-D build fell back 2/2 in the suite (3.05 s) and `dcheck.mjs 10` on the D build
+10/10, `dcheck2.mjs` 4/7 — the pre-existing watchdog gap, see Findings. After the fix: manualcheck
+D falls back at 10.05 s ("tick acknowledged but not returned for 10017 ms") and consumes 15 in the
+3 s after; dcheck2 7/7 (3 × 3.0 s for kills that landed before the ack, 4 × 10.0 s for kills that
+landed between `busy` and `tick`); dragsmoke both modes clean on the fixed build (worker 444
+traveling, 0/0, 1,443/s; inline 444, 0/0, 1,442/s). manualcheck's and dcheck2's poll limits were
+raised from 8 / 6 s to 14 s so they outlast the 10 s timeout. canvascheck: GL M/W and 2D
 M/W draw from the 11-float buffer with no errors (W front canvas 74 / 50 pixels; M 0 is the known
 layout quirk). pausecheck: the pausing dot shrinks 6.5 → 3.96 extent with front pixels 90 → 36
 (WebGL) and 6.5 → 3.92, 68 → 26 (2D); no errors. tsc clean, lint 23/3, release test 4/4.
@@ -189,13 +194,16 @@ layout quirk). pausecheck: the pausing dot shrinks 6.5 → 3.96 extent with fron
   the frame cycle, which for a fixed delay after load is nearly phase-locked per build (same work
   per frame), so one build reads 0/3 and another 2/2 by accident; the exposed window is the
   worker's tick + reply time per frame (~3–4 ms of 16.7 at S, ~20%). Nothing in the bridge's flow
-  control changed in Phase D; the fix is the one below and still needs the user's choice. Until
-  then manualcheck D is a timing lottery, not a gate signal.
-- **Bridge watchdog gap (pre-existing, from B2; needs a user decision)**: `ready()` in
-  `src/sim/simBridge.ts` trips the 3 s stall watchdog only while the in-flight input is
-  unacknowledged. A worker that dies after `busy` and before `tick` wedges the sim with no
-  fallback. Fix options: a longer post-ack timeout (max(10 s, 3× recent `tickMs`)) or a worker
-  heartbeat during long ticks.
+  control changed in Phase D. Fixed the same day, see the next item.
+- **Bridge watchdog gap — fixed 2026-11-05 (user: "use your lean")**: `ready()` in
+  `src/sim/simBridge.ts` tripped the 3 s stall watchdog only while the in-flight input was
+  unacknowledged, so a worker that died after `busy` and before `tick` wedged the sim. Now an
+  acked input with no tick for max(`WORKER_ACKED_STALL_MS` = 10 s, 3 × the previous tick's
+  `tickMs`) also fails over. The heartbeat alternative was not viable: a tick is one synchronous
+  call, the worker cannot post anything while it runs. The 10 s floor is far above any tick seen
+  since Phase A (F 20 is 6 ms); a legitimately longer tick scales it by 3× its predecessor. One
+  observation from dcheck2: kills that land right after an input went out are still acked (the
+  terminate is not instant), so the 10 s path is what catches them.
 - **Future option, user request 2026-11-05: render bundles as distinct dots again** (plan, end of
   Phase C). Render-side only; Phase D's velocity floats apply per entry unchanged. Not scheduled.
 - Earlier findings that still hold: Phase C's plan gap (bundles gated to routes where they are
@@ -244,3 +252,5 @@ layout quirk). pausecheck: the pausing dot shrinks 6.5 → 3.96 extent with fron
   clean; manual checks A–C + A2 pass, D wedged 3/3 on the D build and 0/2 on the pre-D build
   (pre-existing watchdog gap; dcheck2 shows the kill landing between `busy` and `tick`);
   canvascheck/pausecheck both renderers pass; release test 4/4; tsc; lint 23/3.
+- 2026-11-05: bridge watchdog gap fixed (user decision, post-ack timeout 10 s / 3× tick):
+  manualcheck D falls back at 10.05 s, dcheck2 7/7, dragsmoke both modes clean; tsc; lint 23/3.
