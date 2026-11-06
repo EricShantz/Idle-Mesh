@@ -173,6 +173,14 @@ dots, are what the counters measure); `F` with `FTHROUGHPUT=300` ≥ 50 ticks/s;
 in both modes; the click-to-fire manual check shows one bundle dot per click with the right
 `count`. Commit: "sim: batch fires travel as one dot".
 
+Future option (user, 2026-11-05, not scheduled): draw a bundle as its `count` distinct dots again.
+Feasible render-side only: `fillPositions` would emit `count` entries per bundle dot, spread along the
+path behind it at the old batch stagger (−0.04 progress per event, clamped at the path start), with
+the sim untouched. Cost is the position buffer and draw count returning to per-event size (F 20:
+18k → 110k entries, main-thread fill + upload), so gate it: only below a live-event budget, or only
+when zoomed in past some threshold, or as a settings toggle. Queued and pausing bundles would still
+be one entry (they sit on a card). Phase D's velocity floats would apply per entry unchanged.
+
 ### Phase D — render-side interpolation (½ day)
 
 Goal: motion stays smooth at 60 frames when the sim ticks slower than that.

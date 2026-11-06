@@ -166,6 +166,10 @@ still the 8/10 flake described in Findings when it fails. tsc clean, lint 23/3, 
   and backlog pass); the worker is idle most of each frame, so Phase D (render interpolation)
   is cosmetic for this mesh on this machine and matters on slower ones. Phase E (flow mode) is
   not needed by the plan's definition of done (≥ 50 ticks/s, within 5% of production: met).
+- **Future option, user request 2026-11-05: render bundles as distinct dots again** (plan, end of
+  Phase C). Render-side only, `fillPositions` emitting `count` entries spread behind the bundle at
+  the old −0.04 stagger; gate it by a live-event budget or zoom level since the buffer returns to
+  per-event size. Not scheduled; do not do it inside another phase.
 - **Signature cap is display-identical**: `NodeCard.renderSlotRows` indexes `signature[capacity −
   1 − i]` when the string is longer than the capacity, i.e. it draws the first `capacity` chars;
   the sim now cuts the string to that prefix, so the card draws the same rows and the string
