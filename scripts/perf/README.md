@@ -14,6 +14,7 @@ npm run perf:renders -- L   # React renders/sec per component, store commits/sec
 npm run perf:trace -- L     # main-thread ms/s by Chrome event (script vs style/layout/paint)
 node scripts/perf/dragsmoke.mjs M   # drags a queue + broker mid-flight via the store; dots must stay on their cables, no errors
 npm run perf:profile -- U --worker   # CPU profile of the simulation worker thread (raw CDP over --remote-debugging-port)
+node scripts/perf/behavior.mjs U b15 --ticks=15   # same run with the sim capped at 15 ticks/s: income per SIM second must not move
 node scripts/perf/lines.mjs scripts/perf/.out/profile-L.cpuprofile .perf-dist/assets/index-*.js
 ```
 
@@ -28,7 +29,13 @@ webhook slow zone and the occupied-webhook drop). The simulation runs in a Web W
 takes an optional page URL, and `http://localhost:5198/Idle-Mesh/?inlineSim` runs it on the main
 thread instead for A/B comparisons (`behavior.mjs` reports `simMode`, `simTicksPerSec`, the worker's
 `tickMs`, the post-to-receive `roundTripMs`, and the share of frames whose input went out late or
-merged into the next). Dot objects are read through `window.__sim.dots()` / `byStatus()`, which are
+merged into the next). `--ticks=<n>` caps the bridge at n inputs per second
+(`window.__sim.setMaxTicksPerSec(n)`; frame deltas merge into fewer, longer ticks, as they do when the
+worker is slow). `behavior.mjs` also reports `simSeconds` and `consumedPerSimSec` /
+`droppedPerSimSec` / `earnedPerSimSec` over the summary's `simNow` delta — the numbers that must stay
+flat across tick rates — and `inputsClamped` / `clampLostMs`, the inputs over `MAX_FRAME_DT_MS` and the
+sim time the clamp discarded (why `simSeconds` can be less than `seconds`: the per-wall-second numbers
+fall by exactly that). Dot objects are read through `window.__sim.dots()` / `byStatus()`, which are
 asynchronous (a round trip to the worker). `SUBSPEED=10 PUBSPEED=9` env vars use non-maxed
 card levels so the per-card cooldown animations are active. `JSFLAGS=--no-turbo-inlining node
 scripts/perf/prof.mjs U` attributes time to the real functions inside the loop (V8 otherwise inlines

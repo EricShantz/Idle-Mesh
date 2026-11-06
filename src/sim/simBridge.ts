@@ -18,7 +18,7 @@
 // (null while in flight); the filled one comes back with the tick and the two swap. Never read a
 // buffer after transferring it (it is detached). The worker grows the buffer it holds when the
 // dot count outgrows it; the inline driver grows `spare` the same way.
-import { Sim, tickSections, type SimInput, type TickSummary, type TickSections } from './sim';
+import { Sim, tickSections, MAX_FRAME_DT_MS, type SimInput, type TickSummary, type TickSections } from './sim';
 import { FLOATS_PER_DOT } from './positions';
 import type { Mesh, EventDot } from './types';
 import type { MainToWorker, WorkerToMain, DebugQuery, DebugResult } from './protocol';
@@ -89,9 +89,11 @@ let onSummary: ((summary: TickSummary) => void) | null = null;
 let onIdle: (() => void) | null = null;
 
 /** Cumulative counters for the harness (window.__sim.stats()): ticks landed, time the worker
- *  spent in tick + fill, post-to-receive round trip on the main thread's clock, and frames that
- *  could / could not send an input (a skipped frame means the previous tick had not returned). */
-const stats = { ticks: 0, tickMsTotal: 0, roundTripMsTotal: 0, framesSent: 0, framesBusy: 0, inputsLate: 0, sections: { ...tickSections } as TickSections };
+ *  spent in tick + fill, post-to-receive round trip on the main thread's clock, frames that
+ *  could / could not send an input (a skipped frame means the previous tick had not returned),
+ *  and the inputs whose delta exceeded MAX_FRAME_DT_MS with the sim time that clamp discarded
+ *  (the sim then ran slower than wall time by that much). */
+const stats = { ticks: 0, tickMsTotal: 0, roundTripMsTotal: 0, framesSent: 0, framesBusy: 0, inputsLate: 0, inputsClamped: 0, clampLostMs: 0, maxInputDtMs: 0, sections: { ...tickSections } as TickSections };
 
 /** Every tick ends here, whichever driver produced it: the summary for simStats and the driver's
  *  listener (commitFrame), the ticks/s stat, and the buffer swap. */
@@ -291,9 +293,28 @@ export function reset(): void {
   driver?.reset();
 }
 
+/** Debug/harness cap on inputs per second (0 = none; `window.__sim.setMaxTicksPerSec(n)`,
+ *  `behavior.mjs --ticks=<n>`): a frame's input is held back until 1000/n ms have passed since
+ *  the last one went out, so the frame deltas accumulate into fewer, longer inputs exactly as
+ *  they do when the worker is slow (the sim still clamps each to MAX_FRAME_DT_MS). This is how
+ *  the harness measures income per sim second against the tick rate (scale-plan.md Phase B).
+ *  Frames held back count as busy in `stats` (their deltas merge into the next input). The
+ *  slack absorbs RAF jitter so a cap that divides the frame rate (60/30/15) lands on exact
+ *  frame multiples instead of skipping one now and then. */
+let maxTicksPerSec = 0;
+let lastInputAt = 0;
+const TICK_CAP_SLACK_MS = 5;
+export function setMaxTicksPerSec(n: number): void {
+  maxTicksPerSec = Number.isFinite(n) && n > 0 ? n : 0;
+}
+export function getMaxTicksPerSec(): number {
+  return maxTicksPerSec;
+}
+
 /** Whether an input may go out now. A stalled worker is replaced inline here. */
 export function canTick(): boolean {
   if (!driver) return false;
+  if (maxTicksPerSec > 0 && performance.now() - lastInputAt < 1000 / maxTicksPerSec - TICK_CAP_SLACK_MS) return false;
   if (driver.ready()) return true;
   // ready() may just have swapped a wedged worker for the inline driver, which is always ready.
   return driver.ready();
@@ -303,6 +324,9 @@ export function canTick(): boolean {
 export function tick(input: SimInput, late = false): void {
   if (late) stats.inputsLate++;
   else stats.framesSent++;
+  if (input.dtMs > MAX_FRAME_DT_MS) { stats.inputsClamped++; stats.clampLostMs += input.dtMs - MAX_FRAME_DT_MS; }
+  if (input.dtMs > stats.maxInputDtMs) stats.maxInputDtMs = input.dtMs;
+  lastInputAt = performance.now();
   driver?.tick(input);
 }
 
@@ -325,6 +349,9 @@ if (typeof window !== 'undefined') {
     summary: latestSummary,
     ticksPerSec: getSimTicksPerSec,
     stats: () => ({ ...stats, sections: { ...stats.sections } }),
+    /** Caps inputs per second (0 = none); see setMaxTicksPerSec. */
+    setMaxTicksPerSec,
+    maxTicksPerSec: getMaxTicksPerSec,
     /** Terminates the worker behind the bridge's back; the stall watchdog must fall back inline. */
     killWorker: () => { driver?.kill?.(); },
   };

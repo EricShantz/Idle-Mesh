@@ -1,6 +1,7 @@
 # Plan: smooth late game at 20 publishers of fan-out
 
-Status: in progress, see `scale-progress.md` (Phases A and A2 done on 2026-11-05; B is next). Written
+Status: in progress, see `scale-progress.md` (Phases A, A2 and B done on 2026-11-05; C is next; B left
+four balance decisions open, listed there). Written
 2026-11-05 after Phase 3 of `worker-refactor-plan.md` (the sim runs in a Web Worker). Execute the
 phases in order; each ends at a verified, committable state. `worker-refactor-plan.md` Phase 4
 (docs) should land first; it is independent of this plan.
@@ -126,11 +127,18 @@ Goal: the money a mesh earns per sim second does not depend on how many ticks th
 above the 10 ticks/s clamp. Today's evidence is mixed (see Findings); this phase measures instead
 of guessing.
 
-1. Harness switch: `behavior.mjs ... --ticks=<n>` makes the bridge send at most `n` inputs per
+1. **Done 2026-11-05** (`setMaxTicksPerSec` in `simBridge.ts`; `behavior.mjs` reports
+   `simSeconds`, the per-sim-second rates and the clamp loss; F at 20 publishers is worker-bound
+   at ~18 ticks/s, so it was run at 17.5/12/10.3 and the 10- and 2-publisher variants at 40–60/30/15;
+   the table is in `scale-progress.md`). Harness switch: `behavior.mjs ... --ticks=<n>` makes the bridge send at most `n` inputs per
    second (a `window.__sim.setMaxTicksPerSec(n)` debug hook on the bridge; inputs still carry the
    accumulated dt). Run U and F at 60, 30, 15 ticks/s; consumed/s per **sim** second (divide by
    `summary.simNow` delta, which `behavior.mjs` must start reporting) must be flat.
-2. For every rule that is not flat, make it a function of `dt`, not of the tick: the known
+2. **Audited 2026-11-05, no rule changed; decisions pending** (U, M, L, W and F with lifted caps are
+   flat within 0.3%; the rules that are not flat — the auto-publisher cooldown on irregular ticks,
+   the timed-subscriber release quantization, the capped-primary fork skip, the cap arbitration
+   order and the per-tick drop fall — are listed with their measured effect and a proposed form in
+   `scale-progress.md` → "Open balance decisions"). For every rule that is not flat, make it a function of `dt`, not of the tick: the known
    candidates are the auto-publisher poll (one fire per publisher per 100 ms poll, which caps the
    fire rate at 10/s although `publishSpeed` 10 promises a 50 ms cooldown; decide with the user
    whether to keep that cap, it is a balance change either way), the DMQ one-release-per-tick, and
