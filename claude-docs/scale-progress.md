@@ -28,11 +28,12 @@ and stop. What remains needs the user:
   TIE meshes with and without topic subscriptions: relays per cluster), `dropprobe.mjs` (drop
   reasons, queue backlog; `QBUF`), `dmqdrain.mjs` (DMQ fill and drain). Labels `q1`, `q1-10`,
   `q1-2`, `q1cap`. Suggested message: "sim: admit a batch whole when the queue backlog is below
-  the buffer". Also uncommitted, same day: `CLUSTER_THROUGHPUT_MULTIPLIER` 1.4 → **1.3**
+  the buffer". Also uncommitted, same day: `CLUSTER_THROUGHPUT_MULTIPLIER` 1.4 → **1.25** (via 1.3)
   (`src/store/upgradeConfig.ts`, comment updated; `claude-docs/upgrades.md`): at 24 publishers the
-  three clusters cost ~$526B at 1.4 (bridged clusters at level ~50, ~$100B per level), ~$36B at 1.3;
+  three clusters cost ~$526B at 1.4 (bridged clusters at level ~50, ~$100B per level), ~$36B at 1.3,
+  ~$9B at 1.25 (~$1.1B per level at the top);
   a cost-only change, no sim rule, so the harness was not rerun for it. Suggested message:
-  "balance: cluster throughput cost x1.4 -> x1.3". Lint 23/3, tsc clean, tests 10/10, preview
+  "balance: cluster throughput cost x1.4 -> x1.25". Lint 23/3, tsc clean, tests 10/10, preview
   server stopped.
 - Decision 3 is committed as `494a942` ("each link copy is its own relay attempt") on top of Phase
   F `dfbe31d` (Phase D is `a2e6bef`). **Uncommitted on top of it: worker-refactor Phase 4, docs
@@ -355,8 +356,9 @@ the ack; E one dot per cable, 12/24/24, 960/0). tsc clean, lint 23/3, tests 10/1
   `dev-notes.md` stale references fixed and Rounds 4–5 appended, `event-dot-lifecycle.md`
   rewritten around `Sim.tick`, `component-types.md`/`roadmap.md` references fixed, the worker
   plan marked done; no code; tsc clean, lint 23/3.
-- 2026-11-06: cluster throughput cost multiplier 1.4 → 1.3 (user: still the late-game
-  bottleneck; at 24 publishers the clusters cost ~$526B → ~$36B). Cost only; tsc; lint 23/3.
+- 2026-11-06: cluster throughput cost multiplier 1.4 → 1.3 → 1.25 (user, twice: still the
+  late-game bottleneck; at 24 publishers the clusters cost ~$526B → ~$36B → ~$9B). Cost only;
+  tsc; lint 23/3.
 - 2026-11-06: queue admission regression (Phase C) found from the user's report and fixed: a
   bundle is admitted whole when last tick's backlog is below the buffer; `QBUF` harness knob;
   3-slot queues under 6-event batches 0 → 230,696 consumed/s; S/M/L/U/W and F 20/10/2/caps vs
