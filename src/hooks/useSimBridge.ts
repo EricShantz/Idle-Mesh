@@ -14,7 +14,8 @@ import type { GameComponent } from '../sim/types';
 // that compares the identity of the four fields the rules read; a prestige resets the sim (dots
 // cleared, dot ids restart).
 
-/** Smoothed FPS for the sidebar stat and adaptive coin pop throttling.
+/** Smoothed render FPS for the adaptive coin pop throttling (the sidebar shows the sim's tick
+ *  rate instead; see getSimTicksPerSec in simBridge.ts).
  *  Smoothed in frame-time space (an EMA of the raw, unclamped frame delta, then inverted):
  *  averaging instantaneous 1000/dt values over-reads badly when frames are uneven, and using
  *  the clamped dt put a floor of 1000/MAX_FRAME_DT_MS under the number — it could never show
@@ -24,12 +25,6 @@ let _smoothedDt = 1000 / 60;
 const FPS_SMOOTH = 0.1; // low-pass weight on frame time (converges in ~20 frames)
 const FPS_PAUSE_MS = 1000;
 export function getSmoothedFps() { return 1000 / _smoothedDt; }
-
-/** Lowest smoothed FPS seen this session (shown on the end-game stats). Session-level, not saved. */
-let _minFps = Infinity;
-let _fpsFrameCount = 0;
-const MIN_FPS_WARMUP_FRAMES = 120; // skip startup frames so page load doesn't count as a dip
-export function getMinFps() { return _minFps === Infinity ? getSmoothedFps() : _minFps; }
 
 /** The first-drop tutorial fires once, 1 s after the sim reports its first drop. */
 let firstDropTutorialShown = false;
@@ -120,13 +115,7 @@ export function useSimBridge() {
       lastTimeRef.current = time;
 
       // Update smoothed frame time for the fps stat and adaptive coin pop throttling
-      if (rawDt > 0 && rawDt < FPS_PAUSE_MS) {
-        _smoothedDt += FPS_SMOOTH * (rawDt - _smoothedDt);
-        _fpsFrameCount++;
-        if (_fpsFrameCount > MIN_FPS_WARMUP_FRAMES) {
-          _minFps = Math.min(_minFps, getSmoothedFps());
-        }
-      }
+      if (rawDt > 0 && rawDt < FPS_PAUSE_MS) _smoothedDt += FPS_SMOOTH * (rawDt - _smoothedDt);
 
       const state = useGameStore.getState();
 

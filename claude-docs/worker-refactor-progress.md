@@ -17,7 +17,10 @@ write "Done" here.
 ## State of the tree
 
 - Phases 0–3 are done and the tree is at a commit point (uncommitted; suggested message from the
-  plan: "sim: run the simulation in a Web Worker"). The user commits.
+  plan: "sim: run the simulation in a Web Worker"). The user commits. Later the same day the
+  working tree also received the post-gate changes listed in `scale-progress.md` → State of the
+  tree (stats UI, worker ack watchdog, two sim fast paths with section timers, the `F` harness
+  scale); that file suggests a commit split.
 - `src/sim/`: `types.ts`, `meshRules.ts`, `publish.ts`, `sim.ts`, `positions.ts`, `simStats.ts` as
   after Phase 2, plus:
   - `protocol.ts` (type-only): `MainToWorker` = `mesh` | `move` | `input` (with the transferred
@@ -47,8 +50,11 @@ write "Done" here.
   no input is sent and no frame time accumulates (as before). The fps stat
   (`getSmoothedFps`/`getMinFps`) is unchanged and still lives here; imports in `gameStore.ts`,
   `Sidebar.tsx`, `WinScreen.tsx`, `App.tsx` updated.
-- `Sidebar.tsx`: "Sim rate N ticks/s" row under "Frame rate" (gray ≥ 50, amber ≥ 10, red below,
-  tooltip says the sim dilates below 10). `WinScreen` keeps `getMinFps`.
+- `Sidebar.tsx`: the "Frame rate" row is gone (user request after Gate 3: it no longer says
+  anything about game speed); "Sim rate N ticks/s" replaces it (gray ≥ 50, amber ≥ 10, red below,
+  tooltip says the sim dilates below 10). `WinScreen` shows "Lowest sim rate" from
+  `getMinSimTicksPerSec` (simBridge) instead of the lowest fps; `getMinFps` was removed.
+  `getSmoothedFps` stays in `useSimBridge.ts` for the coin-pop throttle only.
 - `window.__sim` (all builds): `mode()`, `liveDots()` (latest summary), `byStatus()` and `dots()`
   (**Promises**: a round trip to the worker), `positions()`, `summary()`, `ticksPerSec()`,
   `stats()` (cumulative: ticks, tickMsTotal, roundTripMsTotal, framesSent, framesBusy,
@@ -86,10 +92,12 @@ write "Done" here.
   ticks/s is about ±3 (49.1–55 across seven U runs). The plan's "ticks/s ≥ 55 at U" is therefore
   met only sometimes in headless; on a real GPU browser the main thread has far less to do per
   frame. Possible later step (not done, would be a cadence change): decouple ticks from frames.
-- **Consumed/sec at U tracks ticks/s even above 10 ticks/s** (~+250 consumed/s per tick/s across
-  wbase/p1/p2/p3 and the U re-runs: 49.9 ticks → 13.0k, 54 → 14.0k, 57.8 → 14.4k). Some rule is
-  per-tick rather than per-sim-second (queue releases are gated per tick). Pre-existing, not
-  changed; it means the U gate is really "ticks/s within noise of the baseline fps".
+- **Consumed/sec at U correlates with ticks/s even above 10 ticks/s** (~+250 consumed/s per
+  tick/s across wbase/p1/p2/p3 and the U re-runs: 49.9 ticks → 13.0k, 54 → 14.0k, 57.8 → 14.4k).
+  Cause not established: the earlier guess "some rule is per-tick" is unproven (queue releases are
+  timing-based, not one-per-tick); long ticks losing sim time to the 100 ms clamp is the other
+  candidate. `scale-plan.md` Phase B measures it. For this gate it means "ticks/s within noise of
+  the baseline fps".
 - **Inline re-entry bug caught by `dragsmoke.mjs` with `?inlineSim`** (fixed): inline,
   `bridge.tick` runs the tick and the idle callback synchronously, so the frame's "waiting" flag
   must be cleared before the call. Run dragsmoke in both modes after any driver change.
@@ -104,6 +112,11 @@ write "Done" here.
   `overlap.mjs`) that read `s.eventDots`; not the gate's scripts, left alone.
 - The frame-rate row in the Sidebar never had a tooltip (the plan assumed one); the Sim rate row
   has one.
+- Post-gate fix: the stall watchdog originally waited for the **tick**; on the player's 20-publisher
+  mesh (`scale-plan.md`) one tick exceeded 3 s, the bridge declared the worker dead and fell back
+  inline mid-run. The worker now posts `busy` the moment it picks up an input and the watchdog
+  trips only when that ack is missing. `manualcheck.mjs` section D (terminate the worker) still
+  exercises the fallback.
 - Typing: transferring buffers needs `Float32Array<ArrayBuffer>` (TS 5.7+ generic typed arrays);
   `new Float32Array(n)` and `new Float32Array(arrayBuffer)` give that, bare `Float32Array` does not.
 - `prof.mjs`'s profile keys are `fn @ assets/index-<hash>.js:line` in the perf build, so the old

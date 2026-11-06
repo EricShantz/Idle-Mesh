@@ -5,7 +5,7 @@ import { WIN_THRESHOLD } from '../store/upgradeConfig';
 import { formatMoney } from '../utils/formatMoney';
 import { PixelCharacter } from './IntroSequence';
 import { useTypewriter } from '../hooks/useTypewriter';
-import { getMinFps } from '../hooks/useSimBridge';
+import { getMinSimTicksPerSec } from '../sim/simBridge';
 
 // End-game overlay. Shown once per save when a single run's earnings reach WIN_THRESHOLD.
 // The game loop and auto-publisher freeze while `showWinScreen` is set (see useSimBridge).
@@ -148,7 +148,7 @@ function WinScreenContent() {
   const eventsDropped = useGameStore(s => s.eventsDropped);
   const components = useGameStore(s => s.components);
   // Sampled once at mount: the loop is frozen while this screen is up, so it can't change.
-  const [minFps] = useState(() => Math.round(getMinFps()));
+  const [minTicks] = useState(() => Math.round(getMinSimTicksPerSec()));
 
   // phase 0 = banner + confetti, 1 = Dave walks in and starts talking
   const [phase, setPhase] = useState(0);
@@ -170,7 +170,7 @@ function WinScreenContent() {
     { label: 'Events consumed', value: eventsConsumed.toLocaleString() },
     { label: 'Events dropped', value: eventsDropped.toLocaleString() },
     { label: 'Mesh size', value: components.length.toLocaleString() },
-    { label: 'Lowest frame rate', value: `${minFps} fps` },
+    { label: 'Lowest sim rate', value: `${minTicks} ticks/s` },
     { label: 'Times prestiged', value: prestige.count.toLocaleString() },
   ];
 
