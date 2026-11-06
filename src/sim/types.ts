@@ -29,6 +29,10 @@ export type EventDot = {
   path: { x: number; y: number }[];
   progress: number;
   speed: number;
+  /** Events this dot stands for. A batch fire travels as one dot with count = fireCount where that
+   *  is exact for its route (see buildPublishDots); every rule that counts events — broker relay
+   *  slots, queue/DMQ buffer slots, consumes, drops, the slot signatures — uses it. */
+  count: number;
   status: 'traveling' | 'pausing' | 'queued' | 'dropped' | 'consumed';
   pauseStartTime?: number;
   queuedAtNodeId?: string;

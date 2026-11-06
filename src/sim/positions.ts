@@ -78,6 +78,9 @@ export function fillPositions(dots: EventDot[], components: GameComponent[], now
   let n = 0;
   for (const dot of dots) {
     let extent: number, glow: number, a: number;
+    // A bundle (count > 1, see EventDot.count) draws as one slightly fuller dot: the sprite
+    // scales with its extent, by 1 + 0.15·log2(count) (x1.15 for 2 events, x1.39 for 6).
+    const size = dot.count === 1 ? 1 : 1 + 0.15 * Math.log2(dot.count);
     if (dot.status === 'traveling' || dot.status === 'queued') {
       const queue = dot.status === 'queued' && dot.queuedAtNodeId ? componentById.get(dot.queuedAtNodeId) : undefined;
       if (queue) {
@@ -85,11 +88,11 @@ export function fillPositions(dots: EventDot[], components: GameComponent[], now
       } else {
         pathPos(dot.path, dot.progress);
       }
-      extent = GLOW_EXTENT; glow = GLOW_LIVE;
+      extent = GLOW_EXTENT * size; glow = GLOW_LIVE;
       a = Math.max(0, dot.opacity);
       if (a <= 0) continue;
     } else if (dot.status === 'dropped') {
-      posX = dot.dropX ?? dot.path[0].x; posY = dot.dropY ?? dot.path[0].y; extent = DOT_RADIUS; glow = GLOW_DROPPED;
+      posX = dot.dropX ?? dot.path[0].x; posY = dot.dropY ?? dot.path[0].y; extent = DOT_RADIUS * size; glow = GLOW_DROPPED;
       a = Math.max(0, dot.opacity);
       if (a <= 0) continue;
     } else if (dot.status === 'pausing') {
@@ -103,7 +106,7 @@ export function fillPositions(dots: EventDot[], components: GameComponent[], now
       const effectiveConsumeDuration = CONSUME_DURATION * Math.pow(0.95, fasterConsumptionLevel);
       const elapsed = nowMs - (dot.pauseStartTime ?? 0);
       const shrinkProgress = Math.max(0, 1 - elapsed / effectiveConsumeDuration);
-      extent = GLOW_EXTENT * shrinkProgress; glow = GLOW_PAUSING;
+      extent = GLOW_EXTENT * size * shrinkProgress; glow = GLOW_PAUSING;
       a = Math.max(0, dot.opacity * shrinkProgress);
     } else {
       continue;

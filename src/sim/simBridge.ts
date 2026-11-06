@@ -18,9 +18,9 @@
 // (null while in flight); the filled one comes back with the tick and the two swap. Never read a
 // buffer after transferring it (it is detached). The worker grows the buffer it holds when the
 // dot count outgrows it; the inline driver grows `spare` the same way.
-import { Sim, tickSections, MAX_FRAME_DT_MS, type SimInput, type TickSummary, type TickSections } from './sim';
+import { Sim, tickSections, byStatusOf, MAX_FRAME_DT_MS, type SimInput, type TickSummary, type TickSections } from './sim';
 import { FLOATS_PER_DOT } from './positions';
-import type { Mesh, EventDot } from './types';
+import type { Mesh } from './types';
 import type { MainToWorker, WorkerToMain, DebugQuery, DebugResult } from './protocol';
 
 export type SimMode = 'worker' | 'inline';
@@ -114,12 +114,6 @@ function receiveTick(summary: TickSummary, buf: Float32Array<ArrayBuffer>, count
   positions.count = count;
   onSummary?.(summary);
   onIdle?.();
-}
-
-function byStatusOf(dots: EventDot[]): Record<string, number> {
-  const by: Record<string, number> = {};
-  for (const d of dots) by[d.status] = (by[d.status] ?? 0) + 1;
-  return by;
 }
 
 // ---- drivers ----
@@ -338,11 +332,13 @@ export function noteBusyFrame(): void {
 // Debug / harness hook, present in all builds like window.useGameStore: the dots live in the
 // sim (possibly in the worker), so the perf scripts (scripts/perf/*.mjs) read them from here.
 // `dots()` and `byStatus()` are asynchronous (a round trip to the worker); `liveDots()`,
-// `positions()`, `summary()` and `ticksPerSec()` are the main thread's latest copies.
+// `liveEvents()` (a bundle dot stands for several events), `positions()`, `summary()` and
+// `ticksPerSec()` are the main thread's latest copies.
 if (typeof window !== 'undefined') {
   (window as unknown as { __sim: unknown }).__sim = {
     mode: getMode,
     liveDots: () => latest?.liveDots ?? 0,
+    liveEvents: () => latest?.liveEvents ?? 0,
     byStatus: () => driver ? driver.debug('byStatus') : Promise.resolve({}),
     dots: () => driver ? driver.debug('dots') : Promise.resolve([]),
     positions: getPositions,

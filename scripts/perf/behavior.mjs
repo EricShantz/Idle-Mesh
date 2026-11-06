@@ -43,12 +43,17 @@ const r = await page.evaluate((ms) => new Promise(res => {
   const s0 = window.useGameStore.getState();
   const start = { consumed: s0.eventsConsumed, dropped: s0.eventsDropped, earned: s0.totalEarned, t: performance.now(), stats: window.__sim.stats(), simNow: window.__sim.summary()?.simNow ?? 0 };
   const dotSamples = []; const queuedSamples = []; const pausingSamples = []; const tickRateSamples = [];
+  // Events (a bundle dot stands for `count` events) next to dots: liveEvents / <status>Events
+  const eventSamples = []; const queuedEventSamples = []; const pausingEventSamples = [];
   // byStatus is a round trip to the sim worker (the dots live there); liveDots is the latest summary's count
   const sampler = setInterval(async () => {
     const by = await window.__sim.byStatus();
     dotSamples.push(window.__sim.liveDots());
+    eventSamples.push(window.__sim.liveEvents?.() ?? window.__sim.liveDots());
     queuedSamples.push(by.queued ?? 0);
     pausingSamples.push(by.pausing ?? 0);
+    queuedEventSamples.push(by.queuedEvents ?? by.queued ?? 0);
+    pausingEventSamples.push(by.pausingEvents ?? by.pausing ?? 0);
     tickRateSamples.push(window.__sim.ticksPerSec());
   }, 500);
   let frames = 0;
@@ -87,6 +92,8 @@ const r = await page.evaluate((ms) => new Promise(res => {
       earnedPerSimSec: +((s.totalEarned - start.earned) / Math.max(simSec, 1e-9)).toFixed(2),
       avgLiveDots: avg(dotSamples), maxLiveDots: Math.max(...dotSamples),
       avgQueued: avg(queuedSamples), avgPausing: avg(pausingSamples),
+      avgLiveEvents: avg(eventSamples), maxLiveEvents: Math.max(...eventSamples),
+      avgQueuedEvents: avg(queuedEventSamples), avgPausingEvents: avg(pausingEventSamples),
       coinPopsNow: s.coinPops.length,
       renderer: window.__eventCanvasRenderer, simMode: window.__sim.mode(), cards: s.components.length, connections: s.connections.length,
     });

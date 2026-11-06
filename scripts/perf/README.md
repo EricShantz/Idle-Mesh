@@ -36,7 +36,10 @@ worker is slow). `behavior.mjs` also reports `simSeconds` and `consumedPerSimSec
 flat across tick rates — and `inputsClamped` / `clampLostMs`, the inputs over `MAX_FRAME_DT_MS` and the
 sim time the clamp discarded (why `simSeconds` can be less than `seconds`: the per-wall-second numbers
 fall by exactly that). Dot objects are read through `window.__sim.dots()` / `byStatus()`, which are
-asynchronous (a round trip to the worker). `SUBSPEED=10 PUBSPEED=9` env vars use non-maxed
+asynchronous (a round trip to the worker). A dot can stand for several events (a batch fire travels
+as one dot with `count` where that is exact, see `EventDot.count`): `liveDots` / `avgLiveDots` count
+dots, `liveEvents` / `avgLiveEvents` events, and `byStatus()` reports both (`queued` dots,
+`queuedEvents` events); the consumed/dropped counters are always events. `SUBSPEED=10 PUBSPEED=9` env vars use non-maxed
 card levels so the per-card cooldown animations are active. `JSFLAGS=--no-turbo-inlining node
 scripts/perf/prof.mjs U` attributes time to the real functions inside the loop (V8 otherwise inlines
 the whole frame into `loop`); absolute speed is lower with it. `behavior.mjs` output includes `renderer` (`webgl` or `2d`) so you can tell which

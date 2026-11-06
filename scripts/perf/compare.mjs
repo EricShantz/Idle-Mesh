@@ -4,7 +4,7 @@ const [, , A, B, scalesArg] = process.argv;
 const scales = (scalesArg ?? 'S,M,L').split(',');
 const read = (l, s) => { try { return JSON.parse(fs.readFileSync(new URL(`./.out/behavior-${l}-${s}.json`, import.meta.url), 'utf8')); } catch { return null; } };
 // The per-sim-second keys exist only in labels recorded since behavior.mjs got --ticks; a key missing on either side is skipped.
-const keys = ['realFps', 'simTicksPerSec', 'consumedPerSec', 'droppedPerSec', 'earnedPerSec', 'consumedPerSimSec', 'earnedPerSimSec', 'avgLiveDots', 'maxLiveDots', 'avgQueued', 'avgPausing'];
+const keys = ['realFps', 'simTicksPerSec', 'tickMs', 'consumedPerSec', 'droppedPerSec', 'earnedPerSec', 'consumedPerSimSec', 'droppedPerSimSec', 'earnedPerSimSec', 'avgLiveDots', 'maxLiveDots', 'avgLiveEvents', 'avgQueued', 'avgPausing', 'avgQueuedEvents', 'avgPausingEvents'];
 for (const s of scales) {
   const a = read(A, s), b = read(B, s);
   if (!a || !b) { console.log(`scale ${s}: missing ${!a ? A : B}`); continue; }
