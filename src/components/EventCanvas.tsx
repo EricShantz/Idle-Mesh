@@ -6,13 +6,18 @@ import { FLOATS_PER_DOT, DOT_RADIUS, GLOW_RADIUS, GLOW_EXTENT, GLOW_DROPPED, GLO
 // The dots are drawn from the position buffer the sim fills once per tick (src/sim/positions.ts:
 // [x, y, extent, r, g, b, a, glow] per drawable dot). The canvas never sees dot objects or the
 // store; the interpolation, queue snap, pausing shrink and color parsing live in the sim.
+//
+// Two canvases, because pausing dots sit above the node cards (z-index 25) while every other dot
+// sits below them (19). Both are WebGL point-sprite surfaces fed the same buffer; a per-context
+// uniform tells the vertex shader which half of the entries to keep (glow 2 on the front canvas,
+// everything else on the back). The 2D sprite path is the fallback for either canvas when WebGL
+// is unavailable.
 
 // Sprites are rendered at this many pixels per world unit so they stay sharp when zoomed in.
 const SPRITE_PX_PER_UNIT = 8;
 
 // ---------------------------------------------------------------------------------------------
-// 2D path. Used for the front canvas (the handful of pausing dots, which shrink and sit above
-// the node cards) and as the whole-scene fallback when WebGL is unavailable.
+// 2D path: the whole-scene fallback when WebGL is unavailable (either canvas).
 // ---------------------------------------------------------------------------------------------
 
 // A live dot is a solid core with a radial-gradient glow over it. Both only depend on the
@@ -85,14 +90,39 @@ function drawEntry(ctx: CanvasRenderingContext2D, data: Float32Array, o: number,
   ctx.globalAlpha = 1;
 }
 
+/** 2D fallback: clear the canvas and stamp every entry whose `front`-ness matches the canvas. */
+function render2d(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  data: Float32Array,
+  count: number,
+  front: boolean,
+  view: ViewRect,
+  tx: number,
+  ty: number,
+  s: number,
+) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (count === 0) return;
+  ctx.setTransform(s, 0, 0, s, tx, ty);
+  for (let i = 0; i < count; i++) {
+    const o = i * FLOATS_PER_DOT;
+    if ((data[o + 7] === GLOW_PAUSING) === front) drawEntry(ctx, data, o, view);
+  }
+}
+
 // ---------------------------------------------------------------------------------------------
-// WebGL path for the back canvas (traveling, queued and dropped dots — i.e. nearly all of them).
-// Every dot is one point-sprite vertex; the fragment shader reproduces the 2D sprite (solid core,
-// radial glow clipped at GLOW_RADIUS) so the look is the same. The position buffer is uploaded
-// as-is (its layout is the vertex layout) in one buffer upload and one draw call per frame, so
-// drawing no longer costs a canvas API call per dot — at several thousand dots the per-dot
-// drawImage calls were the biggest single slice of the frame. Pausing entries (glow 2) sit in
-// the same buffer for the front canvas; the vertex shader clips them away here.
+// WebGL path. Every dot is one point-sprite vertex; the fragment shader reproduces the 2D sprite
+// (solid core, radial glow clipped at GLOW_RADIUS) so the look is the same. The position buffer
+// is uploaded as-is (its layout is the vertex layout) in one buffer upload and one draw call per
+// canvas per frame, so drawing no longer costs a canvas API call per dot — at several thousand
+// dots the per-dot drawImage calls were the biggest single slice of the frame (first on the back
+// canvas, then, at ~10k pausing dots in the late game, on the front one). Each context draws its
+// own half of the buffer: `u_front` selects pausing entries (glow 2) on the front canvas and
+// everything else on the back one; the vertex shader clips the rest away. A pausing entry's
+// shrink is already in its extent and alpha, so the point sprite shrinks exactly as the 2D stamp
+// did.
 // ---------------------------------------------------------------------------------------------
 
 const VERT_SRC = `
@@ -104,11 +134,13 @@ uniform vec2 u_pan;
 uniform float u_zoom;
 uniform float u_dpr;
 uniform vec2 u_res;
+uniform float u_front;
 varying vec4 v_color;
 varying float v_glow;
 varying float v_px;
 void main() {
-  if (a_glow > 1.5) { // pausing dot: drawn on the front canvas, clipped away here
+  // pausing dots (glow 2) belong to the front canvas, the rest to the back: clip the other half
+  if ((a_glow > 1.5) != (u_front > 0.5)) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     gl_PointSize = 1.0;
     v_px = 1.0;
@@ -175,7 +207,8 @@ function compileShader(gl: WebGLRenderingContext, type: number, src: string): We
   return sh;
 }
 
-function createGlRenderer(canvas: HTMLCanvasElement): GlRenderer | null {
+/** A WebGL point-sprite renderer on `canvas`; `front` fixes which half of the buffer it draws. */
+function createGlRenderer(canvas: HTMLCanvasElement, front: boolean): GlRenderer | null {
   const gl = canvas.getContext('webgl', {
     alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false,
   });
@@ -212,10 +245,11 @@ function createGlRenderer(canvas: HTMLCanvasElement): GlRenderer | null {
   gl.clearColor(0, 0, 0, 0);
 
   const u = (name: string) => gl.getUniformLocation(program, name)!;
+  gl.uniform1f(u('u_front'), front ? 1 : 0); // fixed for the life of the context
   return { gl, uPan: u('u_pan'), uZoom: u('u_zoom'), uDpr: u('u_dpr'), uRes: u('u_res') };
 }
 
-/** Upload the position buffer (`count` entries) and draw every back-canvas dot in one call. */
+/** Clear, upload the position buffer (`count` entries) and draw this canvas's half in one call. */
 function renderGl(
   r: GlRenderer,
   canvas: HTMLCanvasElement,
@@ -236,6 +270,36 @@ function renderGl(
   gl.drawArrays(gl.POINTS, 0, count);
 }
 
+// ---------------------------------------------------------------------------------------------
+// A drawing surface: one canvas with either a WebGL renderer or the 2D fallback. Decided once —
+// a canvas can't switch context types after the first getContext. A lost GL context (GPU reset,
+// too many contexts) is recreated on restore; nothing is drawn on that canvas in between.
+// ---------------------------------------------------------------------------------------------
+
+type Surface = {
+  canvas: HTMLCanvasElement;
+  glr: GlRenderer | null;
+  ctx: CanvasRenderingContext2D | null; // the 2D fallback, only when WebGL was unavailable
+  dispose: () => void;
+};
+
+function createSurface(canvas: HTMLCanvasElement, front: boolean): Surface {
+  const surface: Surface = { canvas, glr: createGlRenderer(canvas, front), ctx: null, dispose: () => {} };
+  if (surface.glr) {
+    const onLost = (e: Event) => { e.preventDefault(); surface.glr = null; };
+    const onRestored = () => { surface.glr = createGlRenderer(canvas, front); };
+    canvas.addEventListener('webglcontextlost', onLost);
+    canvas.addEventListener('webglcontextrestored', onRestored);
+    surface.dispose = () => {
+      canvas.removeEventListener('webglcontextlost', onLost);
+      canvas.removeEventListener('webglcontextrestored', onRestored);
+    };
+  } else {
+    surface.ctx = canvas.getContext('2d');
+  }
+  return surface;
+}
+
 export function EventCanvas() {
   const backCanvasRef = useRef<HTMLCanvasElement>(null);
   const frontCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -247,29 +311,19 @@ export function EventCanvas() {
     const frontCanvas = frontCanvasRef.current;
     if (!backCanvas || !frontCanvas) return;
 
-    // Back canvas: WebGL when available, otherwise the 2D sprite path. Decided once — a canvas
-    // can't switch context types after the first getContext.
-    let glr: GlRenderer | null = createGlRenderer(backCanvas);
-    const backCtx: CanvasRenderingContext2D | null = glr ? null : backCanvas.getContext('2d');
-    const frontCtx = frontCanvas.getContext('2d')!;
-    (window as unknown as { __eventCanvasRenderer?: string }).__eventCanvasRenderer = glr ? 'webgl' : '2d';
-
-    // A lost GL context (GPU reset, too many contexts) is recreated on restore; nothing is drawn
-    // on the back canvas in between.
-    const onLost = (e: Event) => { e.preventDefault(); glr = null; };
-    const onRestored = () => { glr = createGlRenderer(backCanvas); };
-    if (!backCtx) {
-      backCanvas.addEventListener('webglcontextlost', onLost);
-      backCanvas.addEventListener('webglcontextrestored', onRestored);
-    }
+    const back = createSurface(backCanvas, false);
+    const front = createSurface(frontCanvas, true);
+    const glCount = (back.glr ? 1 : 0) + (front.glr ? 1 : 0);
+    (window as unknown as { __eventCanvasRenderer?: string }).__eventCanvasRenderer =
+      glCount === 2 ? 'webgl' : glCount === 0 ? '2d' : 'mixed';
 
     // Assigning canvas.width/height reallocates the backing store (and implicitly clears), so
     // only do it when the on-screen size or DPR actually changes — not every frame.
     let sizedW = 0;
     let sizedH = 0;
     let sizedDpr = 0;
-    // The front canvas only ever holds pausing dots (a handful). Skip its full-screen clear
-    // on frames where it was empty and stays empty.
+    // The front canvas only ever holds pausing dots. Skip its clear, upload and draw on frames
+    // where it was empty and stays empty (most of the early game).
     let frontHadContent = false;
 
     const render = () => {
@@ -298,7 +352,7 @@ export function EventCanvas() {
       const ty = vp.panY * dpr;
       const s = vp.zoom * dpr;
 
-      // Visible world rect (padded by a glow radius) for the 2D paths' culling
+      // Visible world rect (padded by a glow radius) for the 2D path's culling
       const view: ViewRect = {
         left: -vp.panX / vp.zoom - GLOW_EXTENT,
         top: -vp.panY / vp.zoom - GLOW_EXTENT,
@@ -308,29 +362,20 @@ export function EventCanvas() {
 
       // Front canvas: pausing dots only
       if (frontHadContent || hasPausing) {
-        frontCtx.setTransform(1, 0, 0, 1, 0, 0);
-        frontCtx.clearRect(0, 0, frontCanvas.width, frontCanvas.height);
+        const n = hasPausing ? count : 0; // 0 entries = clear only
+        if (front.glr) {
+          renderGl(front.glr, frontCanvas, buf, n, vp, dpr);
+        } else if (front.ctx) {
+          render2d(front.ctx, frontCanvas, buf, n, true, view, tx, ty, s);
+        }
       }
       frontHadContent = hasPausing;
-      if (hasPausing) {
-        frontCtx.setTransform(s, 0, 0, s, tx, ty);
-        for (let i = 0; i < count; i++) {
-          const o = i * FLOATS_PER_DOT;
-          if (buf[o + 7] === GLOW_PAUSING) drawEntry(frontCtx, buf, o, view);
-        }
-      }
 
       // Back canvas: everything else
-      if (glr) {
-        renderGl(glr, backCanvas, buf, count, vp, dpr);
-      } else if (backCtx) {
-        backCtx.setTransform(1, 0, 0, 1, 0, 0);
-        backCtx.clearRect(0, 0, backCanvas.width, backCanvas.height);
-        backCtx.setTransform(s, 0, 0, s, tx, ty);
-        for (let i = 0; i < count; i++) {
-          const o = i * FLOATS_PER_DOT;
-          if (buf[o + 7] !== GLOW_PAUSING) drawEntry(backCtx, buf, o, view);
-        }
+      if (back.glr) {
+        renderGl(back.glr, backCanvas, buf, count, vp, dpr);
+      } else if (back.ctx) {
+        render2d(back.ctx, backCanvas, buf, count, false, view, tx, ty, s);
       }
 
       animRef.current = requestAnimationFrame(render);
@@ -339,8 +384,8 @@ export function EventCanvas() {
     animRef.current = requestAnimationFrame(render);
     return () => {
       cancelAnimationFrame(animRef.current);
-      backCanvas.removeEventListener('webglcontextlost', onLost);
-      backCanvas.removeEventListener('webglcontextrestored', onRestored);
+      back.dispose();
+      front.dispose();
     };
   }, [viewportApi]);
 
