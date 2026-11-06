@@ -1,6 +1,6 @@
 # Plan: smooth late game at 20 publishers of fan-out
 
-Status: in progress, see `scale-progress.md` (Phase A done on 2026-11-05; A2 is next). Written
+Status: in progress, see `scale-progress.md` (Phases A and A2 done on 2026-11-05; B is next). Written
 2026-11-05 after Phase 3 of `worker-refactor-plan.md` (the sim runs in a Web Worker). Execute the
 phases in order; each ends at a verified, committable state. `worker-refactor-plan.md` Phase 4
 (docs) should land first; it is independent of this plan.
@@ -105,11 +105,14 @@ Found after Phase A step 1b: at 20 publishers the main thread spends 72% of its 
 sim ticks at 7/s; ~2k at 60 ticks/s, still too many for one `drawImage` each). The front canvas
 exists only to draw pausing dots above the node cards (z-index 25 vs 19).
 
-1. Give the front canvas its own WebGL context with the existing point-sprite renderer
+1. **Done 2026-11-05** (`u_front` uniform, set once per context; WebGL contexts cannot share a
+   buffer object, so each canvas uploads the same CPU buffer, see `scale-progress.md` → Findings).
+   Give the front canvas its own WebGL context with the existing point-sprite renderer
    (`createGlRenderer`); add a uniform that flips the vertex shader's clip so the back context
    draws `glow < 1.5` and the front `glow ≥ 1.5` entries from the same buffer upload. Keep the 2D
    `drawEntry` path as the fallback for both canvases when WebGL is unavailable.
-2. The shrink is already in the buffer (`extent` and alpha), so the look is unchanged; verify with
+2. **Done 2026-11-05** (both scripts now read WebGL canvases through a scratch 2D canvas; the
+   pixel counts are in `scale-progress.md`). The shrink is already in the buffer (`extent` and alpha), so the look is unchanged; verify with
    `.out/pausecheck.mjs` (front canvas pixels over the pause) and `.out/canvascheck.mjs`
    (`--disable-webgl` fallback).
 
