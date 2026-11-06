@@ -5,10 +5,9 @@
 // coalesce on this side. The position buffer ping-pongs: it arrives with the input, is filled
 // right after the tick (same Sim, so the pausing shrink uses that tick's clock) and goes back
 // with the summary. It is grown here when the dot count outgrows it.
-import { Sim, tickSections } from './sim';
+import { Sim, tickSections, byStatusOf } from './sim';
 import { FLOATS_PER_DOT } from './positions';
 import type { MainToWorker, WorkerToMain, DebugResult } from './protocol';
-import type { EventDot } from './types';
 
 // tsconfig uses the DOM lib (the app is one project), so `self` is typed as a Window; this is
 // the slice of DedicatedWorkerGlobalScope the entry uses.
@@ -18,12 +17,6 @@ const ctx = self as unknown as {
 };
 
 const sim = new Sim();
-
-function byStatusOf(dots: EventDot[]): Record<string, number> {
-  const by: Record<string, number> = {};
-  for (const d of dots) by[d.status] = (by[d.status] ?? 0) + 1;
-  return by;
-}
 
 ctx.onmessage = (e: MessageEvent<MainToWorker>) => {
   const msg = e.data;

@@ -267,7 +267,7 @@ function initCountersFromSaved(saved: Partial<GameState> | null) {
 // a trapped read per element) was a quarter of the frame on its own.
 function applyConsumes(
   state: GameState,
-  batch: { value: number; subscriberId: string }[],
+  batch: { value: number; subscriberId: string; count?: number }[],
   compById: Map<string, GameComponent>,
 ): Partial<GameState> {
   const hasIncome = (state.prestige.permanentUpgradeLevels['globalIncome'] ?? 0) > 0;
@@ -297,8 +297,12 @@ function applyConsumes(
   let earnedTotal = 0;
   let coinPops = state.coinPops;
   let popsCopied = false;
-  for (const { value, subscriberId } of batch) {
-    const earned = value * state.upgrades.globalValueMultiplier * permMult;
+  // Each entry is one consumed dot; a bundle (count > 1) is that many events, each paying `value`.
+  let eventsConsumed = 0;
+  for (const { value, subscriberId, count } of batch) {
+    const events = count ?? 1;
+    eventsConsumed += events;
+    const earned = value * state.upgrades.globalValueMultiplier * permMult * events;
     earnedTotal += earned;
     balance += earned;
     totalEarned += earned;
@@ -321,7 +325,7 @@ function applyConsumes(
     }
   }
 
-  const patch: Partial<GameState> = { balance, totalEarned, eventsConsumed: state.eventsConsumed + batch.length };
+  const patch: Partial<GameState> = { balance, totalEarned, eventsConsumed: state.eventsConsumed + eventsConsumed };
   if (popsCopied) patch.coinPops = coinPops;
 
   // Earning milestones (same rules as checkEarningMilestones, against the new total)
@@ -337,7 +341,7 @@ function applyConsumes(
   const kept = state.recentEarnings.length > 0 && state.recentEarnings[0].time < cutoff
     ? state.recentEarnings.filter(e => e.time > cutoff)
     : state.recentEarnings;
-  patch.recentEarnings = kept.concat([{ time: now, amount: earnedTotal, count: batch.length }]);
+  patch.recentEarnings = kept.concat([{ time: now, amount: earnedTotal, count: eventsConsumed }]);
   return patch;
 }
 

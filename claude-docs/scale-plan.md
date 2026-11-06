@@ -1,6 +1,7 @@
 # Plan: smooth late game at 20 publishers of fan-out
 
-Status: in progress, see `scale-progress.md` (Phases A and A2 done on 2026-11-05; B is next). Written
+Status: **done** (Phases A, A2, B, C, D and F on 2026-11-05; E stays unscheduled, its trigger not met: F
+20 runs at 59.5 ticks/s; every balance decision is closed in `scale-progress.md`). Written
 2026-11-05 after Phase 3 of `worker-refactor-plan.md` (the sim runs in a Web Worker). Execute the
 phases in order; each ends at a verified, committable state. `worker-refactor-plan.md` Phase 4
 (docs) should land first; it is independent of this plan.
@@ -126,11 +127,18 @@ Goal: the money a mesh earns per sim second does not depend on how many ticks th
 above the 10 ticks/s clamp. Today's evidence is mixed (see Findings); this phase measures instead
 of guessing.
 
-1. Harness switch: `behavior.mjs ... --ticks=<n>` makes the bridge send at most `n` inputs per
+1. **Done 2026-11-05** (`setMaxTicksPerSec` in `simBridge.ts`; `behavior.mjs` reports
+   `simSeconds`, the per-sim-second rates and the clamp loss; F at 20 publishers is worker-bound
+   at ~18 ticks/s, so it was run at 17.5/12/10.3 and the 10- and 2-publisher variants at 40–60/30/15;
+   the table is in `scale-progress.md`). Harness switch: `behavior.mjs ... --ticks=<n>` makes the bridge send at most `n` inputs per
    second (a `window.__sim.setMaxTicksPerSec(n)` debug hook on the bridge; inputs still carry the
    accumulated dt). Run U and F at 60, 30, 15 ticks/s; consumed/s per **sim** second (divide by
    `summary.simNow` delta, which `behavior.mjs` must start reporting) must be flat.
-2. For every rule that is not flat, make it a function of `dt`, not of the tick: the known
+2. **Audited 2026-11-05, no rule changed; decisions pending** (U, M, L, W and F with lifted caps are
+   flat within 0.3%; the rules that are not flat — the auto-publisher cooldown on irregular ticks,
+   the timed-subscriber release quantization, the capped-primary fork skip, the cap arbitration
+   order and the per-tick drop fall — are listed with their measured effect and a proposed form in
+   `scale-progress.md` → "Open balance decisions"). For every rule that is not flat, make it a function of `dt`, not of the tick: the known
    candidates are the auto-publisher poll (one fire per publisher per 100 ms poll, which caps the
    fire rate at 10/s although `publishSpeed` 10 promises a 50 ms cooldown; decide with the user
    whether to keep that cap, it is a balance change either way), the DMQ one-release-per-tick, and
@@ -164,6 +172,14 @@ Gate C: S, M, L, U, W consumed/dropped/earned per second vs `wbase` within noise
 dots, are what the counters measure); `F` with `FTHROUGHPUT=300` ≥ 50 ticks/s; drag smoke clean
 in both modes; the click-to-fire manual check shows one bundle dot per click with the right
 `count`. Commit: "sim: batch fires travel as one dot".
+
+Future option (user, 2026-11-05, not scheduled): draw a bundle as its `count` distinct dots again.
+Feasible render-side only: `fillPositions` would emit `count` entries per bundle dot, spread along the
+path behind it at the old batch stagger (−0.04 progress per event, clamped at the path start), with
+the sim untouched. Cost is the position buffer and draw count returning to per-event size (F 20:
+18k → 110k entries, main-thread fill + upload), so gate it: only below a live-event budget, or only
+when zoomed in past some threshold, or as a settings toggle. Queued and pausing bundles would still
+be one entry (they sit on a card). Phase D's velocity floats would apply per entry unchanged.
 
 ### Phase D — render-side interpolation (½ day)
 

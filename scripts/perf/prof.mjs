@@ -46,6 +46,8 @@ const CFG = {
   U: { pubs: 24, brokers: 6, queuesPerBroker: 12, batchFireLevel: 4, throughputLevel: 35, bridges: false, cluster: true, subSpeed: 11, groupGap: 760, queueGap: 60, zoomOutSteps: 4 },
   // The player's late-game "TIE fighter", everything maxed: N publishers -> one DMR Cluster -> bridges to two
   // DMR Clusters -> the same 4 queues -> the same 20 subscribers with fan-out, so one fire becomes 160 consumes.
+  // Relay accounting (scale-plan Phase F): the ingestion cluster relays one copy per bridge (2 per event), each
+  // bridged cluster one per queue (4 per event); behavior.mjs reports it as relaysPerPublishedEvent.
   // FPUBS=2 (env) reproduces the "works with 2 publishers" case; default 20.
   // FTHROUGHPUT=<level> (env) raises the broker caps beyond the upgrade max, standing in for prestige throughput multipliers.
   F: { fanout: true, pubs: Number(process.env.FPUBS ?? 20), batchFireLevel: 5, throughputLevel: Number(process.env.FTHROUGHPUT ?? 10), queuesPerBridge: 4, subsPerQueue: 20, subSpeed: 11, zoomOutSteps: 6 },

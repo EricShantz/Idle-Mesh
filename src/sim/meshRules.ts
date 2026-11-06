@@ -6,6 +6,13 @@ import { computeOrthogonalWaypoints } from '../utils/orthogonalPath';
 import { getNodeHalfExtents } from '../store/upgradeConfig';
 import type { GameComponent, Connection, PrestigeState, Mesh } from './types';
 
+/** Consume duration (ms) for a subscriber at its fasterConsumption level; 1s when unknown. */
+export function consumeDurationFor(sub: { upgrades: Record<string, number> } | undefined): number {
+  const level = sub?.upgrades['fasterConsumption'] ?? 0;
+  const boostPct = Math.min(level * (level + 9) / 2, 100);
+  return 1000 * (1 - boostPct / 100);
+}
+
 /** Find the first queue or subscriber ID in a route's node list. */
 export function findNextInteractableId(nodeIds: string[], components: GameComponent[]): string | undefined {
   for (const id of nodeIds) {

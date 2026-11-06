@@ -18,17 +18,22 @@
 // (null while in flight); the filled one comes back with the tick and the two swap. Never read a
 // buffer after transferring it (it is detached). The worker grows the buffer it holds when the
 // dot count outgrows it; the inline driver grows `spare` the same way.
-import { Sim, tickSections, type SimInput, type TickSummary, type TickSections } from './sim';
+import { Sim, tickSections, byStatusOf, MAX_FRAME_DT_MS, type SimInput, type TickSummary, type TickSections } from './sim';
 import { FLOATS_PER_DOT } from './positions';
-import type { Mesh, EventDot } from './types';
+import type { Mesh } from './types';
 import type { MainToWorker, WorkerToMain, DebugQuery, DebugResult } from './protocol';
 
 export type SimMode = 'worker' | 'inline';
 
 /** A worker that has not even acknowledged an input for this long is dead or wedged: fall back
  *  inline. The ack is posted before the tick runs, so a tick that takes seconds (an overloaded
- *  mesh) is slow, not dead, and is left alone. */
+ *  mesh) is slow, not dead, and is left alone — until WORKER_ACKED_STALL_MS (or three times the
+ *  previous tick's duration, whichever is longer) has passed without the tick: a worker that dies
+ *  between its ack and its reply used to wedge the sim forever (the kill test, manualcheck D,
+ *  landed in that window). A tick cannot post a heartbeat while it runs (it is one synchronous
+ *  call), so a timeout is the only signal there is. */
 const WORKER_STALL_MS = 3000;
+const WORKER_ACKED_STALL_MS = 10000;
 const INITIAL_CAPACITY = 4096; // dots
 
 // ---- what the UI and the store share with the sim, whichever driver runs it ----
@@ -76,6 +81,17 @@ export function getSimTicksPerSec(): number {
   return 1000 / _smoothedTickDt;
 }
 
+/** When the latest tick landed (performance.now()) and the interval between it and the one
+ *  before, capped at MAX_FRAME_DT_MS (a tick never stands for more sim time than that). The
+ *  canvas extrapolates traveling dots by their velocity floats (positions.ts) for the time since
+ *  arrival, up to that interval: smooth motion at frame rate when the sim ticks slower, and a
+ *  stalled sim stops the dots after one interval instead of running them off their cables. The
+ *  same object every call. */
+const tickTiming = { arrivedAt: 0, intervalMs: 0 };
+export function getTickTiming(): { arrivedAt: number; intervalMs: number } {
+  return tickTiming;
+}
+
 /** Lowest smoothed tick rate seen this session (the end-game stats). Session-level, not saved. */
 let _minTicksPerSec = Infinity;
 let _tickCount = 0;
@@ -89,9 +105,11 @@ let onSummary: ((summary: TickSummary) => void) | null = null;
 let onIdle: (() => void) | null = null;
 
 /** Cumulative counters for the harness (window.__sim.stats()): ticks landed, time the worker
- *  spent in tick + fill, post-to-receive round trip on the main thread's clock, and frames that
- *  could / could not send an input (a skipped frame means the previous tick had not returned). */
-const stats = { ticks: 0, tickMsTotal: 0, roundTripMsTotal: 0, framesSent: 0, framesBusy: 0, inputsLate: 0, sections: { ...tickSections } as TickSections };
+ *  spent in tick + fill, post-to-receive round trip on the main thread's clock, frames that
+ *  could / could not send an input (a skipped frame means the previous tick had not returned),
+ *  and the inputs whose delta exceeded MAX_FRAME_DT_MS with the sim time that clamp discarded
+ *  (the sim then ran slower than wall time by that much). */
+const stats = { ticks: 0, tickMsTotal: 0, roundTripMsTotal: 0, framesSent: 0, framesBusy: 0, inputsLate: 0, inputsClamped: 0, clampLostMs: 0, maxInputDtMs: 0, sections: { ...tickSections } as TickSections };
 
 /** Every tick ends here, whichever driver produced it: the summary for simStats and the driver's
  *  listener (commitFrame), the ticks/s stat, and the buffer swap. */
@@ -99,6 +117,7 @@ function receiveTick(summary: TickSummary, buf: Float32Array<ArrayBuffer>, count
   const now = performance.now();
   if (_lastTickAt > 0) {
     const dt = now - _lastTickAt;
+    tickTiming.intervalMs = Math.min(Math.max(0, dt), MAX_FRAME_DT_MS);
     if (dt > 0 && dt < TICK_PAUSE_MS) {
       _smoothedTickDt += TICK_SMOOTH * (dt - _smoothedTickDt);
       _tickCount++;
@@ -106,18 +125,13 @@ function receiveTick(summary: TickSummary, buf: Float32Array<ArrayBuffer>, count
     }
   }
   _lastTickAt = now;
+  tickTiming.arrivedAt = now;
   latest = summary;
   spare = positions.buf;
   positions.buf = buf;
   positions.count = count;
   onSummary?.(summary);
   onIdle?.();
-}
-
-function byStatusOf(dots: EventDot[]): Record<string, number> {
-  const by: Record<string, number> = {};
-  for (const d of dots) by[d.status] = (by[d.status] ?? 0) + 1;
-  return by;
 }
 
 // ---- drivers ----
@@ -174,6 +188,7 @@ function createWorkerDriver(onFail: (reason: string) => void): Driver | null {
   }
   let inFlightSince = 0; // performance.now() when the current input was posted; 0 when none
   let acked = false;     // the worker has picked up the in-flight input (it may still be ticking)
+  let lastTickMs = 0;    // duration of the previous tick on the worker (scales the acked timeout)
   let debugId = 0;
   const debugWaiting = new Map<number, (result: DebugResult) => void>();
   let failed = false;
@@ -189,6 +204,7 @@ function createWorkerDriver(onFail: (reason: string) => void): Driver | null {
     } else if (msg.type === 'tick') {
       stats.ticks++;
       stats.tickMsTotal += msg.tickMs;
+      lastTickMs = msg.tickMs;
       stats.sections = msg.sections;
       stats.roundTripMsTotal += performance.now() - inFlightSince;
       inFlightSince = 0;
@@ -207,7 +223,12 @@ function createWorkerDriver(onFail: (reason: string) => void): Driver | null {
     reset: () => post({ type: 'reset' }),
     ready() {
       if (inFlightSince === 0) return true;
-      if (!acked && performance.now() - inFlightSince > WORKER_STALL_MS) fail(`no answer for ${WORKER_STALL_MS} ms`);
+      const waited = performance.now() - inFlightSince;
+      if (!acked) {
+        if (waited > WORKER_STALL_MS) fail(`no answer for ${WORKER_STALL_MS} ms`);
+      } else if (waited > Math.max(WORKER_ACKED_STALL_MS, 3 * lastTickMs)) {
+        fail(`tick acknowledged but not returned for ${Math.round(waited)} ms`);
+      }
       return false;
     },
     tick(input) {
@@ -291,9 +312,28 @@ export function reset(): void {
   driver?.reset();
 }
 
+/** Debug/harness cap on inputs per second (0 = none; `window.__sim.setMaxTicksPerSec(n)`,
+ *  `behavior.mjs --ticks=<n>`): a frame's input is held back until 1000/n ms have passed since
+ *  the last one went out, so the frame deltas accumulate into fewer, longer inputs exactly as
+ *  they do when the worker is slow (the sim still clamps each to MAX_FRAME_DT_MS). This is how
+ *  the harness measures income per sim second against the tick rate (scale-plan.md Phase B).
+ *  Frames held back count as busy in `stats` (their deltas merge into the next input). The
+ *  slack absorbs RAF jitter so a cap that divides the frame rate (60/30/15) lands on exact
+ *  frame multiples instead of skipping one now and then. */
+let maxTicksPerSec = 0;
+let lastInputAt = 0;
+const TICK_CAP_SLACK_MS = 5;
+export function setMaxTicksPerSec(n: number): void {
+  maxTicksPerSec = Number.isFinite(n) && n > 0 ? n : 0;
+}
+export function getMaxTicksPerSec(): number {
+  return maxTicksPerSec;
+}
+
 /** Whether an input may go out now. A stalled worker is replaced inline here. */
 export function canTick(): boolean {
   if (!driver) return false;
+  if (maxTicksPerSec > 0 && performance.now() - lastInputAt < 1000 / maxTicksPerSec - TICK_CAP_SLACK_MS) return false;
   if (driver.ready()) return true;
   // ready() may just have swapped a wedged worker for the inline driver, which is always ready.
   return driver.ready();
@@ -303,6 +343,9 @@ export function canTick(): boolean {
 export function tick(input: SimInput, late = false): void {
   if (late) stats.inputsLate++;
   else stats.framesSent++;
+  if (input.dtMs > MAX_FRAME_DT_MS) { stats.inputsClamped++; stats.clampLostMs += input.dtMs - MAX_FRAME_DT_MS; }
+  if (input.dtMs > stats.maxInputDtMs) stats.maxInputDtMs = input.dtMs;
+  lastInputAt = performance.now();
   driver?.tick(input);
 }
 
@@ -314,17 +357,25 @@ export function noteBusyFrame(): void {
 // Debug / harness hook, present in all builds like window.useGameStore: the dots live in the
 // sim (possibly in the worker), so the perf scripts (scripts/perf/*.mjs) read them from here.
 // `dots()` and `byStatus()` are asynchronous (a round trip to the worker); `liveDots()`,
-// `positions()`, `summary()` and `ticksPerSec()` are the main thread's latest copies.
+// `liveEvents()` (a bundle dot stands for several events), `positions()` (entries of
+// `floatsPerDot` floats, layout in positions.ts), `tickTiming()`, `summary()` and
+// `ticksPerSec()` are the main thread's latest copies.
 if (typeof window !== 'undefined') {
   (window as unknown as { __sim: unknown }).__sim = {
     mode: getMode,
     liveDots: () => latest?.liveDots ?? 0,
+    liveEvents: () => latest?.liveEvents ?? 0,
     byStatus: () => driver ? driver.debug('byStatus') : Promise.resolve({}),
     dots: () => driver ? driver.debug('dots') : Promise.resolve([]),
     positions: getPositions,
+    floatsPerDot: FLOATS_PER_DOT,
+    tickTiming: getTickTiming,
     summary: latestSummary,
     ticksPerSec: getSimTicksPerSec,
     stats: () => ({ ...stats, sections: { ...stats.sections } }),
+    /** Caps inputs per second (0 = none); see setMaxTicksPerSec. */
+    setMaxTicksPerSec,
+    maxTicksPerSec: getMaxTicksPerSec,
     /** Terminates the worker behind the bridge's back; the stall watchdog must fall back inline. */
     killWorker: () => { driver?.kill?.(); },
   };

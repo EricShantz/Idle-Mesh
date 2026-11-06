@@ -1,11 +1,18 @@
 import { useEffect, useRef } from 'react';
 import { useViewport } from '../hooks/useViewport';
-import { getPositions } from '../sim/simBridge';
+import { getPositions, getTickTiming } from '../sim/simBridge';
 import { FLOATS_PER_DOT, DOT_RADIUS, GLOW_RADIUS, GLOW_EXTENT, GLOW_DROPPED, GLOW_PAUSING } from '../sim/positions';
 
 // The dots are drawn from the position buffer the sim fills once per tick (src/sim/positions.ts:
-// [x, y, extent, r, g, b, a, glow] per drawable dot). The canvas never sees dot objects or the
-// store; the interpolation, queue snap, pausing shrink and color parsing live in the sim.
+// [x, y, extent, r, g, b, a, glow, vx, vy, tmax] per drawable dot). The canvas never sees dot
+// objects or the store; the interpolation, queue snap, pausing shrink and color parsing live in
+// the sim.
+//
+// Between ticks the canvas extrapolates: an entry is drawn at (x, y) + (vx, vy) * lead, where lead
+// is the time since the latest tick landed, capped at one tick interval (getTickTiming) and at the
+// entry's own tmax (the ms until its velocity changes: a corner, its destination, a zone edge).
+// The sim may tick slower than the frame rate (a heavy mesh, or a slow machine); the dots still
+// move every frame. Queued, pausing and dropped entries carry zero velocity and stay put.
 //
 // Two canvases, because pausing dots sit above the node cards (z-index 25) while every other dot
 // sits below them (19). Both are WebGL point-sprite surfaces fed the same buffer; a per-context
@@ -67,10 +74,11 @@ function cssColor(r: number, g: number, b: number): string {
 /** World-space rectangle currently visible, padded by a glow radius; dots outside it are skipped. */
 type ViewRect = { left: number; top: number; right: number; bottom: number };
 
-/** Draws buffer entry at float offset `o` with the 2D API. */
-function drawEntry(ctx: CanvasRenderingContext2D, data: Float32Array, o: number, view: ViewRect) {
-  const x = data[o];
-  const y = data[o + 1];
+/** Draws buffer entry at float offset `o` with the 2D API, extrapolated by `lead` ms. */
+function drawEntry(ctx: CanvasRenderingContext2D, data: Float32Array, o: number, view: ViewRect, lead: number) {
+  const l = Math.min(lead, data[o + 10]);
+  const x = data[o] + data[o + 8] * l;
+  const y = data[o + 1] + data[o + 9] * l;
   const color = cssColor(data[o + 3], data[o + 4], data[o + 5]);
   if (data[o + 7] === GLOW_DROPPED) {
     ctx.globalAlpha = data[o + 6];
@@ -101,6 +109,7 @@ function render2d(
   tx: number,
   ty: number,
   s: number,
+  lead: number,
 ) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -108,7 +117,7 @@ function render2d(
   ctx.setTransform(s, 0, 0, s, tx, ty);
   for (let i = 0; i < count; i++) {
     const o = i * FLOATS_PER_DOT;
-    if ((data[o + 7] === GLOW_PAUSING) === front) drawEntry(ctx, data, o, view);
+    if ((data[o + 7] === GLOW_PAUSING) === front) drawEntry(ctx, data, o, view, lead);
   }
 }
 
@@ -122,7 +131,8 @@ function render2d(
 // own half of the buffer: `u_front` selects pausing entries (glow 2) on the front canvas and
 // everything else on the back one; the vertex shader clips the rest away. A pausing entry's
 // shrink is already in its extent and alpha, so the point sprite shrinks exactly as the 2D stamp
-// did.
+// did. `u_lead` is the ms since the tick landed: the vertex moves by its velocity times that,
+// capped at its own `a_tmax`.
 // ---------------------------------------------------------------------------------------------
 
 const VERT_SRC = `
@@ -130,11 +140,14 @@ attribute vec2 a_pos;
 attribute float a_extent;
 attribute vec4 a_color;
 attribute float a_glow;
+attribute vec2 a_vel;
+attribute float a_tmax;
 uniform vec2 u_pan;
 uniform float u_zoom;
 uniform float u_dpr;
 uniform vec2 u_res;
 uniform float u_front;
+uniform float u_lead;
 varying vec4 v_color;
 varying float v_glow;
 varying float v_px;
@@ -148,7 +161,7 @@ void main() {
     v_glow = 0.0;
     return;
   }
-  vec2 screen = (a_pos * u_zoom + u_pan) * u_dpr;
+  vec2 screen = ((a_pos + a_vel * min(u_lead, a_tmax)) * u_zoom + u_pan) * u_dpr;
   vec2 clip = screen / u_res * 2.0 - 1.0;
   gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
   float px = a_extent * 2.0 * u_zoom * u_dpr;
@@ -192,6 +205,7 @@ type GlRenderer = {
   uZoom: WebGLUniformLocation;
   uDpr: WebGLUniformLocation;
   uRes: WebGLUniformLocation;
+  uLead: WebGLUniformLocation;
 };
 
 function compileShader(gl: WebGLRenderingContext, type: number, src: string): WebGLShader | null {
@@ -238,6 +252,8 @@ function createGlRenderer(canvas: HTMLCanvasElement, front: boolean): GlRenderer
   attr('a_extent', 1, 2);
   attr('a_color', 4, 3);
   attr('a_glow', 1, 7);
+  attr('a_vel', 2, 8);
+  attr('a_tmax', 1, 10);
 
   gl.disable(gl.DEPTH_TEST);
   gl.enable(gl.BLEND);
@@ -246,10 +262,11 @@ function createGlRenderer(canvas: HTMLCanvasElement, front: boolean): GlRenderer
 
   const u = (name: string) => gl.getUniformLocation(program, name)!;
   gl.uniform1f(u('u_front'), front ? 1 : 0); // fixed for the life of the context
-  return { gl, uPan: u('u_pan'), uZoom: u('u_zoom'), uDpr: u('u_dpr'), uRes: u('u_res') };
+  return { gl, uPan: u('u_pan'), uZoom: u('u_zoom'), uDpr: u('u_dpr'), uRes: u('u_res'), uLead: u('u_lead') };
 }
 
-/** Clear, upload the position buffer (`count` entries) and draw this canvas's half in one call. */
+/** Clear, upload the position buffer (`count` entries) and draw this canvas's half in one call,
+ *  every entry extrapolated by `lead` ms along its velocity. */
 function renderGl(
   r: GlRenderer,
   canvas: HTMLCanvasElement,
@@ -257,6 +274,7 @@ function renderGl(
   count: number,
   vp: { panX: number; panY: number; zoom: number },
   dpr: number,
+  lead: number,
 ) {
   const { gl } = r;
   gl.viewport(0, 0, canvas.width, canvas.height);
@@ -266,6 +284,7 @@ function renderGl(
   gl.uniform1f(r.uZoom, vp.zoom);
   gl.uniform1f(r.uDpr, dpr);
   gl.uniform2f(r.uRes, canvas.width, canvas.height);
+  gl.uniform1f(r.uLead, lead);
   gl.bufferData(gl.ARRAY_BUFFER, data.subarray(0, count * FLOATS_PER_DOT), gl.DYNAMIC_DRAW);
   gl.drawArrays(gl.POINTS, 0, count);
 }
@@ -342,6 +361,12 @@ export function EventCanvas() {
       }
 
       const { buf, count } = getPositions();
+      // Time since the buffer's tick landed, capped at one tick interval: how far along their
+      // velocities the entries are drawn (zero before the first tick). Exposed for the harness
+      // (scripts/perf/.out/interpcheck.mjs).
+      const timing = getTickTiming();
+      const lead = timing.arrivedAt > 0 ? Math.min(Math.max(0, performance.now() - timing.arrivedAt), timing.intervalMs) : 0;
+      (window as unknown as { __eventCanvasLeadMs?: number }).__eventCanvasLeadMs = lead;
       let hasPausing = false;
       for (let i = 0; i < count; i++) {
         if (buf[i * FLOATS_PER_DOT + 7] === GLOW_PAUSING) { hasPausing = true; break; }
@@ -364,18 +389,18 @@ export function EventCanvas() {
       if (frontHadContent || hasPausing) {
         const n = hasPausing ? count : 0; // 0 entries = clear only
         if (front.glr) {
-          renderGl(front.glr, frontCanvas, buf, n, vp, dpr);
+          renderGl(front.glr, frontCanvas, buf, n, vp, dpr, lead);
         } else if (front.ctx) {
-          render2d(front.ctx, frontCanvas, buf, n, true, view, tx, ty, s);
+          render2d(front.ctx, frontCanvas, buf, n, true, view, tx, ty, s, lead);
         }
       }
       frontHadContent = hasPausing;
 
       // Back canvas: everything else
       if (back.glr) {
-        renderGl(back.glr, backCanvas, buf, count, vp, dpr);
+        renderGl(back.glr, backCanvas, buf, count, vp, dpr, lead);
       } else if (back.ctx) {
-        render2d(back.ctx, backCanvas, buf, count, false, view, tx, ty, s);
+        render2d(back.ctx, backCanvas, buf, count, false, view, tx, ty, s, lead);
       }
 
       animRef.current = requestAnimationFrame(render);

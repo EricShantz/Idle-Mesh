@@ -6,9 +6,10 @@ import { topicMatches } from '../utils/topicMatching';
 import { getNodeHalfExtents } from '../store/upgradeConfig';
 import {
   findNextInteractableId, firstBridgeExitNodeId, pathCrossesBridge, getQueueValueMultiplier,
-  getPermanentSpeedMult, getEventValue, getAllPathsWithNodes, BRIDGE_GOLD_COLOR, BRIDGE_VALUE_MULT,
+  getPermanentSpeedMult, getEventValue, getAllPathsWithNodes, consumeDurationFor, BRIDGE_GOLD_COLOR, BRIDGE_VALUE_MULT,
 } from './meshRules';
-import type { EventDot, GameComponent, Connection, GlobalUpgrades, PrestigeState, Mesh } from './types';
+import { planForkTree, type ForkRoute } from './forkTree';
+import type { EventDot, GameComponent, Connection, GlobalUpgrades, PrestigeState, Mesh, ForkPath, ForkStep } from './types';
 
 let dotIdCounter = 0;
 export function nextDotId() { return `dot-${++dotIdCounter}`; }
@@ -18,8 +19,10 @@ export function resetDotIds() { dotIdCounter = 0; }
 // What one publisher emits per fire, minus the per-dot identity: shared by every dot of a batch
 // and by every fire until the mesh changes. Computing this used to walk the whole connection
 // graph and do several components.find scans per path on every single fire (10/s per publisher).
-export type PlannedDot = Pick<EventDot, 'path' | 'speed' | 'color' | 'value' | 'originalNodeIds' | 'nextNodeId' | 'bridgeGoldAfterNodeId' | 'forkPaths' | 'forkNodeId'>;
-export type PublishPlan = { fireCount: number; entries: PlannedDot[] };
+export type PlannedDot = Pick<EventDot, 'path' | 'speed' | 'color' | 'value' | 'originalNodeIds' | 'nextNodeId' | 'bridgeGoldAfterNodeId' | 'forkStep'>;
+/** `bundle`: the fire's dots carry count = fireCount (one dot per entry) instead of fireCount
+ *  dots per entry; see routesBundleExact for when that is exact. */
+export type PublishPlan = { fireCount: number; bundle: boolean; entries: PlannedDot[] };
 type PublishPlanEntry = {
   componentsRef: GameComponent[];
   connectionsRef: Connection[];
@@ -52,30 +55,80 @@ export function buildPublishDots(mesh: Mesh, publisherId: string): { dots: Event
   const plan = getPublishPlan(mesh, publisherId);
   if (!plan) return null;
   const dots: EventDot[] = [];
-  for (let batch = 0; batch < plan.fireCount; batch++) {
-    for (const e of plan.entries) {
-      dots.push({
-        id: nextDotId(),
-        path: e.path,
-        progress: batch * -0.04,
-        speed: e.speed,
-        status: 'traveling',
-        color: e.color,
-        opacity: 1,
-        value: e.value,
-        originalValue: e.value,
-        originalNodeIds: e.originalNodeIds,
-        nextNodeId: e.nextNodeId,
-        forkPaths: e.forkPaths,
-        forkNodeId: e.forkNodeId,
-        bridgeGoldAfterNodeId: e.bridgeGoldAfterNodeId,
-      });
+  const dotFor = (e: PlannedDot, progress: number, count: number): EventDot => ({
+    id: nextDotId(),
+    path: e.path,
+    progress,
+    speed: e.speed,
+    progressPerMs: 0,
+    speedUntilP: 1,
+    count,
+    status: 'traveling',
+    color: e.color,
+    opacity: 1,
+    value: e.value,
+    originalValue: e.value,
+    originalNodeIds: e.originalNodeIds,
+    nextNodeId: e.nextNodeId,
+    forkStep: e.forkStep,
+    bridgeGoldAfterNodeId: e.bridgeGoldAfterNodeId,
+  });
+  if (plan.bundle) {
+    // The whole batch as one dot per entry (the plan decided that is exact for these routes).
+    for (const e of plan.entries) dots.push(dotFor(e, 0, plan.fireCount));
+  } else {
+    for (let batch = 0; batch < plan.fireCount; batch++) {
+      for (const e of plan.entries) dots.push(dotFor(e, batch * -0.04, 1));
     }
   }
   return { dots, fireCount: plan.fireCount };
 }
 
 function computePublishPlan(mesh: Mesh, publisherId: string): PublishPlan | null {
+  const plan = computePublishEntries(mesh, publisherId);
+  if (!plan) return null;
+  return { ...plan, bundle: plan.fireCount > 1 && routesBundleExact(mesh, plan.entries) };
+}
+
+// Where a batch may travel as ONE dot carrying its count. It is exact wherever every rule the
+// dot meets counts events: the broker cap takes `count` slots, a queue holds `count` slots, a
+// 0 ms subscriber consumes `count` events the instant the dot arrives. Two rules are per dot, not
+// per event, and there the batch keeps one dot per event as before: the occupied-webhook rule
+// (a webhook with a batch inside it drops every following dot of that batch) and a timed
+// subscriber (level < 11), which consumes one dot per consume duration — a bundle there would
+// earn `count` events per consume. So every route of the fire, forks included, must cross no
+// webhook and end at a 0 ms subscriber or at a queue whose subscribers are all 0 ms.
+function routesBundleExact(mesh: Mesh, entries: PlannedDot[]): boolean {
+  const byId = new Map<string, GameComponent>();
+  for (const c of mesh.components) byId.set(c.id, c);
+  const routeExact = (nodeIds: string[] | undefined): boolean => {
+    if (!nodeIds || nodeIds.length === 0) return true;
+    for (const id of nodeIds) if (byId.get(id)?.type === 'webhook') return false;
+    const end = byId.get(nodeIds[nodeIds.length - 1]);
+    if (!end) return true;
+    if (end.type === 'subscriber') return consumeDurationFor(end) === 0;
+    if (end.type === 'queue') {
+      for (const conn of mesh.connections) {
+        if (conn.fromId !== end.id) continue;
+        const sub = byId.get(conn.toId);
+        if (sub?.type === 'subscriber' && consumeDurationFor(sub) > 0) return false;
+      }
+    }
+    return true;
+  };
+  const stepsExact = (step: ForkStep | undefined): boolean => {
+    for (let st = step; st; st = st.next) {
+      for (const f of st.forks) if (!routeExact(f.nodeIds) || !stepsExact(f.steps)) return false;
+    }
+    return true;
+  };
+  for (const e of entries) {
+    if (!routeExact(e.originalNodeIds) || !stepsExact(e.forkStep)) return false;
+  }
+  return true;
+}
+
+function computePublishEntries(mesh: Mesh, publisherId: string): { fireCount: number; entries: PlannedDot[] } | null {
   const pub = mesh.components.find(c => c.id === publisherId);
   if (!pub) return null;
   const fireCount = mesh.upgrades.batchFire > 0 ? mesh.upgrades.batchFire : 1;
@@ -233,21 +286,27 @@ function computePublishPlan(mesh: Mesh, publisherId: string): PublishPlan | null
     forkGroups.get(firstBrokerId)!.push(p);
   }
 
+  // One dot per group. Where the group's routes diverge along it, the dot (and each copy it
+  // spawns) carries fork steps (forkTree.ts): one copy per other next hop at each broker, so a
+  // bridged cluster relays one copy per link and the far cluster fans out by itself. A group
+  // with no broker on its routes has nowhere to fork: its first route travels alone, as before.
+  const byId = new Map<string, GameComponent>();
+  for (const c of mesh.components) byId.set(c.id, c);
+  const isBroker = (id: string) => byId.get(id)?.type === 'broker';
+  const forkFor = (r: ForkRoute, steps: ForkStep | undefined): ForkPath =>
+    ({ waypoints: r.waypoints, nodeIds: r.nodeIds, value: valueForPath(r.nodeIds), color: colorForPath(r.nodeIds), steps });
   for (const [brokerId, group] of forkGroups) {
-    const primary = group[0];
-    const forks = group.length > 1
-      ? group.slice(1).map(f => ({ ...f, value: valueForPath(f.nodeIds), color: colorForPath(f.nodeIds) }))
-      : undefined;
-    const primaryValue = valueForPath(primary.nodeIds);
+    const { primary, step } = brokerId !== 'none'
+      ? planForkTree(group, group[0].nodeIds.indexOf(brokerId), isBroker, forkFor)
+      : { primary: group[0], step: undefined };
     entries.push({
       path: primary.waypoints,
       speed: normalizedSpeed(baseSpeed, primary.waypoints),
       color: '#22d3ee',
-      value: primaryValue,
+      value: valueForPath(primary.nodeIds),
       originalNodeIds: primary.nodeIds,
       nextNodeId: findNextInteractableId(primary.nodeIds, mesh.components),
-      forkPaths: forks,
-      forkNodeId: brokerId !== 'none' ? brokerId : undefined,
+      forkStep: step,
       bridgeGoldAfterNodeId: firstBridgeExitNodeId(primary.nodeIds, mesh.components),
     });
   }

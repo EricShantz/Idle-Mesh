@@ -5,8 +5,8 @@
 // Nothing in this file may import from gameStore.ts, react, or touch window/document/localStorage.
 import { nextDotId, resetDotIds, buildPublishDots } from './publish';
 import { fillPositions } from './positions';
-import { getPermanentQueueBufferBonus, findNextInteractableId, getPermanentBrokerThroughputMult, getPublisherCooldownMs, BRIDGE_GOLD_COLOR } from './meshRules';
-import type { EventDot, GameComponent, Connection, Mesh } from './types';
+import { getPermanentQueueBufferBonus, findNextInteractableId, getPermanentBrokerThroughputMult, getPublisherCooldownMs, consumeDurationFor, BRIDGE_GOLD_COLOR } from './meshRules';
+import type { EventDot, GameComponent, Connection, Mesh, ForkStep } from './types';
 import { interpolatePath, normalizedSpeed, getSegmentSpeedScale, scaledTravelTime, getPathMetrics } from '../utils/pathUtils';
 import { computeOrthogonalWaypoints, computeVerticalFirstWaypoints } from '../utils/orthogonalPath';
 import { createArrivalIndex, finalizeArrivalIndex, insertArrival, canAcceptArrival } from './releaseIndex';
@@ -38,8 +38,11 @@ const AUTO_PUB_POLL_MS = 100;
 // Max falling (dropped) dots animated at once; drops beyond this are counted but not drawn.
 export const DROPPED_VISUAL_CAP = 300;
 
-/** Try to relay an event through a broker. Returns true if under cap, false if over. */
-function tryBrokerRelay(brokerRelayTimestamps: Map<string, number[]>, brokerId: string, cap: number, now: number): boolean {
+/** Relay `count` events through a broker: one slot per event while the 1 s window holds fewer
+ *  than `cap` relays (a fractional cap admits up to its ceiling, as the per-event compare did),
+ *  returning how many got through. A bundle that does not wholly fit is relayed in part — its
+ *  head passes and its tail drops, exactly what the same events as separate dots got. */
+function tryBrokerRelay(brokerRelayTimestamps: Map<string, number[]>, brokerId: string, cap: number, now: number, count: number): number {
   let ts = brokerRelayTimestamps.get(brokerId);
   if (!ts) { ts = []; brokerRelayTimestamps.set(brokerId, ts); }
   // Timestamps are appended in order, so expired ones are a prefix: trim it in place instead of
@@ -48,9 +51,10 @@ function tryBrokerRelay(brokerRelayTimestamps: Map<string, number[]>, brokerId: 
   let expired = 0;
   while (expired < ts.length && now - ts[expired] >= 1000) expired++;
   if (expired > 0) ts.splice(0, expired);
-  if (ts.length >= cap) return false;
-  ts.push(now);
-  return true;
+  const room = Math.ceil(cap - ts.length);
+  const admitted = room >= count ? count : room > 0 ? room : 0;
+  for (let k = 0; k < admitted; k++) ts.push(now);
+  return admitted;
 }
 
 /** Get broker throughput cap from upgrade level, plus any permanent prestige multiplier */
@@ -288,6 +292,16 @@ function inZones(zones: Zone[], p: number): boolean {
   return false;
 }
 
+/** The first zone edge after `p`, or `limit` if none comes before it (zones are ascending and
+ *  disjoint). Where a dot's speed next changes, for the canvas's extrapolation cap (EventDot.speedUntilP). */
+function nextZoneEdge(zones: Zone[], p: number, limit: number): number {
+  for (const z of zones) {
+    if (z.start > p) return z.start < limit ? z.start : limit;
+    if (z.end > p) return z.end < limit ? z.end : limit;
+  }
+  return limit;
+}
+
 function addZone(zones: Zone[], start: number, end: number) {
   const last = zones[zones.length - 1];
   if (last && start <= last.end + 1e-9) { if (end > last.end) last.end = end; return; }
@@ -373,6 +387,24 @@ type ForkSpawn = {
 };
 const forkSpawnCache = new WeakMap<{ x: number; y: number }[], Map<string, ForkSpawn>>();
 
+/** A dot's fork steps with their routes rebuilt from the current component positions, through the
+ *  forks' own steps too (step data is shared plan data, so this copies instead of mutating). With
+ *  `onlyNodeId` (a drag frame) only the routes through that node are rebuilt, degenerate or not,
+ *  as the drag rebuild always did; after the drag every route is rebuilt and a degenerate rebuild
+ *  keeps the old waypoints. */
+function rebuildForkSteps(step: ForkStep, onlyNodeId: string | null, components: GameComponent[], connections: Connection[]): ForkStep {
+  const forks = step.forks.map(fork => {
+    let f = fork;
+    if (onlyNodeId === null || fork.nodeIds.includes(onlyNodeId)) {
+      const { path } = rebuildPathFromNodeIds(fork.nodeIds, components, connections);
+      if (onlyNodeId !== null || path.length >= 2) f = { ...fork, waypoints: path };
+    }
+    if (fork.steps) f = { ...f, steps: rebuildForkSteps(fork.steps, onlyNodeId, components, connections) };
+    return f;
+  });
+  return { nodeId: step.nodeId, forks, next: step.next ? rebuildForkSteps(step.next, onlyNodeId, components, connections) : undefined };
+}
+
 /** Queue→subscriber release path per (queue, subscriber position), rebuilt when components move. */
 type ReleasePath = { componentsRef: GameComponent[]; path: { x: number; y: number }[]; progress: number; nodeIds: string[] };
 const releasePathCache = new Map<string, ReleasePath>();
@@ -382,11 +414,22 @@ type RouteValidity = { componentsRef: GameComponent[]; connectionsRef: Connectio
 const routeValidityCache = new WeakMap<string[], RouteValidity>();
 
 
-/** Consume duration (ms) for a subscriber at its fasterConsumption level; 1s when unknown. */
-function consumeDurationFor(sub: { upgrades: Record<string, number> } | undefined): number {
-  const level = sub?.upgrades['fasterConsumption'] ?? 0;
-  const boostPct = Math.min(level * (level + 9) / 2, 100);
-  return 1000 * (1 - boostPct / 100);
+/** Events the dots stand for: the sum of their counts (a bundle is several). */
+export function countEvents(dots: EventDot[]): number {
+  let n = 0;
+  for (const d of dots) n += d.count;
+  return n;
+}
+
+/** Dots and events per status, for the harness (window.__sim.byStatus): `<status>` counts dots,
+ *  `<status>Events` the events they stand for. */
+export function byStatusOf(dots: EventDot[]): Record<string, number> {
+  const by: Record<string, number> = {};
+  for (const d of dots) {
+    by[d.status] = (by[d.status] ?? 0) + 1;
+    by[d.status + 'Events'] = (by[d.status + 'Events'] ?? 0) + d.count;
+  }
+  return by;
 }
 
 /** Check if a point (dot) touches the rectangular bounding box of a node */
@@ -417,7 +460,9 @@ export type SimInput = {
 };
 
 export type TickSummary = {
-  consumed: { id: string; value: number; subscriberId: string }[];
+  /** One entry per consumed dot; `count` is the events it stands for, each paying `value`. */
+  consumed: { id: string; value: number; subscriberId: string; count: number }[];
+  /** Events dropped this tick (a dropped bundle counts all of its events). */
   droppedCount: number;
   /** Auto-publishers that fired this tick (for the cooldown map + publish rate). */
   publisherIds: string[];
@@ -435,6 +480,8 @@ export type TickSummary = {
   /** For the UI's sim-ticks/sec stat. */
   simNow: number;
   liveDots: number;
+  /** Events in flight: the sum of the live dots' counts. */
+  liveEvents: number;
 };
 
 const EMPTY_MESH: Mesh = {
@@ -466,6 +513,10 @@ export class Sim {
   /** Drop reason tracking for the warning "!" button */
   private readonly nodeDropTracker = new Map<string, { reason: DropReason; lastDropTime: number; nodeLabel: string }>();
   private autoPubAccumulator = 0;
+  /** Nominal sim time of the latest auto-publisher poll: simNow − autoPubAccumulator, kept as an
+   *  exact multiple of AUTO_PUB_POLL_MS so consecutive polls are exactly one interval apart
+   *  whatever the tick pattern (the cooldown compare must not fail on floating point). */
+  private autoPubPollSimTime = 0;
   private simNow = 0;
   /** Sim-time timestamp of each publisher's last auto fire (wall-clock cooldowns live in the store). */
   private readonly autoFireLastSim = new Map<string, number>();
@@ -560,6 +611,7 @@ export class Sim {
       firstDropAt: this.firstDropAt,
       simNow: this.simNow,
       liveDots: this.dots.length,
+      liveEvents: countEvents(this.dots),
     };
   }
 
@@ -596,7 +648,7 @@ export class Sim {
     const subscriberConsume = this.subscriberConsume;
     const nodeDropTracker = this.nodeDropTracker;
 
-    const toConsume: { id: string; value: number; subscriberId: string }[] = [];
+    const toConsume: { id: string; value: number; subscriberId: string; count: number }[] = [];
     let droppedCount = 0;
 
     // Queue/DMQ slot display for this frame, filled in below and returned with the summary.
@@ -631,11 +683,12 @@ export class Sim {
       // later. A dot that arrives and leaves within one tick never really held a slot; buffer
       // depth only matters once the consumer actually falls behind.
       // One pass over the dots for both counts (two passes over 100k+ dots were 5 ms a tick).
+      // Both count events: a queued bundle holds `count` slots.
       const queueBacklogCounts = new Map<string, number>();
       for (const d of dots) {
         if (d.status !== 'queued' || !d.queuedAtNodeId) continue;
-        queueBacklogCounts.set(d.queuedAtNodeId, (queueBacklogCounts.get(d.queuedAtNodeId) ?? 0) + 1);
-        if (dmqCompForCount && d.queuedAtNodeId === dmqCompForCount.id) dmqQueuedCount++;
+        queueBacklogCounts.set(d.queuedAtNodeId, (queueBacklogCounts.get(d.queuedAtNodeId) ?? 0) + d.count);
+        if (dmqCompForCount && d.queuedAtNodeId === dmqCompForCount.id) dmqQueuedCount += d.count;
       }
       // Per-frame component lookups. Pass 1 used to re-scan the component list for every
       // dot (webhook lookup, DMR cluster bounds, and matching each path waypoint to a node),
@@ -860,13 +913,9 @@ export class Sim {
           } else {
             dot = { ...dot, nodeWpIndices: undefined } as typeof dot;
           }
-          // Also rebuild forkPaths one final time for Y-snap
-          if (dot.forkPaths) {
-            const updatedForks = dot.forkPaths.map(fork => {
-              const { path: newForkPath } = rebuildPathFromNodeIds(fork.nodeIds, mesh.components, mesh.connections);
-              return newForkPath.length >= 2 ? { ...fork, waypoints: newForkPath } : fork;
-            });
-            dot = { ...dot, forkPaths: updatedForks } as typeof dot;
+          // Also rebuild the fork routes one final time for Y-snap
+          if (dot.forkStep) {
+            dot = { ...dot, forkStep: rebuildForkSteps(dot.forkStep, null, mesh.components, mesh.connections) } as typeof dot;
           }
         }
 
@@ -906,16 +955,9 @@ export class Sim {
               dot = { ...dot, path: newPath, progress: newProgress, speed: newSpeed, nodeWpIndices: newNodeWpIndices } as typeof dot;
             }
           }
-          // Also rebuild forkPaths so fork dots don't follow stale waypoints
-          if (dot.forkPaths) {
-            const updatedForks = dot.forkPaths.map(fork => {
-              if (fork.nodeIds.includes(input.draggingNodeId!)) {
-                const { path: newForkPath } = rebuildPathFromNodeIds(fork.nodeIds, mesh.components, mesh.connections);
-                return { ...fork, waypoints: newForkPath };
-              }
-              return fork;
-            });
-            dot = { ...dot, forkPaths: updatedForks } as typeof dot;
+          // Also rebuild the fork routes so fork dots don't follow stale waypoints
+          if (dot.forkStep) {
+            dot = { ...dot, forkStep: rebuildForkSteps(dot.forkStep, input.draggingNodeId, mesh.components, mesh.connections) } as typeof dot;
           }
         }
 
@@ -987,7 +1029,7 @@ export class Sim {
             }
           }
           if (pathInvalid) {
-            droppedCount++;
+            droppedCount += dot.count;
             const failComp = pathComps[0]?.comp;
             if (failComp) recordDrop(failComp.id, 'path-invalid', failComp.label);
             const eventPos = interpolatePath(dot.path, p);
@@ -1010,7 +1052,7 @@ export class Sim {
           if (webhookComponent && pathInfo.approachZones.length > 0 && inZones(pathInfo.approachZones, pClamped) &&
               isComponentOccupied(webhookComponent.id, dot, i)) {
             const eventPos = interpolatePath(dot.path, p);
-            droppedCount++;
+            droppedCount += dot.count;
             recordDrop(webhookComponent.id, 'webhook-occupied', webhookComponent.label);
             pushDropped({ ...dot, status: 'dropped', dropX: eventPos.x, dropY: eventPos.y, dropVY: 0, color: dropColor } as Dot);
             continue;
@@ -1022,50 +1064,76 @@ export class Sim {
           // cap (not just the first) — a bridge hop is a real relay, not a free pass, so
           // chaining brokers no longer lets a route dodge capacity limits. The DMR Cluster
           // upgrade is the intended way to raise a given broker's own ceiling instead.
-          let brokerCapped = false;
+          // The broker that refused the dot outright this tick, if any: the dot drops there
+          // (below, after its forks at or before that broker have been spawned) and no step
+          // past it runs — a refused link copy takes every delivery behind it along.
+          let cappedMark: NodeMark | undefined;
+          // Every link copy is its own relay attempt (balance decision 3, user 2026-11-05): a fork
+          // spawned at a broker carries the count the dot ARRIVED at that broker with, whatever
+          // that broker's cap then did to the dot itself. Only partial admissions change the
+          // count, so those are the only crossings recorded (and only for a dot with steps).
+          let countsBefore: { p: number; count: number }[] | undefined;
           const now = frameNow;
           for (const mk of pathInfo.marks) {
             if (mk.comp.type !== 'broker') continue;
             if (p < mk.centerP && newProgress >= mk.centerP) {
               const cap = getBrokerCap(mk.comp, getPermanentBrokerThroughputMult(mesh));
-              if (!tryBrokerRelay(brokerRelayTimestamps, mk.comp.id, cap, now)) {
-                droppedCount++;
+              const admitted = tryBrokerRelay(brokerRelayTimestamps, mk.comp.id, cap, now, dot.count);
+              if (admitted < dot.count) {
+                // The events that did not fit drop here (as their own falling dot); a partly
+                // relayed bundle goes on with the rest.
+                const lost = dot.count - admitted;
+                droppedCount += lost;
                 recordDrop(mk.comp.id, 'broker-capped', mk.comp.label);
-                pushDropped({ ...dot, status: 'dropped', dropX: mk.comp.x, dropY: mk.comp.y, dropVY: 0, color: dropColor } as Dot);
-                brokerCapped = true;
-                break;
+                if (admitted === 0) { cappedMark = mk; break; }
+                if (dot.forkStep) (countsBefore ??= []).push({ p: mk.centerP, count: dot.count });
+                pushDropped({ ...dot, id: nextDotId(), status: 'dropped', count: lost, dropX: mk.comp.x, dropY: mk.comp.y, dropVY: 0, color: dropColor } as Dot);
+                dot.count = admitted;
               }
             }
           }
-          if (brokerCapped) continue;
 
-          // Fork spawning: when dot with forkPaths passes its fork broker, spawn fork dots
-          if (dot.forkPaths && dot.forkNodeId) {
-            const forkComp = componentById.get(dot.forkNodeId);
-            // Fires once the dot's progress reaches the point where it enters the broker's touch
-            // box (the profile's touchStart): the same frame the old per-frame pixel test fired,
-            // but a long frame can't skip it — inside a DMR Cluster the dot moves at 2.5x and
-            // used to jump clean over the box, so the forks never spawned and all but one of the
-            // fan-out events silently vanished (~30% of throughput at ~20 fps).
-            const forkMark = pathInfo.markById.get(dot.forkNodeId);
-            if (forkComp && forkMark && newProgress >= forkMark.touchStart) {
-              for (const fork of dot.forkPaths) {
+          // Fork spawning: when the dot reaches the broker of its head fork step, spawn that
+          // step's forks (each charged to this broker's cap: a copy relayed down another link)
+          // and move on to the next step. Fires once the dot's progress reaches the point where
+          // it enters the broker's touch box (the profile's touchStart): the same frame the old
+          // per-frame pixel test fired, but a long frame can't skip it — inside a DMR Cluster the
+          // dot moves at 2.5x and used to jump clean over the box, so the forks never spawned and
+          // all but one of the fan-out events silently vanished (~30% of throughput at ~20 fps).
+          // A tick long enough to carry the dot past two fork brokers spawns both steps.
+          if (dot.forkStep) {
+            let step: ForkStep | undefined = dot.forkStep;
+            while (step) {
+              const forkComp = componentById.get(step.nodeId);
+              const forkMark = pathInfo.markById.get(step.nodeId);
+              if (!forkComp || !forkMark || newProgress < forkMark.touchStart) break;
+              if (cappedMark && forkMark.centerP > cappedMark.centerP) break;
+              // The count the dot arrived at this broker with (see countsBefore above).
+              let forkCount = dot.count;
+              if (countsBefore) for (const cb of countsBefore) if (cb.p >= forkMark.centerP) { forkCount = cb.count; break; }
+              for (const fork of step.forks) {
                 const forkDotId = nextDotId();
                 // Path and route from the broker onward, shared by every dot spawned from this
                 // fork (see forkSpawnFor) so they also share one cached route profile.
                 const { waypoints: forkWaypoints, nodeIds: forkStartNodeIds, nextNodeId: forkNextNodeId } = forkSpawnFor(fork, forkComp);
                 if (forkWaypoints.length >= 2) {
-                  // Fork dots spawn at the publisher's first broker (ingestion point),
-                  // so they count against that broker's throughput cap
+                  // A fork is a copy this broker relays down another of its links, so it
+                  // counts against this broker's throughput cap
                   const forkCap = getBrokerCap(forkComp, getPermanentBrokerThroughputMult(mesh));
-                  if (!tryBrokerRelay(brokerRelayTimestamps, forkComp.id, forkCap, now)) {
-                    droppedCount++;
+                  // Each fork carries the bundle's count and takes that many slots; what does not
+                  // fit drops here and the rest travels (see tryBrokerRelay).
+                  const forkAdmitted = tryBrokerRelay(brokerRelayTimestamps, forkComp.id, forkCap, now, forkCount);
+                  if (forkAdmitted < forkCount) {
+                    droppedCount += forkCount - forkAdmitted;
                     recordDrop(forkComp.id, 'broker-capped', forkComp.label);
                     pushDropped({
-                      id: forkDotId,
+                      id: forkAdmitted > 0 ? nextDotId() : forkDotId,
                       path: forkWaypoints,
                       progress: 0,
                       speed: 0,
+                      progressPerMs: 0,
+                      speedUntilP: 1,
+                      count: forkCount - forkAdmitted,
                       status: 'dropped' as const,
                       dropX: forkComp.x,
                       dropY: forkComp.y,
@@ -1076,12 +1144,16 @@ export class Sim {
                       originalValue: fork.value ?? dot.originalValue,
                       originalNodeIds: forkStartNodeIds,
                     });
-                  } else {
+                  }
+                  if (forkAdmitted > 0) {
                     updated.push({
                       id: forkDotId,
                       path: forkWaypoints,
                       progress: 0,
                       speed: normalizedSpeed(0.0007 * mesh.upgrades.propagationSpeed, forkWaypoints),
+                      progressPerMs: 0,
+                      speedUntilP: 1,
+                      count: forkAdmitted,
                       status: 'traveling' as const,
                       color: fork.color ?? dot.color,
                       opacity: 1,
@@ -1089,13 +1161,20 @@ export class Sim {
                       originalValue: fork.value ?? dot.originalValue,
                       originalNodeIds: forkStartNodeIds,
                       nextNodeId: forkNextNodeId,
+                      forkStep: fork.steps,
                     });
                   }
                 }
               }
-              // Clear fork data from this dot
-              dot = { ...dot, forkPaths: undefined, forkNodeId: undefined };
+              step = step.next;
             }
+            if (step !== dot.forkStep) dot.forkStep = step;
+          }
+          if (cappedMark) {
+            // Refused outright: the dot (with its remaining steps, so a DMQ retry does not
+            // re-spawn forks already sent) drops at that broker.
+            pushDropped({ ...dot, status: 'dropped', dropX: cappedMark.comp.x, dropY: cappedMark.comp.y, dropVY: 0, color: dropColor } as Dot);
+            continue;
           }
 
           // Bridge color switch: once the dot's progress passes the broker it exits before
@@ -1145,7 +1224,8 @@ export class Sim {
               // (see queueBacklogCounts above for why).
               const queuedCount = queueBacklogCounts.get(queue.id) ?? 0;
 
-              if (queuedCount < bufferSize) {
+              // In events: a bundle needs `count` free slots (one event, one slot, as before).
+              if (queuedCount + dot.count <= bufferSize) {
                 // A queue always sits downstream of any bridge hop (bridges are broker-to-
                 // broker only), so reaching one means the bridge-exit broker was already
                 // passed. If bridgeGoldAfterNodeId is still set, the per-frame touch-box
@@ -1159,7 +1239,7 @@ export class Sim {
                   : dot;
                 updated.push({ ...resolvedDot, status: 'queued', pauseStartTime: nowMs, queuedAtNodeId: queue.id, progress: newProgress } as Dot);
               } else {
-                droppedCount++;
+                droppedCount += dot.count;
                 recordDrop(queue.id, 'queue-full', queue.label);
                 const newPos = interpolatePath(dot.path, newProgress);
                 pushDropped({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
@@ -1203,7 +1283,7 @@ export class Sim {
                   subscriberConsume.set(pathInfo.endSubscriber.id, { start: pausingDot.pauseStartTime!, duration: occConsumeDuration });
                 }
               } else {
-                droppedCount++;
+                droppedCount += dot.count;
                 recordDrop(subscriber.id, 'subscriber-occupied', subscriber.label);
                 const newPos = interpolatePath(dot.path, newProgress);
                 pushDropped({ ...dot, status: 'dropped', dropX: newPos.x, dropY: newPos.y, dropVY: 0, color: dropColor } as Dot);
@@ -1214,7 +1294,7 @@ export class Sim {
 
           if (newProgress >= 1) {
             const endPos = dot.path[dot.path.length - 1];
-            droppedCount++;
+            droppedCount += dot.count;
             const lastComp = pathComps[pathComps.length - 1]?.comp;
             if (lastComp) recordDrop(lastComp.id, 'path-incomplete', lastComp.label);
             pushDropped({ ...dot, status: 'dropped', dropX: endPos.x, dropY: endPos.y, dropVY: 0, color: dropColor } as Dot);
@@ -1226,6 +1306,33 @@ export class Sim {
           // frames), so there is no reason to allocate a copy per dot per frame.
           dot.progress = newProgress;
           updated.push(dot);
+          // For the canvas only (positions.ts turns these into a velocity and how long it holds;
+          // nothing in the sim reads them): the speed the next tick will move the dot by from
+          // here (segment scale and zone multipliers at its new progress, as the speed block
+          // above will compute them) and the progress where the sim would next change or stop
+          // that motion: a webhook/cluster zone edge, or the point where the next queue or
+          // subscriber captures it. The between-tick extrapolation then never crosses a zone edge
+          // at the wrong speed or overshoots the card that will take the dot.
+          {
+            const np = newProgress < 0 ? 0 : newProgress;
+            let v = dot.speed * mesh.upgrades.propagationSpeed;
+            if (segCount > 0) v *= segScale[Math.min(Math.floor(np * segCount), segCount - 1)];
+            let untilP = 1;
+            if (pathInfo.slowZones.length > 0) {
+              if (inZones(pathInfo.slowZones, np)) v *= 0.4;
+              untilP = nextZoneEdge(pathInfo.slowZones, np, untilP);
+            }
+            if (pathInfo.fastZones.length > 0) {
+              if (inZones(pathInfo.fastZones, np)) v *= 2.5;
+              untilP = nextZoneEdge(pathInfo.fastZones, np, untilP);
+            }
+            if (nextInteractable) {
+              const captureP = dot.nextNodeId ? nextInteractable.centerP - 0.01 : nextInteractable.touchStart;
+              if (captureP < untilP) untilP = captureP;
+            }
+            dot.progressPerMs = v;
+            dot.speedUntilP = untilP;
+          }
           // Webhook card border fill: how far across the card (0..1) the furthest dot inside
           // its box is. The webhook card used to scan every committed dot for this; the slow
           // zone is exactly the touch box it tested, so only dots inside it pay for a pixel
@@ -1245,14 +1352,17 @@ export class Sim {
             const subscriberMult = 1.0 + consumptionValueLevel * 0.08 + consumptionValueLevel * consumptionValueLevel * 0.02;
 
             const finalValue = dot.value * subscriberMult;
-            toConsume.push({ id: dot.id, value: finalValue, subscriberId: subscriber?.id ?? '' });
+            toConsume.push({ id: dot.id, value: finalValue, subscriberId: subscriber?.id ?? '', count: dot.count });
             // Don't add to updated — dot is finished
           } else {
             updated.push(dot);
           }
         } else if (dot.status === 'dropped') {
-          const newVY = (dot.dropVY ?? 0) + 0.3 * dt / 16;
-          const newDropY = (dot.dropY ?? 0) + newVY;
+          // Fall in px/ms units, integrated over dt, so the distance fallen during the fade is the
+          // same at any tick rate (the old per-tick form, vy += 0.3·dt/16; y += vy, fell ∝ 1/dt).
+          // Identical to it at 60 Hz: 0.001125·16.67 = 0.01875 px/ms per tick = 0.3125 px/tick.
+          const newVY = (dot.dropVY ?? 0) + 0.001125 * dt;
+          const newDropY = (dot.dropY ?? 0) + newVY * dt;
           const newOpacity = dot.opacity - dt / 2500;
 
           // DMQ catch: check if dropping dot lands on the DMQ
@@ -1265,14 +1375,18 @@ export class Sim {
               const dropX = dot.dropX ?? 0;
 
               if (dropX >= dmq.x - dmqHalfW && dropX <= dmq.x + dmqHalfW && newDropY >= dmqTop) {
-                // Check DMQ buffer capacity
+                // DMQ buffer capacity, in events: it catches as many of a bundle's events as it has
+                // slots for (one event, one slot, as before); the rest keeps falling.
                 const dmqBufferSize = 3 + (dmq.upgrades['dmqBufferSize'] ?? 0);
+                const dmqFree = dmqBufferSize - dmqQueuedCount;
 
-                if (dmqQueuedCount < dmqBufferSize) {
-                  dmqQueuedCount++;
+                if (dmqFree > 0) {
+                  const caught = dot.count <= dmqFree ? dot.count : dmqFree;
+                  dmqQueuedCount += caught;
                   updated.push({
                     ...dot,
                     status: 'queued',
+                    count: caught,
                     pauseStartTime: nowMs,
                     queuedAtNodeId: dmq.id,
                     dropX: undefined,
@@ -1281,7 +1395,9 @@ export class Sim {
                     opacity: 1,
                     originalValue: dot.originalValue ?? dot.value,
                   } as Dot);
-                  continue;
+                  if (caught === dot.count) continue;
+                  // The uncaught remainder (already counted as dropped) falls on as its own dot.
+                  dot = { ...dot, id: nextDotId(), count: dot.count - caught } as Dot;
                 }
               }
             }
@@ -1606,7 +1722,7 @@ export class Sim {
           // intermediate copy per target was a second allocation of every field).
           let released: Dot;
           if (ti === 0) {
-            released = { ...dot, path: releasePath, status: 'traveling', progress: releaseProgress - releaseStaggerFor(entry), speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined, originalNodeIds: releaseNodeIds, nextNodeId: releaseSubComp?.id, nodeWpIndices: undefined } as Dot;
+            released = { ...dot, path: releasePath, status: 'traveling', progress: releaseProgress - releaseStaggerFor(entry), speed: releaseSpeed, progressPerMs: 0, speedUntilP: 1, pauseStartTime: undefined, queuedAtNodeId: undefined, originalNodeIds: releaseNodeIds, nextNodeId: releaseSubComp?.id, nodeWpIndices: undefined } as Dot;
             updated[i] = released;
           } else {
             released = {
@@ -1616,6 +1732,8 @@ export class Sim {
               status: 'traveling',
               progress: releaseProgress - releaseStaggerFor(entry),
               speed: releaseSpeed,
+              progressPerMs: 0,
+              speedUntilP: 1,
               pauseStartTime: undefined,
               queuedAtNodeId: undefined,
               originalNodeIds: releaseNodeIds,
@@ -1808,12 +1926,18 @@ export class Sim {
               if (!canRelease) break; // Only attempt the oldest queued dot — if it can't release, wait
 
               this.lastDmqReleaseTime = nowMs;
-              updated[i] = {
+              // One EVENT per release: a bundle the DMQ caught goes out one event at a time and
+              // stays queued with the rest, as the same events caught as separate dots did.
+              const retry = {
                 ...dot,
+                id: dot.count > 1 ? nextDotId() : dot.id,
+                count: 1,
                 status: 'traveling',
                 path: fullPath,
                 progress: 0,
                 speed,
+                progressPerMs: 0,
+                speedUntilP: 1,
                 color: '#fb923c',
                 opacity: 1,
                 value: retryValue,
@@ -1827,6 +1951,12 @@ export class Sim {
                 dropY: undefined,
                 dropVY: undefined,
               } as Dot;
+              if (dot.count > 1) {
+                dot.count -= 1;
+                updated.push(retry);
+              } else {
+                updated[i] = retry;
+              }
               break; // Only release one per interval
             }
         }
@@ -1845,9 +1975,15 @@ export class Sim {
       const sigs: Record<string, string> = {};
       for (const [nodeId, list] of queuedByNode) {
         list.sort((a, b) => (a.pauseStartTime ?? 0) - (b.pauseStartTime ?? 0));
+        // One char per event (a bundle repeats its char `count` times). The card draws only its
+        // first `capacity` chars when the string is longer, so it is cut there (same rows drawn).
         let sig = '';
-        for (const d of list) sig += d.isRetry ? 'r' : 'n';
-        sigs[nodeId] = sig;
+        for (const d of list) sig += (d.isRetry ? 'r' : 'n').repeat(d.count);
+        const node = componentById.get(nodeId);
+        const capacity = node?.type === 'dmq'
+          ? 3 + (node.upgrades['dmqBufferSize'] ?? 0)
+          : 3 + (node?.upgrades['bufferSize'] ?? 0) + getPermanentQueueBufferBonus(mesh);
+        sigs[nodeId] = sig.length > capacity ? sig.slice(0, capacity) : sig;
       }
       queueSlotSignatures = sigs;
       webhookFill = webhookComponent ? { [webhookComponent.id]: webhookBest } : {};
@@ -1872,11 +2008,18 @@ export class Sim {
     const publishes: { count: number }[] = [];
     if (this.autoPubAccumulator >= AUTO_PUB_POLL_MS) {
       this.autoPubAccumulator -= AUTO_PUB_POLL_MS;
+      // The cooldown is checked and stamped at the poll's nominal sim time, not at simNow: polls
+      // are then exactly AUTO_PUB_POLL_MS apart, so a poll that lands one short tick after the
+      // previous one (a merged input followed by a short frame) no longer rejects every publisher
+      // whose cooldown is longer than that tick. Cooldowns over the poll interval still fire
+      // every ceil(cooldown / AUTO_PUB_POLL_MS) polls.
+      this.autoPubPollSimTime += AUTO_PUB_POLL_MS;
+      const pollTime = this.autoPubPollSimTime;
       for (const pub of mesh.components) {
         if (pub.type !== 'publisher' || (pub.upgrades['autoPub'] ?? 0) < 1) continue;
         const last = this.autoFireLastSim.get(pub.id);
-        if (last === undefined || this.simNow - last >= getPublisherCooldownMs(pub, mesh)) {
-          this.autoFireLastSim.set(pub.id, this.simNow);
+        if (last === undefined || pollTime - last >= getPublisherCooldownMs(pub, mesh)) {
+          this.autoFireLastSim.set(pub.id, pollTime);
           // Publishers that can't fire (no outgoing connection, no broker on any path) are
           // skipped and keep their old cooldown, exactly as buildPublishBatch skipped them.
           const built = buildPublishDots(mesh, pub.id);
