@@ -17,16 +17,17 @@ in `scale-plan.md` is left to execute. What remains, in order of usefulness:
    are set at creation; the fork tree), the save-exclusion list (no `eventDots`), the two rate
    stats; `dev-notes.md` "Round 4 — worker"; `event-dot-lifecycle.md` passes in `Sim.tick`;
    remove the worker plan's "planned, not started" line. Gate: tsc clean, lint 23/3.
-2. The **open balance decisions** below need the user (3 is the one Phase F left open; see its
-   lean).
+2. The **open balance decisions** below need the user (1 (ii), 2 and 4 remain; 3 was decided and
+   done on 2026-11-05).
 3. The user's future option (render bundles as their `count` distinct dots again, plan end of
    Phase C; render-side only), not scheduled.
 
 ## State of the tree
 
-- Phase F is **uncommitted** on top of `9af77b7` ("update progress", which holds the bridge
-  watchdog fix; Phase D is `a2e6bef`). Suggested message: "sim: fork events where routes diverge
-  (DMR relay accounting)". The user commits. Changed: `src/sim/types.ts`, `src/sim/publish.ts`,
+- Phase F is committed as `dfbe31d` ("fork events where routes diverge (DMR relay accounting)", on
+  top of `9af77b7`; Phase D is `a2e6bef`). **Uncommitted on top of it: balance decision 3**
+  (`src/sim/sim.ts`, `claude-docs/upgrades.md`, this file; suggested message: "sim: each link copy
+  is its own relay attempt"). The user commits. Phase F changed: `src/sim/types.ts`, `src/sim/publish.ts`,
   `src/sim/sim.ts`, `src/store/upgradeConfig.ts`, `scripts/perf/behavior.mjs`,
   `scripts/perf/compare.mjs`, `scripts/perf/prof.mjs`, `scripts/perf/README.md`,
   `claude-docs/upgrades.md`, `claude-docs/event-dot-lifecycle.md`, `claude-docs/dev-notes.md`,
@@ -58,6 +59,14 @@ in `scale-plan.md` is left to execute. What remains, in order of usefulness:
   accounting needed no new code, as the plan said: a fork dot starts at progress 0 at its spawn
   broker (no crossing charge there), each spawn charges the spawn broker, each crossing charges
   the broker crossed.
+- Decision 3 (`sim.ts`, traveling branch): the crossing loop no longer `continue`s on a refusal;
+  it records the refusing mark (`cappedMark`) and, for a dot with steps, the count before each
+  partial admission (`countsBefore`, allocated only then). The fork spawn loop then runs for the
+  steps reached, stops at any step past `cappedMark`, and spawns each step's forks with the count
+  the dot arrived at that broker with (`forkCount`: the first `countsBefore` entry at or after the
+  step's `centerP`, else `dot.count`), each with its own `tryBrokerRelay`. A refused dot is pushed
+  dropped after the spawn loop, carrying its advanced `forkStep`, so a DMQ retry does not re-spawn
+  forks already sent. Where no cap binds nothing changes (no record, `forkCount === dot.count`).
 - `upgradeConfig.ts`: `CLUSTER_THROUGHPUT_MULTIPLIER` 1.25 → **1.4** (comment updated with the
   new level targets: ingestion cluster ~31, bridged clusters ~45, ~$98B total; was ~$3B at 1.25
   and ~$130B before Phase F when the ingestion cluster needed ~65).
@@ -73,9 +82,10 @@ in `scale-plan.md` is left to execute. What remains, in order of usefulness:
   routes delivered once; mixed queue+bridge in both orders; bridge chain; 300 random meshes with
   the game's one-route-per-queue-per-broker dedup: every route delivered once and each broker's
   relays = its distinct next hops) + `release.test.ts` 4 = 10/10.
-- Labels in `.out/`: `f1` (S, M, L, U, W, F 20 at `FTHROUGHPUT=300`, `f1-10`, `f1-2`), `f1cap`
-  (F 20 at default caps; its predecessor is `c1cap`), `manualcheck-f1.json`. Earlier: `d0`, `d2`,
-  `c1`, `c1cap`, `wbase`…
+- Labels in `.out/`: `f1` (Phase F: S, M, L, U, W, F 20 at `FTHROUGHPUT=300`, `f1-10`, `f1-2`),
+  `f1cap` (F 20 at default caps; its predecessor is `c1cap`), `f2`/`f2-10`/`f2-2`/`f2cap` (the
+  same set on the decision-3 build), `manualcheck-f1.json`, `manualcheck-f2.json`. Earlier: `d0`,
+  `d2`, `c1`, `c1cap`, `wbase`…
 - Line endings: every changed file CRLF except `src/store/upgradeConfig.ts`,
   `claude-docs/upgrades.md` and `claude-docs/event-dot-lifecycle.md`, which were LF at HEAD and
   were left LF (git's autocrlf warns it will normalize them when it next touches them; the CRLF
@@ -126,24 +136,32 @@ cables leaving the three clusters (DMR1→DMR2, DMR1→DMR3, DMR2→Q1..4, DMR3�
 second relays DMR1 12 / DMR2 24 / DMR3 24 (2 / 4 / 4 per event), 960 consumed (6 × 8 × 20), 0
 dropped, 0 live dots after 4 s, no errors. tsc clean, lint 23/3, tests 10/10.
 
+**Decision 3 build (`f1` → `f2`, same session, per sim second)**: S 8.2/175.6/3,255 →
+8.2/174.6/3,396 (earned +4.3%: inside this scale's spread across every gate, 3,239–3,396; S is
+the one small scale where the cap binds, 101 of 103 relays/s, so a small real shift is possible;
+consumed and dropped unchanged); M 1,440.0 → 1,439.7; L 4,318.8 → 4,320; U 14,396 → 14,406; W
+1/9/30 unchanged; F 20 (300) 191,941 → 191,767 (−0.1%, relays 2.01 / 4.01 / 4.02); F 10 95,987 →
+96,056; F 2 19,206 → 19,171; **F 20 default caps** 15,623 → 15,898 consumed/s (+1.8%), 2,866 →
+2,835 dropped/s, 14.09M → 14.46M earned/s, the bridged clusters' windows 395 / 387 → 409 / 401
+of 412 relays/s (filled link by link instead of fire by fire; DMR1 410). ticks/s 59.2–60.4,
+`inputsClamped` 0 everywhere. dragsmoke M worker 444 traveling 0/0 1,442/s, inline 454 0/0
+1,441/s, no errors; manualcheck A–E pass (D fell back at 3.06 s this run: the kill landed before
+the ack; E one dot per cable, 12/24/24, 960/0). tsc clean, lint 23/3, tests 10/10.
+
 ## Open balance decisions (from Phase B; user decision 2026-11-05 unless stated)
 
 1. **Auto-publisher poll** — done as (i) in Phase B2 (10/s cap stays). Option (ii) remains open.
 2. **Timed-subscriber release quantization** — deferred (known, small): S 8.2 → 7.5 → 7.4
    consumed per sim second at 60 / 15 / 10 ticks/s. Flat form: release early by `slack`.
-3. **Capped primary skips its forks** — **still open after Phase F; unchanged.** The rule: a dot
-   refused at a broker's cap at `centerP` is dropped (`count` events counted) and the fork step at
-   that broker never runs, so its forks are lost **uncounted**; a partly admitted bundle spawns
-   forks with the admitted count. Under the fork tree its reach grew: at the ingestion cluster the
-   skipped fork is the copy for the other bridge, i.e. a refused primary at DMR1 loses the whole
-   fire (DMR3's 4 queues included), while a refused fork copy loses only its own subtree (the
-   plan's "one drop counted, as a lost link copy would be"). Visible only where a cap binds
-   (`f1cap`: 2,866 drops/s counted while 9,600 − 781 = 8,819 copies/s are lost). Lean: decouple —
-   every link copy is its own relay attempt (spawn each fork with the dot's original count and
-   its own `tryBrokerRelay`, whatever the primary got), so a capped broker fills its window
-   link by link instead of fire by fire; under a binding cap total deliveries stay at the cap,
-   only their spread over fires changes, and skipped forks stop vanishing uncounted. S/M/L/U/W and
-   F at `FTHROUGHPUT=300` would not move (no cap binds). Needs the user.
+3. **Capped primary skips its forks** — **decided 2026-11-05 ("use your lean"): decoupled, done.**
+   Every link copy is its own relay attempt: the forks a dot spawns at a broker carry the count
+   it arrived there with and take their own slots, whatever that broker's cap did to the dot;
+   a dot refused outright still loses every step past that broker (a lost link copy takes the
+   deliveries behind it along) and its own events are the drop counted. Before, a refused primary
+   skipped the fork step at that broker (its forks vanished uncounted; under the fork tree that
+   was the whole fire at the ingestion cluster) and a partly admitted one spawned forks with the
+   admitted count. Effect only where a cap binds (`f1cap` → `f2cap` above); S/M/L/U/W and F at
+   `FTHROUGHPUT=300` within noise.
 4. **Cap arbitration is array order within a tick** — deferred. Phase C adds to it: under a
    binding cap a bundle takes its slots at one instant instead of over the batch's 0.04-progress
    stagger (~200 ms), so which publishers' events fill the window differs; at F 20 default caps
@@ -241,6 +259,11 @@ dropped, 0 live dots after 4 s, no errors. tsc clean, lint 23/3, tests 10/10.
   canvascheck/pausecheck both renderers pass; release test 4/4; tsc; lint 23/3.
 - 2026-11-05: bridge watchdog gap fixed (user decision, post-ack timeout 10 s / 3× tick):
   manualcheck D falls back at 10.05 s, dcheck2 7/7, dragsmoke both modes clean; tsc; lint 23/3.
+- 2026-11-05: balance decision 3 decided and done (user: "use your lean"): forks carry the count
+  the dot arrived with and take their own slots; a refusal only cuts the steps past it. F 20 at
+  default caps 15,623 → 15,898 consumed/s, bridged clusters 395/387 → 409/401 of 412 relays/s;
+  S/M/L/U/W and F 20/10/2 at `FTHROUGHPUT=300` within noise of `f1`; dragsmoke both modes clean;
+  manual checks A–E pass; tests 10/10; tsc; lint 23/3.
 - 2026-11-05: Phase F done (fork tree: one copy per link at each broker, the far cluster fans out
   itself; `CLUSTER_THROUGHPUT_MULTIPLIER` 1.25 → 1.4; decision 3 left open with a lean): F 20 at
   `FTHROUGHPUT=300` relays 2.01 / 4.03 / 4.03 per event (was 8 / 4 / 4 by construction) with

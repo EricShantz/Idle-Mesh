@@ -1064,7 +1064,15 @@ export class Sim {
           // cap (not just the first) — a bridge hop is a real relay, not a free pass, so
           // chaining brokers no longer lets a route dodge capacity limits. The DMR Cluster
           // upgrade is the intended way to raise a given broker's own ceiling instead.
-          let brokerCapped = false;
+          // The broker that refused the dot outright this tick, if any: the dot drops there
+          // (below, after its forks at or before that broker have been spawned) and no step
+          // past it runs — a refused link copy takes every delivery behind it along.
+          let cappedMark: NodeMark | undefined;
+          // Every link copy is its own relay attempt (balance decision 3, user 2026-11-05): a fork
+          // spawned at a broker carries the count the dot ARRIVED at that broker with, whatever
+          // that broker's cap then did to the dot itself. Only partial admissions change the
+          // count, so those are the only crossings recorded (and only for a dot with steps).
+          let countsBefore: { p: number; count: number }[] | undefined;
           const now = frameNow;
           for (const mk of pathInfo.marks) {
             if (mk.comp.type !== 'broker') continue;
@@ -1077,13 +1085,13 @@ export class Sim {
                 const lost = dot.count - admitted;
                 droppedCount += lost;
                 recordDrop(mk.comp.id, 'broker-capped', mk.comp.label);
-                pushDropped({ ...dot, id: admitted > 0 ? nextDotId() : dot.id, status: 'dropped', count: lost, dropX: mk.comp.x, dropY: mk.comp.y, dropVY: 0, color: dropColor } as Dot);
-                if (admitted === 0) { brokerCapped = true; break; }
+                if (admitted === 0) { cappedMark = mk; break; }
+                if (dot.forkStep) (countsBefore ??= []).push({ p: mk.centerP, count: dot.count });
+                pushDropped({ ...dot, id: nextDotId(), status: 'dropped', count: lost, dropX: mk.comp.x, dropY: mk.comp.y, dropVY: 0, color: dropColor } as Dot);
                 dot.count = admitted;
               }
             }
           }
-          if (brokerCapped) continue;
 
           // Fork spawning: when the dot reaches the broker of its head fork step, spawn that
           // step's forks (each charged to this broker's cap: a copy relayed down another link)
@@ -1099,6 +1107,10 @@ export class Sim {
               const forkComp = componentById.get(step.nodeId);
               const forkMark = pathInfo.markById.get(step.nodeId);
               if (!forkComp || !forkMark || newProgress < forkMark.touchStart) break;
+              if (cappedMark && forkMark.centerP > cappedMark.centerP) break;
+              // The count the dot arrived at this broker with (see countsBefore above).
+              let forkCount = dot.count;
+              if (countsBefore) for (const cb of countsBefore) if (cb.p >= forkMark.centerP) { forkCount = cb.count; break; }
               for (const fork of step.forks) {
                 const forkDotId = nextDotId();
                 // Path and route from the broker onward, shared by every dot spawned from this
@@ -1110,9 +1122,9 @@ export class Sim {
                   const forkCap = getBrokerCap(forkComp, getPermanentBrokerThroughputMult(mesh));
                   // Each fork carries the bundle's count and takes that many slots; what does not
                   // fit drops here and the rest travels (see tryBrokerRelay).
-                  const forkAdmitted = tryBrokerRelay(brokerRelayTimestamps, forkComp.id, forkCap, now, dot.count);
-                  if (forkAdmitted < dot.count) {
-                    droppedCount += dot.count - forkAdmitted;
+                  const forkAdmitted = tryBrokerRelay(brokerRelayTimestamps, forkComp.id, forkCap, now, forkCount);
+                  if (forkAdmitted < forkCount) {
+                    droppedCount += forkCount - forkAdmitted;
                     recordDrop(forkComp.id, 'broker-capped', forkComp.label);
                     pushDropped({
                       id: forkAdmitted > 0 ? nextDotId() : forkDotId,
@@ -1121,7 +1133,7 @@ export class Sim {
                       speed: 0,
                       progressPerMs: 0,
                       speedUntilP: 1,
-                      count: dot.count - forkAdmitted,
+                      count: forkCount - forkAdmitted,
                       status: 'dropped' as const,
                       dropX: forkComp.x,
                       dropY: forkComp.y,
@@ -1157,6 +1169,12 @@ export class Sim {
               step = step.next;
             }
             if (step !== dot.forkStep) dot.forkStep = step;
+          }
+          if (cappedMark) {
+            // Refused outright: the dot (with its remaining steps, so a DMQ retry does not
+            // re-spawn forks already sent) drops at that broker.
+            pushDropped({ ...dot, status: 'dropped', dropX: cappedMark.comp.x, dropY: cappedMark.comp.y, dropVY: 0, color: dropColor } as Dot);
+            continue;
           }
 
           // Bridge color switch: once the dot's progress passes the broker it exits before
