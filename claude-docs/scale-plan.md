@@ -1,6 +1,6 @@
 # Plan: smooth late game at 20 publishers of fan-out
 
-Status: in progress, see `scale-progress.md` (Phase A partly done on 2026-11-05). Written
+Status: in progress, see `scale-progress.md` (Phase A done on 2026-11-05; A2 is next). Written
 2026-11-05 after Phase 3 of `worker-refactor-plan.md` (the sim runs in a Web Worker). Execute the
 phases in order; each ends at a verified, committable state. `worker-refactor-plan.md` Phase 4
 (docs) should land first; it is independent of this plan.
@@ -73,10 +73,11 @@ of a rebuilt, re-sorted chain per candidate per target. Exact-equivalent; nothin
    (`pausingBySub` bucket) per arriving dot; with 0 ms consume `elapsed < 0 − 50` is never true,
    so the scan is skipped. Ticks 555 → 103 ms, consumed 30k → 136k/s. Keep the timers
    (`tickSections`); they are what finally separated the passes.
-1c. Skip building the arrival index (`subTiming`, the `predictedArrival` pushes in the index loop
+1c. **Done 2026-11-05.** Skip building the arrival index (`subTiming`, the `predictedArrival` pushes in the index loop
    and after each release) for subscribers with a 0 ms consume: nothing reads it once step 1
    returns early. Worth ~27 ms of the 103 ms tick (`index`) plus part of `pass2`.
-2. General case: keep `subTiming.arrivals` sorted (binary insert in `timingFor(...).arrivals.push`
+2. **Done 2026-11-05** (`src/sim/releaseIndex.ts`; the suffix condition reduces to adjacent gaps ≥
+   `consumeDuration`, see `scale-progress.md` → Findings). General case: keep `subTiming.arrivals` sorted (binary insert in `timingFor(...).arrivals.push`
    sites; there are two) and precompute per subscriber, once per tick after the Pass 1 index is
    built, the prefix `busyUntil` after each arrival and the suffix slack `min(t_j − busyUntil_j)` for
    arrivals after position j. A candidate at travel time `t` then needs: `t ≥ busyUntil(prefix
@@ -85,7 +86,8 @@ of a rebuilt, re-sorted chain per candidate per target. Exact-equivalent; nothin
    ≥ 0. Work out the exact recurrence against the current loop and keep the current loop as the
    reference in a unit test (`src/sim/__tests__/release.test.ts`, run with `node --test` after
    `tsc`; the repo has no test runner, so keep it dependency-free) over random arrival sets.
-3. Releases made within the tick append to the index; keep the ascending order (the stagger makes
+3. **Done 2026-11-05** (binary insert; same-tick releases from different queues to one subscriber
+   do not ascend, see Findings). Releases made within the tick append to the index; keep the ascending order (the stagger makes
    same-tick releases ascend already; assert, don't assume).
 
 Gate A: unit test passes (random chains, both halves of the rule, consume durations 0 and > 0);

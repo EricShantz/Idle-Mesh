@@ -90,10 +90,14 @@ export const brokerUpgrades: UpgradeDef[] = [
 ];
 
 /** Throughput upgrade continues past the broker's level-10 cap once clustered, at a gentler
- *  cost curve ($150k base, x2/level) so it remains purchasable indefinitely. */
+ *  cost curve ($150k base, x1.25/level) so it remains purchasable indefinitely. The cap grows
+ *  quadratically in level while the cost grows exponentially, so the multiplier decides how far
+ *  a run can push a cluster: at x1.25 the late-game fan-out mesh (ingestion cluster at ~level 65
+ *  for ~9.6k relays/s, two bridged clusters at ~level 45) costs ~$130B in throughput, 13% of the
+ *  $1T win; at the old x2.0 the same build cost ~$5e21. */
 const CLUSTER_THROUGHPUT_START_LEVEL = 10;
 const CLUSTER_THROUGHPUT_BASE_COST = 150_000;
-const CLUSTER_THROUGHPUT_MULTIPLIER = 2.0;
+const CLUSTER_THROUGHPUT_MULTIPLIER = 1.25;
 
 function getThroughputCostAtLevel(level: number): number {
   if (level < CLUSTER_THROUGHPUT_START_LEVEL) {
