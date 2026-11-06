@@ -42,7 +42,10 @@ asynchronous (a round trip to the worker). A dot can stand for several events (a
 as one dot with `count` where that is exact, see `EventDot.count`): `liveDots` / `avgLiveDots` count
 dots, `liveEvents` / `avgLiveEvents` events, and `byStatus()` reports both (`queued` dots,
 `queuedEvents` events); the consumed/dropped counters are always events. `SUBSPEED=10 PUBSPEED=9` env vars use non-maxed
-card levels so the per-card cooldown animations are active. `JSFLAGS=--no-turbo-inlining node
+card levels so the per-card cooldown animations are active. `QBUF=<level>` sets every queue's
+buffer upgrade level (default 17 = 20 slots); `QBUF=0 FPUBS=24 FTHROUGHPUT=300 node
+scripts/perf/behavior.mjs F <label>` is the 3-slot-queue-under-a-6-event-batch case that must show
+0 dropped/s (it dropped everything on 2026-11-06 before the queue admission rule was restored). `JSFLAGS=--no-turbo-inlining node
 scripts/perf/prof.mjs U` attributes time to the real functions inside the loop (V8 otherwise inlines
 the whole frame into `loop`); absolute speed is lower with it. `behavior.mjs` output includes `renderer` (`webgl` or `2d`) so you can tell which
 `EventCanvas` path was measured. The position buffer (`window.__sim.positions()`) holds

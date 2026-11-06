@@ -12,13 +12,28 @@ production). `worker-refactor-plan.md`: Phase 4 (docs and cleanup) was done on 2
 nothing in either plan is left to execute. A session started with the kickoff prompt should say so
 and stop. What remains needs the user:
 
-1. Nothing: every balance decision below is closed (1 (ii), 2 and 4 were closed as "leave" on
-   2026-11-05, "use your lean").
+1. **Commit the 2026-11-06 queue admission fix** (uncommitted, see the tree state). Every balance
+   decision below is closed except the new **8 (DMQ release rate)**, which needs the user.
 2. The user's future option (render bundles as their `count` distinct dots again, plan end of
    Phase C; render-side only), not scheduled.
 
 ## State of the tree
 
+- **Uncommitted (2026-11-06): the queue admission fix.** `src/sim/sim.ts` (traveling branch, the
+  queue capture): a bundle is admitted whole when `queuedCount < bufferSize` (last tick's backlog),
+  no longer when `queuedCount + count <= bufferSize`. `scripts/perf/prof.mjs`: `QBUF=<level>` sets
+  every queue's buffer level (default 17), both builders. `scripts/perf/README.md`,
+  `claude-docs/event-dot-lifecycle.md` (the queued rule), `claude-docs/scale-plan.md` (Phase C step
+  2 marked wrong), this file. Gitignored probes in `scripts/perf/.out/`: `relayprobe.mjs` (chain /
+  TIE meshes with and without topic subscriptions: relays per cluster), `dropprobe.mjs` (drop
+  reasons, queue backlog; `QBUF`), `dmqdrain.mjs` (DMQ fill and drain). Labels `q1`, `q1-10`,
+  `q1-2`, `q1cap`. Suggested message: "sim: admit a batch whole when the queue backlog is below
+  the buffer". Also uncommitted, same day: `CLUSTER_THROUGHPUT_MULTIPLIER` 1.4 → **1.3**
+  (`src/store/upgradeConfig.ts`, comment updated; `claude-docs/upgrades.md`): at 24 publishers the
+  three clusters cost ~$526B at 1.4 (bridged clusters at level ~50, ~$100B per level), ~$36B at 1.3;
+  a cost-only change, no sim rule, so the harness was not rerun for it. Suggested message:
+  "balance: cluster throughput cost x1.4 -> x1.3". Lint 23/3, tsc clean, tests 10/10, preview
+  server stopped.
 - Decision 3 is committed as `494a942` ("each link copy is its own relay attempt") on top of Phase
   F `dfbe31d` (Phase D is `a2e6bef`). **Uncommitted on top of it: worker-refactor Phase 4, docs
   only** — `CLAUDE.md`, `claude-docs/dev-notes.md`, `claude-docs/event-dot-lifecycle.md`,
@@ -90,6 +105,30 @@ and stop. What remains needs the user:
   the kickoff prompt's CRLF check lists the LF ones by design.
 - Lint 23/3, tsc clean, preview server stopped.
 
+## Measured — queue admission fix (`f2` → `q1`, 2026-11-06, per sim second, worker mode)
+
+| scale | ticks/s | ms/tick | consumed | dropped | earned | relays/event |
+|---|---|---|---|---|---|---|
+| S | 59.9 → 59.8 | 2.75 → 2.61 | 8.2 → 8.2 | 174.6 → 174.9 | 3,396 → 3,362 | 1.71 |
+| M | 60.4 → 60.3 | 0.60 → 0.51 | 1,439.7 → 1,438.7 | 0 | 745.2k → 744.6k | 3 / 3 |
+| L | 60.1 → 59.8 | 0.89 → 0.75 | 4,320 → 4,323.6 | 0 | 3.101M → 3.104M | 2.01 ×3 |
+| U | 60.2 → 59.8 | 1.41 → 1.30 | 14,406 → 14,388 | 0 | 10.342M → 10.329M | 2.01 ×6 |
+| W | 60.2 → 60.1 | 0.58 → 0.46 | 1 → 1 | 9 → 9 | 30 → 30 | — |
+| F 20 (300) | 59.2 → 59.2 | 5.98 → 5.90 | 191,767 → 192,026 | 0 | 187.29M → 187.55M | 2.01 / 4.01 / 4.00 |
+| F 10 (300) | 59.6 → 60.3 | 3.48 → 3.61 | 96,056 → 95,974 | 0 | 69.76M → 69.70M | 2.00 / 4.01 / 4.01 |
+| F 2 (300) | 59.6 → 60.4 | 0.87 → 0.89 | 19,171 → 19,219 | 0 | 10.08M → 10.11M | 2.01 / 4.01 / 4.02 |
+| F 20 caps | 60.4 → 60.3 | 2.39 → 2.25 | 15,898 → 16,003 | 2,835 → 2,834 | 14.46M → 14.32M | 0.34 / 0.33 / 0.33 |
+
+Against `wbase`: S/M/L/W within noise, U 13,682 → 14,388 consumed/s (the clamp loss `wbase` had).
+The harness queues hold 20 slots, so none of these rows exercise the fix; the case that does:
+`QBUF=0 FPUBS=24 FTHROUGHPUT=300 SUBSPEED=11` (3-slot queues, 6-event batches, 0 ms subscribers)
+read **0 consumed/s, 11,516 dropped/s (all queue-full, queues empty)** before and **230,696
+consumed/s, 0 dropped** after; `QBUF=2` (5 slots) the same; `QBUF=3` (6 slots) was already 230k/0.
+dragsmoke M worker 448 traveling 0/0 1,438/s, inline 444 0/0 1,444/s, no errors; manualcheck A–E
+pass (E one dot per cable, 2 / 4 / 4, 960 consumed). `dmqdrain` (F 24 at default caps, DMQ under
+DMR1): the DMQ sits full at 8 while the clusters cap (one retry in flight at a time), and after
+auto-fire is switched off it drains 8 → 4 → 0 in ~5 s: 2 events/s, the 500 ms release timer.
+
 ## Measured — Gate F (headless, worker mode, 15 s windows, per **sim** second; `d2` → `f1`)
 
 `inputsClamped` was 0 in every run of both labels. Relays per published event (new column) are
@@ -148,6 +187,13 @@ the ack; E one dot per cable, 12/24/24, 960/0). tsc clean, lint 23/3, tests 10/1
 
 ## Open balance decisions (from Phase B; user decision 2026-11-05 unless stated)
 
+8. **DMQ release rate** (2026-11-06, open): Pass 3 releases one event per 500 ms when the retry
+   route's first target is a queue (`lastDmqReleaseTime`), unchanged since before the plans, while
+   the mesh now drops thousands of events per second when a cluster caps, so the DMQ looks stuck
+   (always full, one orange dot in flight) even though it drains at 2/s once the inflow stops
+   (`dmqdrain` above). Options: leave; release per tick like a queue (bounded by the target
+   queue's admission); or scale the interval with a DMQ upgrade. Balance, not scaling.
+
 1. **Auto-publisher poll** — done as (i) in Phase B2 (10/s cap stays). Option (ii) (per-tick
    cooldown with catch-up, so `publishSpeed` level 10 fires 20/s) **closed 2026-11-05 ("use your
    lean"): leave.** It would double auto income at level 10 and want a spawn stagger; a balance
@@ -179,6 +225,30 @@ the ack; E one dot per cable, 12/24/24, 960/0). tsc clean, lint 23/3, tests 10/1
    events the per-dot compare admitted (head passes, tail drops).
 
 ## Findings
+
+- **Phase C's queue rule was wrong in the plan and the code (fixed 2026-11-06)**: `scale-plan.md`
+  Phase C step 2 wrote the queue gate as `queuedCount + count ≤ bufferSize`, and `sim.ts` did that.
+  The per-dot rule it replaced was `queuedCount < bufferSize` for every dot of the tick, with
+  `queuedCount` the backlog of the previous tick (same-tick arrivals never counted), so a 6-dot
+  batch into a 3-slot queue was admitted whole and drained the same tick by a 0 ms subscriber.
+  As a bundle it needed 6 free slots, so every batch larger than the queue dropped as queue-full
+  while the queue showed empty (the user's report: queues dropping with idle maxed subscribers;
+  maxing the queue size made it stop, since 20 slots ≥ 6). Gate C missed it because every
+  harness queue has `bufferSize` 17 (20 slots); `QBUF` now exists for that. The exact rule is
+  restored; the harness F/S/M/L/U/W rows are unchanged by construction.
+- **Why the first cluster of a chain or TIE shows more load than the others**: it is the only
+  cluster every event passes through; each later cluster only sees the events with a matching
+  queue at or beyond it, and a copy over a bridge costs the sender one relay (the same as one
+  local queue delivery) only when something downstream matches. `relayprobe` with equal caps:
+  chain with no topic filter 9 / 9 / 8 relays per event (8 local queues + 1 link), chain with one
+  pool topic per queue **1.00 / 0.67 / 0.33**, TIE with no filter 10 / 8 / 8, TIE with one topic
+  per queue **1.00 / 0.34 / 0.34**. The card bar is relays over that cluster's own cap, so with
+  equal levels it reads 3 : 2 : 1 down a chain. Not a bug; before Phase F the first cluster paid
+  for every final destination (8 per event on the TIE), which was worse. Ingress is not charged
+  (only copies sent); charging it would be a balance change.
+- **A subscriber one level below max (`fasterConsumption` 10, 50 ms) takes 20 events/s**, so a
+  queue feeding it drops as queue-full at any real batch rate (F 24 at `SUBSPEED=10`: 288
+  consumed/s, 11,238 dropped/s). Pre-existing and by design; the harness runs level 11 (0 ms).
 
 - **The plan's Gate F wording is off in one place**: "`F` with the default caps shows DMR1
   recording 2 relays per event and each bridged cluster 4" cannot be read at default caps, where
@@ -285,6 +355,15 @@ the ack; E one dot per cable, 12/24/24, 960/0). tsc clean, lint 23/3, tests 10/1
   `dev-notes.md` stale references fixed and Rounds 4–5 appended, `event-dot-lifecycle.md`
   rewritten around `Sim.tick`, `component-types.md`/`roadmap.md` references fixed, the worker
   plan marked done; no code; tsc clean, lint 23/3.
+- 2026-11-06: cluster throughput cost multiplier 1.4 → 1.3 (user: still the late-game
+  bottleneck; at 24 publishers the clusters cost ~$526B → ~$36B). Cost only; tsc; lint 23/3.
+- 2026-11-06: queue admission regression (Phase C) found from the user's report and fixed: a
+  bundle is admitted whole when last tick's backlog is below the buffer; `QBUF` harness knob;
+  3-slot queues under 6-event batches 0 → 230,696 consumed/s; S/M/L/U/W and F 20/10/2/caps vs
+  `f2` within noise; dragsmoke both modes clean; manualcheck A–E pass; tests 10/10; tsc; lint
+  23/3. Also measured: why the first cluster carries the most load (topic-filtered chain
+  1.00 / 0.67 / 0.33 relays per event, by design) and the DMQ's fixed 2 events/s drain (new
+  balance decision 8).
 - 2026-11-05: closing session: nothing left in either plan (Phase E's trigger not met at 59.5
   ticks/s); balance decisions 1 (ii), 2 and 4 closed as "leave" (user: "use your lean");
   `scale-plan.md` status line set to done. Docs only; no code, harness not rerun.
