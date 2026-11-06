@@ -90,19 +90,20 @@ export const brokerUpgrades: UpgradeDef[] = [
 ];
 
 /** Throughput upgrade continues past the broker's level-10 cap once clustered, at a gentler
- *  cost curve ($150k base, x1.3/level) so it remains purchasable indefinitely. The cap grows
+ *  cost curve ($150k base, x1.25/level) so it remains purchasable indefinitely. The cap grows
  *  quadratically in level while the cost grows exponentially, so the multiplier decides how far
  *  a run can push a cluster. A cluster relays one copy per link it fans out on (the far end of a
  *  bridge fans out by itself, see sim/forkTree.ts), so the late-game fan-out mesh (20 publishers
  *  at 1,200 events/s into one cluster bridged to two, 4 queues each) needs the ingestion cluster
- *  at ~level 31 for 2 relays per event and each bridged cluster at ~level 45 for 4: at x1.3 that
- *  is ~$10B of throughput (at 24 publishers, levels 34 / 50 / 50, ~$36B). It was x1.4 until
- *  2026-11-06 (~$98B at 20 publishers but ~$526B at 24, over half the $1T win, with the last
- *  levels at ~$100B each: the late-game wall), x1.25 before that (~$3B), and before Phase F, when
- *  every copy was charged to the ingestion cluster, that cluster needed ~level 65 at ~$130B. */
+ *  at ~level 31 for 2 relays per event and each bridged cluster at ~level 45 for 4: at x1.25 that
+ *  is ~$3B of throughput (at 24 publishers, levels 34 / 50 / 50, ~$9B, the last levels ~$1.1B
+ *  each). It was x1.4 until 2026-11-06 (~$98B at 20 publishers but ~$526B at 24, over half the
+ *  $1T win, with the last levels at ~$100B each: the late-game wall), then x1.3 (~$36B at 24) the
+ *  same day; before Phase F, when every copy was charged to the ingestion cluster, that cluster
+ *  needed ~level 65 at ~$130B. */
 const CLUSTER_THROUGHPUT_START_LEVEL = 10;
 const CLUSTER_THROUGHPUT_BASE_COST = 150_000;
-const CLUSTER_THROUGHPUT_MULTIPLIER = 1.3;
+const CLUSTER_THROUGHPUT_MULTIPLIER = 1.25;
 
 function getThroughputCostAtLevel(level: number): number {
   if (level < CLUSTER_THROUGHPUT_START_LEVEL) {
