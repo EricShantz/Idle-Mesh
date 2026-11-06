@@ -18,6 +18,10 @@ in the top entries and render fps ≥ 50; `.out/pausecheck.mjs` and `.out/canvas
 (`--disable-webgl`) pass; S, M, L, U, W unchanged (sim untouched). Profile the main thread with
 `FTHROUGHPUT=300 node scripts/perf/prof.mjs F` (no `--worker`).
 
+Queued after the tick-speed phases (A2–D): **Phase F, fork where routes diverge** (real DMR relay
+accounting, user decision 2026-11-05; the plan has the steps and gate). It is a rule change, with
+the throughput multiplier going 1.25 → 1.4 in the same commit.
+
 ## State of the tree
 
 - Uncommitted, on top of commit `40fd51c` ("run the simulation in a Web Worker, fix fan-out hot

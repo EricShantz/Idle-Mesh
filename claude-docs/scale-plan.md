@@ -51,7 +51,9 @@ backlog is released in one burst. At a healthy tick rate the steady state is pro
 
 ## Non-goals
 
-- No change to upgrade numbers, caps, values, prestige, or the save format.
+- No change to upgrade numbers, caps, values, prestige, or the save format. Two user-decided
+  exceptions: the DMR throughput cost multiplier (2.0 → 1.25 on 2026-11-05, → 1.4 with Phase F)
+  and Phase F's relay accounting.
 - The early and mid game (one dot per event, click to fire, visible drops) stay as they are; every
   change below is either exact-equivalent or gated to loads where dots are already a blur.
 - No second worker, no SharedArrayBuffer.
@@ -181,6 +183,44 @@ a rate limiter, the queue a level, the subscriber a service rate; a capped strea
 drawn and the counters are integrated per tick from the rates. The rules are re-expressed, so every
 one needs its own equivalence test against the dot sim at the threshold. Design it in its own plan
 file when and if it is needed; do not start it from this one.
+
+### Phase F — fork where routes diverge: real DMR relay accounting (1 day)
+
+Runs after the tick-speed phases (A2–D; E only if it happens). User decision 2026-11-05, after
+checking the Solace DMR docs: a cluster sends **one copy of a message per link** and the receiving
+cluster does the fan-out to its own queues. Today the publish plan resolves every final destination
+up front and groups the routes by the **first** broker (`computePublishPlan`, the `forkGroups`
+loop in `publish.ts`), so all copies are spawned at the ingestion cluster and charged to its cap:
+in the TIE fighter DMR1 pays 8 relays per event while each bridged cluster pays 4, the reverse of
+the real behaviour, and DMR1 caps first even at a higher level. This is a rule change (an explicit
+exception to the non-goals), not exact-equivalent.
+
+1. `computePublishPlan`: build the fork tree instead of one fork point. Group the selected routes
+   by first broker as today; within a group, partition by the next hop after that broker. Routes
+   sharing the next hop continue as one dot; each other partition's first route becomes a fork at
+   that broker; recurse at the next broker along each partition's shared prefix. A plan entry (and
+   each fork entry) carries an ordered list of fork steps `{ nodeId, forks[] }`; `forkNodeId` /
+   `forkPaths` become the head of that list.
+2. `Sim.tick` fork spawn: on reaching the head step's broker, spawn its forks (each spawned dot
+   carries its own remaining steps), then advance the step. `forkSpawnFor` already slices from the
+   fork broker onward, so the caches work per (waypoints, broker). Relay accounting needs no new
+   code: each spawn charges its fork broker, each crossing charges the broker crossed. Result for
+   the TIE fighter: DMR1 2 relays per event (cap 2,400/s at 1,200 events/s, level ~31 with 4
+   slots), DMR2/DMR3 4 each (4,800/s, level ~45). A capped copy at DMR1 now takes every delivery
+   behind that bridge with it (one drop counted, as a lost link copy would be).
+3. Meshes without bridges are unchanged: a broker fanning out to its own queues already pays once
+   per queue, and the tree has one level.
+4. Pricing with it: `CLUSTER_THROUGHPUT_MULTIPLIER` 1.25 → 1.4, so the TIE fighter's throughput
+   levels stay a meaningful late-game purchase (~$100B, a tenth of the $1T run, instead of ~$3B).
+   Update `claude-docs/upgrades.md` and the `F` harness description.
+5. Not modelled on purpose: real DMR's one-hop rule between clusters (bridge chains stay allowed).
+
+Gate F: S, M, L, U, W consumed/dropped/earned per second unchanged vs the previous label (no cap
+binds there; U/L/M have no bridges); `F` with the default caps shows DMR1 recording 2 relays per
+event and each bridged cluster 4 (add `brokerRelayCounts` to the `behavior.mjs` output); `F` with
+`FTHROUGHPUT=300` within noise of the previous label on consumed/s; drag smoke clean in both
+modes; the headless manual check shows one dot per cable leaving each cluster after a click.
+Commit: "sim: fork events where routes diverge (DMR relay accounting)".
 
 ## Findings so far (the running list is in `scale-progress.md`)
 
