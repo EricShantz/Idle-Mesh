@@ -26,7 +26,7 @@ Access by clicking the **↑ icon** on any node. Modal is anchored to the node.
 | Upgrade to DMR Cluster | **Functional, one-time**: hidden until Increase Throughput is maxed. Relabels to "DMR Cluster", keeps `type: 'broker'` (all existing broker connection/routing rules still apply unchanged), starts with 2 broker slots, and removes Increase Throughput's level cap permanently. | $250,000 | — | 1 |
 | Add Cluster Slot | **Functional**: hidden until DMR Cluster is purchased. Each level adds one more broker to the cluster (2 → 3 → 4), multiplying the combined throughput cap by the slot count. | $150,000 | ×4 | 2 (4 total slots) |
 
-**DMR Cluster throughput cost curve**: once clustered, Increase Throughput keeps leveling past 10 with no cap, but the cost multiplier eases from ×2.2 to ×2.0 for levels 10+ (base $150,000 for level 10→11) — see `getEffectiveUpgradeCost` / `getThroughputCostAtLevel` in `upgradeConfig.ts`. This is the intended permanent fix for broker overload at max throughput — previously the only option was building a disconnected second mesh.
+**DMR Cluster throughput cost curve**: once clustered, Increase Throughput keeps leveling past 10 with no cap, but the cost multiplier eases from ×2.2 to ×1.25 for levels 10+ (base $150,000 for level 10→11; was ×2.0 until 2026-11-05, which put the late-game fan-out mesh — ingestion cluster near level 65 for ~9.6k relays/s, two bridged clusters near level 45 — at ~$5e21; at ×1.25 it is ~$130B, 13% of the $1T win) — see `getEffectiveUpgradeCost` / `getThroughputCostAtLevel` in `upgradeConfig.ts`. This is the intended permanent fix for broker overload at max throughput — previously the only option was building a disconnected second mesh.
 
 ### Queue
 | Upgrade | Effect | Base Cost | Multiplier |

@@ -9,6 +9,8 @@ import { getPermanentQueueBufferBonus, findNextInteractableId, getPermanentBroke
 import type { EventDot, GameComponent, Connection, Mesh } from './types';
 import { interpolatePath, normalizedSpeed, getSegmentSpeedScale, scaledTravelTime, getPathMetrics } from '../utils/pathUtils';
 import { computeOrthogonalWaypoints, computeVerticalFirstWaypoints } from '../utils/orthogonalPath';
+import { createArrivalIndex, finalizeArrivalIndex, insertArrival, canAcceptArrival } from './releaseIndex';
+import type { ArrivalIndex } from './releaseIndex';
 import { getClusterSlotCount, getNodeHalfExtents } from '../store/upgradeConfig';
 
 // Node card dimensions: positioned at left: x-60, top: y-28
@@ -620,9 +622,7 @@ export class Sim {
       // Pre-compute DMQ queued count from source array to avoid undercounting
       // when existing queued dots appear later in iteration order
       const dmqCompForCount = mesh.components.find(c => c.type === 'dmq');
-      let dmqQueuedCount = dmqCompForCount
-        ? dots.filter(d => d.status === 'queued' && d.queuedAtNodeId === dmqCompForCount.id).length
-        : 0;
+      let dmqQueuedCount = 0;
       // Per-queue BACKLOG from the previous frame: dots still waiting because the subscriber
       // couldn't take them. This — not the running count including this frame's arrivals —
       // is what the buffer limit gates on. Arrivals happen (Pass 1) before releases (Pass 2)
@@ -630,11 +630,12 @@ export class Sim {
       // dropped its tail as "queue-full" even though Pass 2 drained the whole buffer a moment
       // later. A dot that arrives and leaves within one tick never really held a slot; buffer
       // depth only matters once the consumer actually falls behind.
+      // One pass over the dots for both counts (two passes over 100k+ dots were 5 ms a tick).
       const queueBacklogCounts = new Map<string, number>();
       for (const d of dots) {
-        if (d.status === 'queued' && d.queuedAtNodeId) {
-          queueBacklogCounts.set(d.queuedAtNodeId, (queueBacklogCounts.get(d.queuedAtNodeId) ?? 0) + 1);
-        }
+        if (d.status !== 'queued' || !d.queuedAtNodeId) continue;
+        queueBacklogCounts.set(d.queuedAtNodeId, (queueBacklogCounts.get(d.queuedAtNodeId) ?? 0) + 1);
+        if (dmqCompForCount && d.queuedAtNodeId === dmqCompForCount.id) dmqQueuedCount++;
       }
       // Per-frame component lookups. Pass 1 used to re-scan the component list for every
       // dot (webhook lookup, DMR cluster bounds, and matching each path waypoint to a node),
@@ -662,6 +663,16 @@ export class Sim {
       // its center (all builders use node x/y), so an exact key resolves it; the linear
       // `< 50px` scan is kept only as the fallback for an end point that isn't a center.
       const subscribers = mesh.components.filter(c => c.type === 'subscriber');
+      // Consume duration per subscriber for this tick, and whether any subscriber takes time at
+      // all. A 0 ms subscriber (fasterConsumption maxed) is never occupied and never rejects a
+      // release, so the occupancy buckets and the arrival index are not built for it.
+      const consumeDurationBySub = new Map<string, number>();
+      let anyTimedSubscriber = false;
+      for (const s of subscribers) {
+        const cd = consumeDurationFor(s);
+        consumeDurationBySub.set(s.id, cd);
+        if (cd > 0) anyTimedSubscriber = true;
+      }
       const subscriberByPos = new Map<string, GameComponent>();
       for (const s of subscribers) {
         const k = posKey(s.x, s.y);
@@ -728,15 +739,22 @@ export class Sim {
       // old full scan of `updated` + the unprocessed remainder saw: earlier dots in their
       // updated form, later ones as they were. (A dot consumed this frame has
       // elapsed ≥ its consume duration and so never passes the occupancy test anyway.)
-      const pausingBucketKey = (d: Dot) => {
-        const sub = getPathInfo(d.path).endSubscriber;
-        if (sub) return sub.id;
+      const pausingFallbackKey = (d: Dot) => {
         const end = d.path[d.path.length - 1];
         return end ? `@${posKey(end.x, end.y)}` : '@';
       };
+      const pausingBucketKey = (d: Dot) => {
+        const sub = getPathInfo(d.path).endSubscriber;
+        return sub ? sub.id : pausingFallbackKey(d);
+      };
       const pausingBySub = new Map<string, Dot[]>();
       const addPausing = (d: Dot) => {
-        const k = pausingBucketKey(d);
+        const sub = getPathInfo(d.path).endSubscriber;
+        // Only the occupancy check reads the buckets, and it skips them for a 0 ms subscriber
+        // (see the subscriber capture in Pass 1), so those dots are not filed. On a maxed
+        // fan-out mesh they are nearly all of the pausing dots.
+        if (sub && consumeDurationBySub.get(sub.id) === 0) return;
+        const k = sub ? sub.id : pausingFallbackKey(d);
         const bucket = pausingBySub.get(k);
         if (bucket) bucket.push(d); else pausingBySub.set(k, [d]);
       };
@@ -1315,11 +1333,14 @@ export class Sim {
       // traveling dot heading there next. shouldReleaseTo used to rescan all live dots per
       // candidate per queue to derive exactly this. Releases made below add their own dot's
       // arrival to the index, which is what the old rescan would have picked up.
-      type SubTiming = { pausingRemaining: number | null; arrivals: number[] };
-      const subTiming = new Map<string, SubTiming>();
-      const timingFor = (subId: string): SubTiming => {
+      // Subscribers with a 0 ms consume (fasterConsumption maxed) are left out entirely:
+      // shouldReleaseTo answers for them before it reads the index, so building their entries
+      // (tens of thousands of predicted arrivals per tick on a saturated fan-out mesh) bought
+      // nothing. When no subscriber takes time, the whole loop is skipped.
+      const subTiming = new Map<string, ArrivalIndex>();
+      const timingFor = (subId: string): ArrivalIndex => {
         let t = subTiming.get(subId);
-        if (!t) { t = { pausingRemaining: null, arrivals: [] }; subTiming.set(subId, t); }
+        if (!t) { t = createArrivalIndex(); subTiming.set(subId, t); }
         return t;
       };
       const predictedArrival = (d: Dot) => {
@@ -1327,7 +1348,7 @@ export class Sim {
         const arrivalProg = getArrivalProgress(d.path);
         return scaledTravelTime(d.path, d.progress, Math.max(arrivalProg, d.progress), actual);
       };
-      for (const d of updated) {
+      if (anyTimedSubscriber) for (const d of updated) {
         if (d.path.length === 0) continue;
         if (d.status !== 'pausing' && d.status !== 'traveling') continue;
         // Most traveling dots are still bound for a queue; settle that from nextNodeId before
@@ -1335,6 +1356,7 @@ export class Sim {
         if (d.status === 'traveling' && d.nextNodeId !== undefined && !subscriberIds.has(d.nextNodeId)) continue;
         const sub = getPathInfo(d.path).endSubscriber;
         if (!sub) continue;
+        if ((consumeDurationBySub.get(sub.id) ?? consumeDurationFor(sub)) === 0) continue;
         if (d.status === 'pausing') {
           if (d.moneyAdded) continue;
           // A pausing dot is already mid-consumption, so it finishes at `remaining`, not at
@@ -1359,6 +1381,9 @@ export class Sim {
           timingFor(sub.id).arrivals.push(predictedArrival(d));
         }
       }
+      // Sort each subscriber's arrivals once and precompute the busy prefix the release check
+      // reads (the old check re-sorted the list per candidate per fan-out target).
+      for (const [subId, idx] of subTiming) finalizeArrivalIndex(idx, consumeDurationBySub.get(subId) ?? 0);
 
       sectionEnd('index');
       const queuedIndicesByQueue = new Map<string, number[]>();
@@ -1399,25 +1424,9 @@ export class Sim {
         // progress so same-frame releases don't render stacked on top of each other.
         let releaseSeq = 0;
 
-        for (const i of indices) {
-        const dot = updated[i];
-        if (dot.status !== 'queued') continue;
-
-        // Fallback to baked path subscriber (per-dot, only when no live connection exists)
-        let subsForThisDot = allConnectedSubs;
-        if (subsForThisDot.length === 0) {
-          const endPoint = dot.path[dot.path.length - 1];
-          const bakedSubscriber = mesh.components.find(c =>
-            c.type === 'subscriber' && Math.hypot(c.x - endPoint.x, c.y - endPoint.y) < 50
-          );
-          subsForThisDot = bakedSubscriber ? [{ x: bakedSubscriber.x, y: bakedSubscriber.y, comp: bakedSubscriber }] : [];
-        }
-
-        const hasSubscriber = subsForThisDot.length > 0;
-        if (!hasSubscriber) break; // FIFO — oldest remaining can't go, don't skip ahead
-
-        // Pre-build release paths for all connected subscribers
-        const buildReleasePath = (subTarget: { x: number; y: number; comp: GameComponent }): ReleasePath => {
+        // Release path to a subscriber. Depends on the candidate only when the queue component is
+        // gone (then the dot keeps its own path).
+        const buildReleasePath = (subTarget: { x: number; y: number; comp: GameComponent }, dot: Dot): ReleasePath => {
           if (!queue) return { componentsRef: mesh.components, path: dot.path, progress: dot.progress, nodeIds: [queueId, subTarget.comp.id] };
           // Pure function of the queue's and subscriber's positions: build once per pair and
           // let every released dot share the array (and therefore one cached route profile).
@@ -1485,35 +1494,59 @@ export class Sim {
 
           // Every other dot already pausing at or traveling toward this subscriber, from the
           // per-frame index (the candidate itself is queued, so it is never in there).
-          const timing = subTiming.get(sub.comp.id);
-          const pausingRemaining = timing?.pausingRemaining ?? null;
-          const arrivals = timing?.arrivals ?? [];
-
-          // Simulate the subscriber's consumption queue in arrival order with the candidate
-          // inserted at its own predicted arrival. Each dot can only start consuming once it
-          // has physically arrived AND the subscriber has finished with whoever was ahead of
-          // it; a dot that arrives while the subscriber is still busy is a collision (it
-          // drops on arrival). Reject if the candidate would collide, or if inserting it
+          // The rule: simulate the subscriber's consumption queue in arrival order with the
+          // candidate inserted at its own predicted arrival. Each dot can only start consuming
+          // once it has physically arrived AND the subscriber has finished with whoever was
+          // ahead of it; a dot that arrives while the subscriber is still busy is a collision
+          // (it drops on arrival). Reject if the candidate would collide, or if inserting it
           // would make any dot arriving AFTER it collide. Order-aware on purpose: staggered
           // same-frame releases mean a fresh release can legitimately arrive before dots
           // released a frame earlier that are still waiting behind the queue — those are
           // behind it, not ahead of it, and must not be read as "subscriber busy until then".
-          const chain = arrivals.map(t => ({ t, candidate: false }));
-          chain.push({ t: travelTime, candidate: true });
-          chain.sort((a, b) => a.t - b.t);
-          let busyUntil = pausingRemaining ?? 0;
-          let candidateSeen = false;
-          for (const { t, candidate } of chain) {
-            if (candidate) {
-              if (t < busyUntil) return false;
-              candidateSeen = true;
-            } else if (candidateSeen && t < busyUntil) {
-              return false;
-            }
-            busyUntil = Math.max(t, busyUntil) + consumeDuration;
-          }
-          return true;
+          // `canAcceptArrival` answers that from the sorted index in O(log n); the chain walk
+          // it replaces is the reference in src/sim/__tests__/release.test.ts.
+          return canAcceptArrival(timingFor(sub.comp.id), travelTime, consumeDuration);
         };
+
+        // Everything the check and the release need per target, built once per queue per tick
+        // instead of per candidate: the release path, its speed, and the progress one ms of
+        // movement covers at its start (the stagger below scales that by the release number).
+        // Pure in the queue and subscriber positions, like the release path cache it reads.
+        type ReleaseEntry = { sub: { x: number; y: number; comp: GameComponent }; release: ReleasePath; speed: number; progressPerMs: number };
+        const entryBySub = new Map<string, ReleaseEntry>();
+        const entryFor = (sub: { x: number; y: number; comp: GameComponent }, dot: Dot): ReleaseEntry => {
+          const hit = queue ? entryBySub.get(sub.comp.id) : undefined;
+          if (hit) return hit;
+          const release = buildReleasePath(sub, dot);
+          const entry: ReleaseEntry = {
+            sub,
+            release,
+            speed: normalizedSpeed(0.0007 * mesh.upgrades.propagationSpeed, release.path),
+            progressPerMs: normalizedSpeed(0.0007 * mesh.upgrades.propagationSpeed, release.path)
+              * mesh.upgrades.propagationSpeed * getSegmentSpeedScale(release.path, 0),
+          };
+          if (queue) entryBySub.set(sub.comp.id, entry);
+          return entry;
+        };
+        // With fan-out every candidate of the queue targets the same connected subscribers.
+        let fanOutData: ReleaseEntry[] | undefined;
+
+        for (const i of indices) {
+        const dot = updated[i];
+        if (dot.status !== 'queued') continue;
+
+        // Fallback to baked path subscriber (per-dot, only when no live connection exists)
+        let subsForThisDot = allConnectedSubs;
+        if (subsForThisDot.length === 0) {
+          const endPoint = dot.path[dot.path.length - 1];
+          const bakedSubscriber = mesh.components.find(c =>
+            c.type === 'subscriber' && Math.hypot(c.x - endPoint.x, c.y - endPoint.y) < 50
+          );
+          subsForThisDot = bakedSubscriber ? [{ x: bakedSubscriber.x, y: bakedSubscriber.y, comp: bakedSubscriber }] : [];
+        }
+
+        const hasSubscriber = subsForThisDot.length > 0;
+        if (!hasSubscriber) break; // FIFO — oldest remaining can't go, don't skip ahead
 
         // Without fan-out, determine round-robin target
         let targets: { x: number; y: number; comp: GameComponent }[];
@@ -1525,8 +1558,10 @@ export class Sim {
           targets = [subsForThisDot[rrIdx]];
         }
 
-        // Build release paths and check timing for each target
-        const releaseData = targets.map(sub => ({ sub, release: buildReleasePath(sub) }));
+        // Release paths and timing constants for each target
+        const releaseData = hasFanOut && queue && targets === allConnectedSubs
+          ? (fanOutData ??= targets.map(sub => entryFor(sub, dot)))
+          : targets.map(sub => entryFor(sub, dot));
 
         // Same-frame releases are spread across the frame's own travel distance (the k-th of
         // N starts k/N of one frame's movement behind, as negative progress that clamps to
@@ -1536,14 +1571,10 @@ export class Sim {
         // that frame — at low fps that was ~90 releases/frame, dots hidden for over a second,
         // and a feedback loop (more live dots → slower frames → more releases per frame →
         // longer lives). The timing check must evaluate the same staggered start the dot gets.
-        const releaseStaggerFor = (path: { x: number; y: number }[]) => {
-          const progressPerMs = normalizedSpeed(0.0007 * mesh.upgrades.propagationSpeed, path)
-            * mesh.upgrades.propagationSpeed * getSegmentSpeedScale(path, 0);
-          return (releaseSeq / Math.max(1, indices.length)) * dt * progressPerMs;
-        };
+        const releaseStaggerFor = (entry: ReleaseEntry) => (releaseSeq / Math.max(1, indices.length)) * dt * entry.progressPerMs;
 
         // With fanout: all subscribers must be ready; without: just the target
-        let canRelease = releaseData.every(rd => shouldReleaseTo(rd.sub, rd.release.path, rd.release.progress - releaseStaggerFor(rd.release.path)));
+        let canRelease = releaseData.every(rd => shouldReleaseTo(rd.sub, rd.release.path, rd.release.progress - releaseStaggerFor(rd)));
 
         // During drag, shouldReleaseTo timing is unreliable (in-flight dots' paths/speeds
         // are rebuilt each frame). Enforce a minimum interval based on consume duration
@@ -1567,21 +1598,23 @@ export class Sim {
         releaseSeq++;
 
         for (let ti = 0; ti < releaseData.length; ti++) {
-          const { release: { path: releasePath, progress: releaseProgress, nodeIds: releaseNodeIds }, sub: releaseSub } = releaseData[ti];
-          const releaseDot = { ...dot, path: releasePath };
-          const releaseSpeed = normalizedSpeed(0.0007 * mesh.upgrades.propagationSpeed, releasePath);
+          const entry = releaseData[ti];
+          const { release: { path: releasePath, progress: releaseProgress, nodeIds: releaseNodeIds }, sub: releaseSub, speed: releaseSpeed } = entry;
           // The target carries its subscriber component, so originalNodeIds stays in sync with the release path
           const releaseSubComp: GameComponent | undefined = releaseSub.comp;
+          // One object per released dot (the path is overridden in the same spread; a separate
+          // intermediate copy per target was a second allocation of every field).
           let released: Dot;
           if (ti === 0) {
-            released = { ...releaseDot, status: 'traveling', progress: releaseProgress - releaseStaggerFor(releasePath), speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined, originalNodeIds: releaseNodeIds, nextNodeId: releaseSubComp?.id, nodeWpIndices: undefined } as Dot;
+            released = { ...dot, path: releasePath, status: 'traveling', progress: releaseProgress - releaseStaggerFor(entry), speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined, originalNodeIds: releaseNodeIds, nextNodeId: releaseSubComp?.id, nodeWpIndices: undefined } as Dot;
             updated[i] = released;
           } else {
             released = {
-              ...releaseDot,
+              ...dot,
+              path: releasePath,
               id: nextDotId(),
               status: 'traveling',
-              progress: releaseProgress - releaseStaggerFor(releasePath),
+              progress: releaseProgress - releaseStaggerFor(entry),
               speed: releaseSpeed,
               pauseStartTime: undefined,
               queuedAtNodeId: undefined,
@@ -1593,7 +1626,11 @@ export class Sim {
           }
           // Later candidates (this queue or another) must see this dot on its way, exactly as
           // the old rescan of `updated` did. It carries nextNodeId, so it is "past all queues".
-          if (releaseSubComp) timingFor(releaseSubComp.id).arrivals.push(predictedArrival(released));
+          // Not for a 0 ms subscriber: its check never reads the index (see the index build).
+          if (releaseSubComp) {
+            const releaseConsume = consumeDurationBySub.get(releaseSubComp.id) ?? consumeDurationFor(releaseSubComp);
+            if (releaseConsume > 0) insertArrival(timingFor(releaseSubComp.id), predictedArrival(released), releaseConsume);
+          }
         }
         }
       }
