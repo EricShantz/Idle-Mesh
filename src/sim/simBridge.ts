@@ -18,14 +18,16 @@
 // (null while in flight); the filled one comes back with the tick and the two swap. Never read a
 // buffer after transferring it (it is detached). The worker grows the buffer it holds when the
 // dot count outgrows it; the inline driver grows `spare` the same way.
-import { Sim, type SimInput, type TickSummary } from './sim';
+import { Sim, tickSections, type SimInput, type TickSummary, type TickSections } from './sim';
 import { FLOATS_PER_DOT } from './positions';
 import type { Mesh, EventDot } from './types';
 import type { MainToWorker, WorkerToMain, DebugQuery, DebugResult } from './protocol';
 
 export type SimMode = 'worker' | 'inline';
 
-/** A worker that has not answered an input for this long is dead or wedged: fall back inline. */
+/** A worker that has not even acknowledged an input for this long is dead or wedged: fall back
+ *  inline. The ack is posted before the tick runs, so a tick that takes seconds (an overloaded
+ *  mesh) is slow, not dead, and is left alone. */
 const WORKER_STALL_MS = 3000;
 const INITIAL_CAPACITY = 4096; // dots
 
@@ -74,6 +76,14 @@ export function getSimTicksPerSec(): number {
   return 1000 / _smoothedTickDt;
 }
 
+/** Lowest smoothed tick rate seen this session (the end-game stats). Session-level, not saved. */
+let _minTicksPerSec = Infinity;
+let _tickCount = 0;
+const MIN_TICKS_WARMUP = 120; // skip startup ticks so page load doesn't count as a dip
+export function getMinSimTicksPerSec(): number {
+  return _minTicksPerSec === Infinity ? getSimTicksPerSec() : _minTicksPerSec;
+}
+
 let onSummary: ((summary: TickSummary) => void) | null = null;
 /** Called after each tick has been applied: the driver sends a frame's input that was waiting. */
 let onIdle: (() => void) | null = null;
@@ -81,7 +91,7 @@ let onIdle: (() => void) | null = null;
 /** Cumulative counters for the harness (window.__sim.stats()): ticks landed, time the worker
  *  spent in tick + fill, post-to-receive round trip on the main thread's clock, and frames that
  *  could / could not send an input (a skipped frame means the previous tick had not returned). */
-const stats = { ticks: 0, tickMsTotal: 0, roundTripMsTotal: 0, framesSent: 0, framesBusy: 0, inputsLate: 0 };
+const stats = { ticks: 0, tickMsTotal: 0, roundTripMsTotal: 0, framesSent: 0, framesBusy: 0, inputsLate: 0, sections: { ...tickSections } as TickSections };
 
 /** Every tick ends here, whichever driver produced it: the summary for simStats and the driver's
  *  listener (commitFrame), the ticks/s stat, and the buffer swap. */
@@ -89,7 +99,11 @@ function receiveTick(summary: TickSummary, buf: Float32Array<ArrayBuffer>, count
   const now = performance.now();
   if (_lastTickAt > 0) {
     const dt = now - _lastTickAt;
-    if (dt > 0 && dt < TICK_PAUSE_MS) _smoothedTickDt += TICK_SMOOTH * (dt - _smoothedTickDt);
+    if (dt > 0 && dt < TICK_PAUSE_MS) {
+      _smoothedTickDt += TICK_SMOOTH * (dt - _smoothedTickDt);
+      _tickCount++;
+      if (_tickCount > MIN_TICKS_WARMUP) _minTicksPerSec = Math.min(_minTicksPerSec, getSimTicksPerSec());
+    }
   }
   _lastTickAt = now;
   latest = summary;
@@ -140,6 +154,7 @@ function createInlineDriver(): Driver {
       const count = sim.fillPositions(buf);
       stats.ticks++;
       stats.tickMsTotal += performance.now() - t0;
+      stats.sections = { ...tickSections };
       receiveTick(summary, buf, count);
     },
     debug: what => Promise.resolve(what === 'dots' ? sim.getDots() : byStatusOf(sim.getDots())),
@@ -158,6 +173,7 @@ function createWorkerDriver(onFail: (reason: string) => void): Driver | null {
     return null;
   }
   let inFlightSince = 0; // performance.now() when the current input was posted; 0 when none
+  let acked = false;     // the worker has picked up the in-flight input (it may still be ticking)
   let debugId = 0;
   const debugWaiting = new Map<number, (result: DebugResult) => void>();
   let failed = false;
@@ -168,9 +184,12 @@ function createWorkerDriver(onFail: (reason: string) => void): Driver | null {
   };
   worker.onmessage = (e: MessageEvent<WorkerToMain>) => {
     const msg = e.data;
-    if (msg.type === 'tick') {
+    if (msg.type === 'busy') {
+      acked = true;
+    } else if (msg.type === 'tick') {
       stats.ticks++;
       stats.tickMsTotal += msg.tickMs;
+      stats.sections = msg.sections;
       stats.roundTripMsTotal += performance.now() - inFlightSince;
       inFlightSince = 0;
       receiveTick(msg.summary, new Float32Array(msg.buffer), msg.count);
@@ -188,7 +207,7 @@ function createWorkerDriver(onFail: (reason: string) => void): Driver | null {
     reset: () => post({ type: 'reset' }),
     ready() {
       if (inFlightSince === 0) return true;
-      if (performance.now() - inFlightSince > WORKER_STALL_MS) fail(`no tick for ${WORKER_STALL_MS} ms`);
+      if (!acked && performance.now() - inFlightSince > WORKER_STALL_MS) fail(`no answer for ${WORKER_STALL_MS} ms`);
       return false;
     },
     tick(input) {
@@ -196,6 +215,7 @@ function createWorkerDriver(onFail: (reason: string) => void): Driver | null {
       if (!buf) return; // cannot happen when ready(): the previous buffer is still out
       spare = null;
       inFlightSince = performance.now();
+      acked = false;
       post({ type: 'input', input, buffer: buf.buffer }, [buf.buffer]);
     },
     debug: what => new Promise<DebugResult>(resolve => {
@@ -304,7 +324,7 @@ if (typeof window !== 'undefined') {
     positions: getPositions,
     summary: latestSummary,
     ticksPerSec: getSimTicksPerSec,
-    stats: () => ({ ...stats }),
+    stats: () => ({ ...stats, sections: { ...stats.sections } }),
     /** Terminates the worker behind the bridge's back; the stall watchdog must fall back inline. */
     killWorker: () => { driver?.kill?.(); },
   };

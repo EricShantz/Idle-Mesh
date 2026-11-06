@@ -19,7 +19,10 @@ node scripts/perf/lines.mjs scripts/perf/.out/profile-L.cpuprofile .perf-dist/as
 
 Scales (`prof.mjs` → `CFG`): `S` small (drops into a DMQ), `M` ~950 live dots, `L` ~2800, `XL`
 over broker cap, `H` deliberately oversized and flooding, `U` the player-like heavy mesh (~14k
-consumed/sec, ~9.5k live dots, no drops; zoomed out via wheel events so the whole mesh is drawn).
+consumed/sec, ~9.5k live dots, no drops; zoomed out via wheel events so the whole mesh is drawn),
+`F` the player's late-game "TIE fighter" (`FPUBS=<n>` publishers, default 20, through one DMR
+Cluster bridged to two, into 4 shared queues fanning out to 20 shared subscribers; `FTHROUGHPUT=300`
+lifts the broker caps the way prestige throughput does, which is what makes the full fan-out flow).
 `W` is the early game: one publisher through a real webhook to a level-0 subscriber (exercises the
 webhook slow zone and the occupied-webhook drop). The simulation runs in a Web Worker; every script
 takes an optional page URL, and `http://localhost:5198/Idle-Mesh/?inlineSim` runs it on the main

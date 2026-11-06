@@ -2,7 +2,7 @@
 // (sim.worker.ts). Type-only: the worker entry must never be imported as a module by the main
 // bundle, so both sides share these shapes through this file instead.
 import type { Mesh, EventDot } from './types';
-import type { SimInput, TickSummary } from './sim';
+import type { SimInput, TickSummary, TickSections } from './sim';
 
 /** Harness/debug queries (window.__sim); answered asynchronously because the dots live in the worker. */
 export type DebugQuery = 'dots' | 'byStatus';
@@ -20,7 +20,10 @@ export type MainToWorker =
   | { type: 'debug'; id: number; what: DebugQuery };
 
 export type WorkerToMain =
+  /** Sent the moment an input is picked up, before the tick runs: proof the worker is alive even
+   *  when the tick itself takes seconds (the bridge's stall watchdog waits for this, not for the tick). */
+  | { type: 'busy' }
   /** The tick's summary and the filled position buffer (transferred) with its entry count;
    *  tickMs is how long the tick + fill took on the worker (for the harness' stats). */
-  | { type: 'tick'; summary: TickSummary; buffer: ArrayBuffer; count: number; tickMs: number }
+  | { type: 'tick'; summary: TickSummary; buffer: ArrayBuffer; count: number; tickMs: number; sections: TickSections }
   | { type: 'debug'; id: number; result: DebugResult };

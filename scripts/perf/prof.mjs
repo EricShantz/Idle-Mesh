@@ -44,6 +44,11 @@ const CFG = {
   // Early game: one publisher through a real webhook (slow zone + occupied-drop rule) straight to a level-0 subscriber
   W: { pubs: 1, brokers: 1, webhook: true, queuesPerBroker: 0, directSub: true, batchFireLevel: 0, throughputLevel: 0, bridges: false, cluster: false, subSpeed: 0 },
   U: { pubs: 24, brokers: 6, queuesPerBroker: 12, batchFireLevel: 4, throughputLevel: 35, bridges: false, cluster: true, subSpeed: 11, groupGap: 760, queueGap: 60, zoomOutSteps: 4 },
+  // The player's late-game "TIE fighter", everything maxed: N publishers -> one DMR Cluster -> bridges to two
+  // DMR Clusters -> the same 4 queues -> the same 20 subscribers with fan-out, so one fire becomes 160 consumes.
+  // FPUBS=2 (env) reproduces the "works with 2 publishers" case; default 20.
+  // FTHROUGHPUT=<level> (env) raises the broker caps beyond the upgrade max, standing in for prestige throughput multipliers.
+  F: { fanout: true, pubs: Number(process.env.FPUBS ?? 20), batchFireLevel: 5, throughputLevel: Number(process.env.FTHROUGHPUT ?? 10), queuesPerBridge: 4, subsPerQueue: 20, subSpeed: 11, zoomOutSteps: 6 },
 }[SCALE];
 if (process.env.SUBSPEED) CFG.subSpeed = Number(process.env.SUBSPEED);
 CFG.pubSpeed = process.env.PUBSPEED ? Number(process.env.PUBSPEED) : 10;
@@ -59,7 +64,68 @@ const TOPICS = [
   'acme/shipping/dispatched/eu/ground/SHP004','acme/shipping/delivered/na/ground/SHP005','acme/orders/cancelled/na/ground/SHP006',
 ];
 
+function buildFanoutSave(c) {
+  const components = [];
+  const connections = [];
+  let cid = 0;
+  const conn = (a, b) => connections.push({ id: `conn-${++cid}`, fromId: a, toId: b });
+  const broker = (id, x, y, queueSlots, bridgeSlots) => components.push({
+    id, type: 'broker', x, y, label: 'Broker', tags: {},
+    upgrades: { upgradeToBroker: 1, increaseThroughput: c.throughputLevel, addQueueSlot: queueSlots, addBridgeSlot: bridgeSlots, upgradeToCluster: 1, addClusterSlot: 2 },
+  });
+  const groupH = Math.max(c.pubs * 70, c.subsPerQueue * 60) / 2 + 200; // vertical center of the layout
+  broker('webhook-1', 700, groupH, 0, 2);
+  broker('broker-2', 1100, groupH - 250, c.queuesPerBridge, 1);
+  broker('broker-3', 1100, groupH + 250, c.queuesPerBridge, 1);
+  conn('webhook-1', 'broker-2');
+  conn('webhook-1', 'broker-3');
+  for (let p = 0; p < c.pubs; p++) {
+    const id = p === 0 ? 'pub-1' : `pub-${p + 1}`;
+    const topic = TOPICS[p % TOPICS.length];
+    components.push({
+      id, type: 'publisher', x: 150, y: groupH - (c.pubs * 70) / 2 + p * 70, label: 'Publisher', topic,
+      topicSegments: topic.split('/'), tags: {},
+      upgrades: { autoPub: 1, publishSpeed: 10, eventValue: 20, ...(p > 0 ? { networkTier: p } : {}) },
+    });
+    conn(id, 'webhook-1');
+  }
+  // The "TIE fighter": both bridge clusters feed the SAME queues, and every queue fans out to the SAME
+  // subscribers (a shared bus), so each subscriber receives from every queue.
+  const subsH = c.subsPerQueue * 60;
+  for (let k = 0; k < c.queuesPerBridge; k++) {
+    const qid = `queue-${k + 1}`;
+    components.push({ id: qid, type: 'queue', x: 1500, y: groupH - (c.queuesPerBridge * 80) / 2 + k * 80 + 40, label: 'Queue', tags: {}, upgrades: { bufferSize: 17, addSubscriberSlot: c.subsPerQueue, fanOut: 1 } });
+    conn('broker-2', qid);
+    conn('broker-3', qid);
+  }
+  for (let m = 0; m < c.subsPerQueue; m++) {
+    const sid = m === 0 ? 'sub-1' : `sub-${m + 1}`;
+    components.push({ id: sid, type: 'subscriber', x: 1950, y: groupH - subsH / 2 + m * 60 + 30, label: 'Subscriber', tags: {}, upgrades: { fasterConsumption: c.subSpeed, consumptionValue: 20 } });
+    for (let k = 0; k < c.queuesPerBridge; k++) conn(`queue-${k + 1}`, sid);
+  }
+  components.push({ id: 'dmq-1', type: 'dmq', x: 700, y: groupH * 2 + 200, label: 'Dead Message Queue', tags: {}, upgrades: { dmqBufferSize: 5, dmqWidth: 2 } });
+  conn('dmq-1', 'webhook-1');
+  return finishSave(c, components, connections);
+}
+
+function finishSave(c, components, connections) {
+  const propLevel = 10;
+  const propBoost = propLevel * (propLevel + 9) / 2;
+  const seen = {};
+  for (const k of ['introSequence', 'intro', 'firstDrop', 'brokerUpgrade', 'prestigeAvailable', 'dmrCluster', 'firstFanOut', 'queue', 'dmq', 'topics', 'bridge', 'prestige']) seen[k] = true;
+  return {
+    balance: 1e9, totalEarned: 5e9, eventsConsumed: 0, eventsDropped: 0,
+    components, connections,
+    upgrades: { propagationSpeed: 1 + propBoost / 100, costReduction: 0.3, batchFire: c.batchFireLevel > 0 ? c.batchFireLevel + 1 : 0, globalValueMultiplier: 1 },
+    globalUpgradeLevels: { propagationSpeed: propLevel, costReduction: 3, batchFire: c.batchFireLevel, globalValueMultiplier: 0 },
+    publisherCooldowns: {},
+    prestige: { points: 0, totalPoints: 0, count: 0, permanentUpgradeLevels: {} },
+    tutorialsSeen: seen, winSeen: true,
+  };
+}
+
 function buildSave(c) {
+  if (c.fanout) return buildFanoutSave(c);
   const components = [];
   const connections = [];
   let cid = 0;
@@ -111,20 +177,7 @@ function buildSave(c) {
   }
   components.push({ id: 'dmq-1', type: 'dmq', x: 700, y: 200 + c.brokers * gap, label: 'Dead Message Queue', tags: {}, upgrades: { dmqBufferSize: 5, dmqWidth: 2 } });
   conn('dmq-1', brokerIds[0]);
-
-  const propLevel = 10;
-  const propBoost = propLevel * (propLevel + 9) / 2;
-  const seen = {};
-  for (const k of ['introSequence', 'intro', 'firstDrop', 'brokerUpgrade', 'prestigeAvailable', 'dmrCluster', 'firstFanOut', 'queue', 'dmq', 'topics', 'bridge', 'prestige']) seen[k] = true;
-  return {
-    balance: 1e9, totalEarned: 5e9, eventsConsumed: 0, eventsDropped: 0,
-    components, connections,
-    upgrades: { propagationSpeed: 1 + propBoost / 100, costReduction: 0.3, batchFire: c.batchFireLevel > 0 ? c.batchFireLevel + 1 : 0, globalValueMultiplier: 1 },
-    globalUpgradeLevels: { propagationSpeed: propLevel, costReduction: 3, batchFire: c.batchFireLevel, globalValueMultiplier: 0 },
-    publisherCooldowns: {},
-    prestige: { points: 0, totalPoints: 0, count: 0, permanentUpgradeLevels: {} },
-    tutorialsSeen: seen, winSeen: true,
-  };
+  return finishSave(c, components, connections);
 }
 
 const save = buildSave(CFG);
@@ -224,7 +277,7 @@ const pct = us => (100 * us / total).toFixed(1).padStart(5) + '%';
 const ms = us => (us / 1000).toFixed(0).padStart(6) + 'ms';
 const top = (m, n) => [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n);
 
-console.log(`\n=== SCALE ${SCALE}${WORKER ? ' (sim worker thread)' : ' (main thread)'}: ${CFG.pubs} pubs, ${CFG.brokers} brokers, ${CFG.brokers * CFG.queuesPerBroker} queues/subs, batch ${CFG.batchFireLevel + 1}, bridges ${CFG.bridges} ===`);
+console.log(`\n=== SCALE ${SCALE}${WORKER ? ' (sim worker thread)' : ' (main thread)'}: ${CFG.pubs} pubs, ${CFG.fanout ? `TIE fighter: 2 bridged clusters -> ${CFG.queuesPerBridge} shared queues -> ${CFG.subsPerQueue} shared subs` : `${CFG.brokers} brokers, ${CFG.brokers * CFG.queuesPerBroker} queues/subs`}, batch ${CFG.batchFireLevel + 1}, bridges ${CFG.bridges ?? true} ===`);
 console.log(`profile total ${(total / 1000).toFixed(0)}ms over 8000ms wall; live dots ~${before.dots}; realFps ${before.realFps}`);
 console.log('\n--- self time by file ---');
 for (const [k, v] of top(byFile, 25)) console.log(pct(v), ms(v), k);

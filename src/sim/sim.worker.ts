@@ -5,7 +5,7 @@
 // coalesce on this side. The position buffer ping-pongs: it arrives with the input, is filled
 // right after the tick (same Sim, so the pausing shrink uses that tick's clock) and goes back
 // with the summary. It is grown here when the dot count outgrows it.
-import { Sim } from './sim';
+import { Sim, tickSections } from './sim';
 import { FLOATS_PER_DOT } from './positions';
 import type { MainToWorker, WorkerToMain, DebugResult } from './protocol';
 import type { EventDot } from './types';
@@ -38,13 +38,14 @@ ctx.onmessage = (e: MessageEvent<MainToWorker>) => {
       sim.reset();
       break;
     case 'input': {
+      ctx.postMessage({ type: 'busy' });
       const t0 = performance.now();
       const summary = sim.tick(msg.input);
       const dots = sim.getDots().length;
       let buf = new Float32Array(msg.buffer);
       if (buf.length < dots * FLOATS_PER_DOT) buf = new Float32Array(Math.ceil(dots * 1.5) * FLOATS_PER_DOT);
       const count = sim.fillPositions(buf);
-      ctx.postMessage({ type: 'tick', summary, buffer: buf.buffer, count, tickMs: performance.now() - t0 }, [buf.buffer]);
+      ctx.postMessage({ type: 'tick', summary, buffer: buf.buffer, count, tickMs: performance.now() - t0, sections: { ...tickSections } }, [buf.buffer]);
       break;
     }
     case 'debug': {

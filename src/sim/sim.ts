@@ -442,6 +442,14 @@ const EMPTY_MESH: Mesh = {
   prestige: { points: 0, totalPoints: 0, count: 0, permanentUpgradeLevels: {} },
 };
 
+/** Cumulative ms spent in each section of `tick` (diagnostics: window.__sim.stats().sections in
+ *  the bridge, per-tick averages in behavior.mjs). A handful of performance.now() calls per tick. */
+export type TickSections = { setup: number; pass1: number; index: number; pass2: number; pass3: number; sigs: number; publish: number };
+export const tickSections: TickSections = { setup: 0, pass1: 0, index: 0, pass2: 0, pass3: 0, sigs: 0, publish: 0 };
+let sectionMark = 0;
+function sectionStart(): void { sectionMark = performance.now(); }
+function sectionEnd(key: keyof TickSections): void { const n = performance.now(); tickSections[key] += n - sectionMark; sectionMark = n; }
+
 export class Sim {
   private mesh: Mesh = EMPTY_MESH;
   private dots: Dot[] = [];
@@ -595,6 +603,7 @@ export class Sim {
     let webhookFill: Record<string, number> = {};
     let webhookBest = -1;
 
+    sectionStart();
     const frameDots = ((dots: Dot[]): Dot[] => {
       // One clock read per frame: the rules only ever compare times within a frame or against
       // windows of hundreds of ms, and the calls were being made once per dot.
@@ -800,6 +809,7 @@ export class Sim {
           return false;
       };
 
+      sectionEnd('setup');
       for (let i = 0; i < dots.length; i++) {
         let dot = dots[i];
 
@@ -1154,7 +1164,11 @@ export class Sim {
               // instead of scanning every live dot per arrival.
               const occConsumeDuration = consumeDurationFor(pathInfo.endSubscriber);
               let isSubscriberOccupied = false;
-              const bucket = pausingBySub.get(pausingBucketKey(dot));
+              // A 0 ms consume (fasterConsumption maxed) never occupies: `elapsed < 0 - 50` is false for
+              // every dot in the bucket, and that bucket is the only place thousands of pausing dots
+              // can pile up (at any longer duration the occupancy rule itself keeps it to a few), so
+              // scanning it per arrival was the dominant cost of a saturated fan-out mesh.
+              const bucket = occConsumeDuration > 0 ? pausingBySub.get(pausingBucketKey(dot)) : undefined;
               if (bucket) {
                 for (const d of bucket) {
                   if (d.id === dot.id || d.status !== 'pausing' || d.moneyAdded || d.path.length === 0) continue;
@@ -1266,6 +1280,7 @@ export class Sim {
         }
       }
 
+      sectionEnd('pass1');
       // Helper: calculate the progress at which a dot enters a subscriber's collision box
       const getArrivalProgress = (path: { x: number; y: number }[]) => {
         if (path.length < 2) return 1;
@@ -1345,6 +1360,7 @@ export class Sim {
         }
       }
 
+      sectionEnd('index');
       const queuedIndicesByQueue = new Map<string, number[]>();
       for (let qi = 0; qi < updated.length; qi++) {
         const d = updated[qi];
@@ -1460,6 +1476,12 @@ export class Sim {
           const travelTime = scaledTravelTime(releasePath, startProgress, Math.max(arrivalProg, startProgress), actualSpeed);
 
           const consumeDuration = consumeDurationFor(sub.comp);
+          // A subscriber with a 0 ms consume (fasterConsumption maxed) can never reject: with the
+          // chain below, busyUntil after each arrival is just that arrival's time, the entries are
+          // ascending, so neither the candidate nor anything after it ever lands before busyUntil.
+          // Skipping the chain matters: it was rebuilt and re-sorted per candidate per fan-out target
+          // over every dot bound for the subscriber, which at 20-way fan-out made ticks take seconds.
+          if (consumeDuration === 0) return true;
 
           // Every other dot already pausing at or traveling toward this subscriber, from the
           // per-frame index (the candidate itself is queued, so it is never in there).
@@ -1576,6 +1598,7 @@ export class Sim {
         }
       }
 
+      sectionEnd('pass2');
       // --- Pass 3: auto-release ONE queued dot from DMQ if broker connection exists ---
       const dmqComp = mesh.components.find(c => c.type === 'dmq');
       if (dmqComp) {
@@ -1772,6 +1795,7 @@ export class Sim {
         }
       }
 
+      sectionEnd('pass3');
       // Queue/DMQ slot display: one char per queued dot, oldest first. Computed once here
       // for every node instead of by each card re-scanning every live dot on every commit.
       const queuedByNode = new Map<string, Dot[]>();
@@ -1790,6 +1814,7 @@ export class Sim {
       }
       queueSlotSignatures = sigs;
       webhookFill = webhookComponent ? { [webhookComponent.id]: webhookBest } : {};
+      sectionEnd('sigs');
 
       return updated;
     })(this.dots);
@@ -1826,6 +1851,7 @@ export class Sim {
       }
     }
     this.dots = frameDots;
+    sectionEnd('publish');
 
     return this.buildSummary(toConsume, droppedCount, due, publishes, queueSlotSignatures, webhookFill, input.nowMs);
   }

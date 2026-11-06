@@ -61,6 +61,7 @@ const r = await page.evaluate((ms) => new Promise(res => {
       realFps: +(frames / sec).toFixed(1),
       simTicksPerSec: +(tickRateSamples.reduce((x, y) => x + y, 0) / Math.max(1, tickRateSamples.length)).toFixed(1),
       tickMs: +(d('tickMsTotal') / ticks).toFixed(2), roundTripMs: +(d('roundTripMsTotal') / ticks).toFixed(2),
+      sectionMsPerTick: Object.fromEntries(Object.keys(st.sections).map(k => [k, +((st.sections[k] - start.stats.sections[k]) / ticks).toFixed(2)])),
       lateInputPct: +(100 * d('inputsLate') / Math.max(1, d('framesSent') + d('framesBusy'))).toFixed(1),
       mergedFramePct: +(100 * (d('framesBusy') - d('inputsLate')) / Math.max(1, d('framesSent') + d('framesBusy'))).toFixed(1),
       consumedPerSec: +((s.eventsConsumed - start.consumed) / sec).toFixed(1),
@@ -77,8 +78,9 @@ const r = await page.evaluate((ms) => new Promise(res => {
 
 const outDir = fileURLToPath(new URL('./.out/', import.meta.url));
 fs.mkdirSync(outDir, { recursive: true });
-await page.screenshot({ path: path.join(outDir, `shot-${LABEL}-${SCALE}.png`) });
 r.errors = errors.slice(0, 5);
 fs.writeFileSync(path.join(outDir, `behavior-${LABEL}-${SCALE}.json`), JSON.stringify(r, null, 2));
 console.log(`[${LABEL} ${SCALE}]`, JSON.stringify(r));
+// A swamped main thread (overloaded scenarios) can make the screenshot time out; the numbers are already saved.
+await page.screenshot({ path: path.join(outDir, `shot-${LABEL}-${SCALE}.png`), timeout: 60000 }).catch(e => console.warn('screenshot skipped:', String(e.message).slice(0, 60)));
 await browser.close();
