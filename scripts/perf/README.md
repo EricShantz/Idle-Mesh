@@ -43,7 +43,12 @@ dots, `liveEvents` / `avgLiveEvents` events, and `byStatus()` reports both (`que
 card levels so the per-card cooldown animations are active. `JSFLAGS=--no-turbo-inlining node
 scripts/perf/prof.mjs U` attributes time to the real functions inside the loop (V8 otherwise inlines
 the whole frame into `loop`); absolute speed is lower with it. `behavior.mjs` output includes `renderer` (`webgl` or `2d`) so you can tell which
-`EventCanvas` path was measured.
+`EventCanvas` path was measured. The position buffer (`window.__sim.positions()`) holds
+`window.__sim.floatsPerDot` floats per entry (`[x, y, extent, r, g, b, a, glow, vx, vy, tmax]`, see
+`src/sim/positions.ts`); the canvas draws each entry at `(x, y) + (vx, vy) * lead`, `lead` being the ms
+since the tick landed (`window.__sim.tickTiming()`, `window.__eventCanvasLeadMs`) capped at one tick
+interval and at the entry's `tmax` (ms until its next corner or zone edge), so dots move every frame when
+the sim ticks slower than the frame rate. `.out/interpcheck.mjs --ticks=15` is the check.
 
 Caveats: headless Chromium renders with software GL, so canvas cost is overstated and absolute
 fps is lower than a real GPU browser. Run one instance at a time. The in-page fps the scripts

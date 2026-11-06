@@ -59,6 +59,8 @@ export function buildPublishDots(mesh: Mesh, publisherId: string): { dots: Event
     path: e.path,
     progress,
     speed: e.speed,
+    progressPerMs: 0,
+    speedUntilP: 1,
     count,
     status: 'traveling',
     color: e.color,

@@ -292,6 +292,16 @@ function inZones(zones: Zone[], p: number): boolean {
   return false;
 }
 
+/** The first zone edge after `p`, or `limit` if none comes before it (zones are ascending and
+ *  disjoint). Where a dot's speed next changes, for the canvas's extrapolation cap (EventDot.speedUntilP). */
+function nextZoneEdge(zones: Zone[], p: number, limit: number): number {
+  for (const z of zones) {
+    if (z.start > p) return z.start < limit ? z.start : limit;
+    if (z.end > p) return z.end < limit ? z.end : limit;
+  }
+  return limit;
+}
+
 function addZone(zones: Zone[], start: number, end: number) {
   const last = zones[zones.length - 1];
   if (last && start <= last.end + 1e-9) { if (end > last.end) last.end = end; return; }
@@ -1098,6 +1108,8 @@ export class Sim {
                       path: forkWaypoints,
                       progress: 0,
                       speed: 0,
+                      progressPerMs: 0,
+                      speedUntilP: 1,
                       count: dot.count - forkAdmitted,
                       status: 'dropped' as const,
                       dropX: forkComp.x,
@@ -1116,6 +1128,8 @@ export class Sim {
                       path: forkWaypoints,
                       progress: 0,
                       speed: normalizedSpeed(0.0007 * mesh.upgrades.propagationSpeed, forkWaypoints),
+                      progressPerMs: 0,
+                      speedUntilP: 1,
                       count: forkAdmitted,
                       status: 'traveling' as const,
                       color: fork.color ?? dot.color,
@@ -1262,6 +1276,33 @@ export class Sim {
           // frames), so there is no reason to allocate a copy per dot per frame.
           dot.progress = newProgress;
           updated.push(dot);
+          // For the canvas only (positions.ts turns these into a velocity and how long it holds;
+          // nothing in the sim reads them): the speed the next tick will move the dot by from
+          // here (segment scale and zone multipliers at its new progress, as the speed block
+          // above will compute them) and the progress where the sim would next change or stop
+          // that motion: a webhook/cluster zone edge, or the point where the next queue or
+          // subscriber captures it. The between-tick extrapolation then never crosses a zone edge
+          // at the wrong speed or overshoots the card that will take the dot.
+          {
+            const np = newProgress < 0 ? 0 : newProgress;
+            let v = dot.speed * mesh.upgrades.propagationSpeed;
+            if (segCount > 0) v *= segScale[Math.min(Math.floor(np * segCount), segCount - 1)];
+            let untilP = 1;
+            if (pathInfo.slowZones.length > 0) {
+              if (inZones(pathInfo.slowZones, np)) v *= 0.4;
+              untilP = nextZoneEdge(pathInfo.slowZones, np, untilP);
+            }
+            if (pathInfo.fastZones.length > 0) {
+              if (inZones(pathInfo.fastZones, np)) v *= 2.5;
+              untilP = nextZoneEdge(pathInfo.fastZones, np, untilP);
+            }
+            if (nextInteractable) {
+              const captureP = dot.nextNodeId ? nextInteractable.centerP - 0.01 : nextInteractable.touchStart;
+              if (captureP < untilP) untilP = captureP;
+            }
+            dot.progressPerMs = v;
+            dot.speedUntilP = untilP;
+          }
           // Webhook card border fill: how far across the card (0..1) the furthest dot inside
           // its box is. The webhook card used to scan every committed dot for this; the slow
           // zone is exactly the touch box it tested, so only dots inside it pay for a pixel
@@ -1651,7 +1692,7 @@ export class Sim {
           // intermediate copy per target was a second allocation of every field).
           let released: Dot;
           if (ti === 0) {
-            released = { ...dot, path: releasePath, status: 'traveling', progress: releaseProgress - releaseStaggerFor(entry), speed: releaseSpeed, pauseStartTime: undefined, queuedAtNodeId: undefined, originalNodeIds: releaseNodeIds, nextNodeId: releaseSubComp?.id, nodeWpIndices: undefined } as Dot;
+            released = { ...dot, path: releasePath, status: 'traveling', progress: releaseProgress - releaseStaggerFor(entry), speed: releaseSpeed, progressPerMs: 0, speedUntilP: 1, pauseStartTime: undefined, queuedAtNodeId: undefined, originalNodeIds: releaseNodeIds, nextNodeId: releaseSubComp?.id, nodeWpIndices: undefined } as Dot;
             updated[i] = released;
           } else {
             released = {
@@ -1661,6 +1702,8 @@ export class Sim {
               status: 'traveling',
               progress: releaseProgress - releaseStaggerFor(entry),
               speed: releaseSpeed,
+              progressPerMs: 0,
+              speedUntilP: 1,
               pauseStartTime: undefined,
               queuedAtNodeId: undefined,
               originalNodeIds: releaseNodeIds,
@@ -1863,6 +1906,8 @@ export class Sim {
                 path: fullPath,
                 progress: 0,
                 speed,
+                progressPerMs: 0,
+                speedUntilP: 1,
                 color: '#fb923c',
                 opacity: 1,
                 value: retryValue,

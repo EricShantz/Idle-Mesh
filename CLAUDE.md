@@ -17,7 +17,7 @@ src/
   components/
     MeshCanvas.tsx      # SVG connections + EventCanvas + NodeCards + NodeModal + drag handling
     ConnectionLine.tsx  # Individual connection: SVG line + arrowhead + click-to-detach drag
-    EventCanvas.tsx     # RAF loop: WebGL point sprites for traveling/queued/dropped dots (2D sprite fallback), 2D front canvas for pausing dots
+    EventCanvas.tsx     # RAF loop: WebGL point sprites drawn from the sim's position buffer (2D sprite fallback); back canvas for traveling/queued/dropped dots, front canvas (above the cards) for pausing dots; extrapolates each entry by its velocity floats for the time since the tick landed (capped per entry at its next corner/zone edge)
     NodeCard.tsx        # Individual node: color, ↑ upgrade icon, upgrade badge, output port, click handlers
     NodeModal.tsx       # Floating upgrade modal anchored to selected node
     Sidebar.tsx         # Balance, stats, collapsible sections (Schema Registry, Mesh Upgrades, Mesh Components)

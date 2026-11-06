@@ -76,6 +76,17 @@ export function getSimTicksPerSec(): number {
   return 1000 / _smoothedTickDt;
 }
 
+/** When the latest tick landed (performance.now()) and the interval between it and the one
+ *  before, capped at MAX_FRAME_DT_MS (a tick never stands for more sim time than that). The
+ *  canvas extrapolates traveling dots by their velocity floats (positions.ts) for the time since
+ *  arrival, up to that interval: smooth motion at frame rate when the sim ticks slower, and a
+ *  stalled sim stops the dots after one interval instead of running them off their cables. The
+ *  same object every call. */
+const tickTiming = { arrivedAt: 0, intervalMs: 0 };
+export function getTickTiming(): { arrivedAt: number; intervalMs: number } {
+  return tickTiming;
+}
+
 /** Lowest smoothed tick rate seen this session (the end-game stats). Session-level, not saved. */
 let _minTicksPerSec = Infinity;
 let _tickCount = 0;
@@ -101,6 +112,7 @@ function receiveTick(summary: TickSummary, buf: Float32Array<ArrayBuffer>, count
   const now = performance.now();
   if (_lastTickAt > 0) {
     const dt = now - _lastTickAt;
+    tickTiming.intervalMs = Math.min(Math.max(0, dt), MAX_FRAME_DT_MS);
     if (dt > 0 && dt < TICK_PAUSE_MS) {
       _smoothedTickDt += TICK_SMOOTH * (dt - _smoothedTickDt);
       _tickCount++;
@@ -108,6 +120,7 @@ function receiveTick(summary: TickSummary, buf: Float32Array<ArrayBuffer>, count
     }
   }
   _lastTickAt = now;
+  tickTiming.arrivedAt = now;
   latest = summary;
   spare = positions.buf;
   positions.buf = buf;
@@ -332,7 +345,8 @@ export function noteBusyFrame(): void {
 // Debug / harness hook, present in all builds like window.useGameStore: the dots live in the
 // sim (possibly in the worker), so the perf scripts (scripts/perf/*.mjs) read them from here.
 // `dots()` and `byStatus()` are asynchronous (a round trip to the worker); `liveDots()`,
-// `liveEvents()` (a bundle dot stands for several events), `positions()`, `summary()` and
+// `liveEvents()` (a bundle dot stands for several events), `positions()` (entries of
+// `floatsPerDot` floats, layout in positions.ts), `tickTiming()`, `summary()` and
 // `ticksPerSec()` are the main thread's latest copies.
 if (typeof window !== 'undefined') {
   (window as unknown as { __sim: unknown }).__sim = {
@@ -342,6 +356,8 @@ if (typeof window !== 'undefined') {
     byStatus: () => driver ? driver.debug('byStatus') : Promise.resolve({}),
     dots: () => driver ? driver.debug('dots') : Promise.resolve([]),
     positions: getPositions,
+    floatsPerDot: FLOATS_PER_DOT,
+    tickTiming: getTickTiming,
     summary: latestSummary,
     ticksPerSec: getSimTicksPerSec,
     stats: () => ({ ...stats, sections: { ...stats.sections } }),
